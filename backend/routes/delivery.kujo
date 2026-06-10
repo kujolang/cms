@@ -146,7 +146,7 @@ export build_robots_txt := func(cfg) {
 
 export build_llms_txt := func(cfg) {
 	site_url := get_site_url(cfg)
-	service_name := to_string(dict_get_or(cfg, "service_name", "Kujo CMS API"))
+	service_name := to_string(dict_get_or(cfg, "service_name", "CMS API"))
 	lines := [
 		"# " + service_name,
 		"",
@@ -233,7 +233,7 @@ export build_sitemap_xml := func(cfg, rows) {
 
 export build_rss_xml := func(cfg, rows) {
 	site_url := get_site_url(cfg)
-	service_name := xml_escape(to_string(dict_get_or(cfg, "service_name", "Kujo CMS API")))
+	service_name := xml_escape(to_string(dict_get_or(cfg, "service_name", "CMS API")))
 	service_version := xml_escape(to_string(dict_get_or(cfg, "service_version", "0.1.0")))
 
 	lines := [
@@ -243,7 +243,7 @@ export build_rss_xml := func(cfg, rows) {
 		"  <title>" + service_name + "</title>",
 		"  <link>" + xml_escape(site_url) + "</link>",
 		"  <description>Headless content feed for " + service_name + "</description>",
-		"  <generator>Kujo CMS " + service_version + "</generator>"
+		"  <generator>CMS " + service_version + "</generator>"
 	]
 
 	for row in rows {

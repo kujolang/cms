@@ -70,22 +70,22 @@
 - Loop 21: completed Phase 0 item "Wrapper removal criteria defined and gated by one stable transition cycle" with explicit gate criteria in backend architecture notes.
 - Loop 20: completed Phase 0 item "Consumer migration guide includes copy-only-backend usage path" by adding explicit backend-only sync steps in README.
 - Loop 19: completed Phase 0 item "Wrapper deprecation timeline documented in docs and changelog" with explicit transition-cycle timeline in backend architecture notes.
-- Loop 18: completed Phase 0 item "`delivery.ruff` functionality moved to `backend/routes/delivery.ruff`" by publishing backend routes target copy.
-- Loop 17: completed Phase 0 item "`themes.ruff` functionality moved to `backend/routes/themes.ruff`" by publishing backend routes target copy.
-- Loop 16: completed Phase 0 item "`plugins.ruff` functionality moved to `backend/routes/plugins.ruff`" by publishing backend routes target copy.
-- Loop 15: completed Phase 0 item "`menus.ruff` functionality moved to `backend/routes/menus.ruff`" by publishing backend routes target copy.
-- Loop 14: completed Phase 0 item "`media.ruff` functionality moved to `backend/routes/media.ruff`" by publishing backend routes target copy.
-- Loop 13: completed Phase 0 item "`entries.ruff` functionality moved to `backend/routes/entries.ruff`" by publishing backend routes target copy.
-- Loop 12: completed Phase 0 item "`taxonomies.ruff` functionality moved to `backend/routes/taxonomies.ruff`" by publishing backend routes target copy.
-- Loop 11: completed Phase 0 item "`content_types.ruff` functionality moved to `backend/routes/content_types.ruff`" by publishing backend routes target copy.
-- Loop 10: completed Phase 0 item "`authz.ruff` functionality moved to `backend/modules/authz.ruff`" by publishing backend module target copy.
-- Loop 9: completed Phase 0 item "`auth.ruff` functionality moved to `backend/modules/auth.ruff`" by publishing backend module target copy.
-- Loop 8: completed Phase 0 item "`utils.ruff` functionality moved to `backend/core/utils.ruff`" by publishing backend core target copy.
-- Loop 7: completed Phase 0 item "`migrations.ruff` functionality moved to `backend/core/migrations.ruff`" by publishing backend core target copy.
-- Loop 6: completed Phase 0 item "`database.ruff` functionality moved to `backend/core/database.ruff`" by publishing backend core target copy.
-- Loop 5: completed Phase 0 item "`http.ruff` functionality moved to `backend/core/http.ruff`" by publishing backend core target copy.
-- Loop 4: completed Phase 0 item "`config.ruff` functionality moved to `backend/config/config.ruff`" after validating root delegation and backend target implementation.
-- Loop 3: completed Phase 0 item "`main.ruff` functionality moved to `backend/runtime/main.ruff`" by publishing backend runtime target copy.
+- Loop 18: completed Phase 0 item "`delivery.kujo` functionality moved to `backend/routes/delivery.kujo`" by publishing backend routes target copy.
+- Loop 17: completed Phase 0 item "`themes.kujo` functionality moved to `backend/routes/themes.kujo`" by publishing backend routes target copy.
+- Loop 16: completed Phase 0 item "`plugins.kujo` functionality moved to `backend/routes/plugins.kujo`" by publishing backend routes target copy.
+- Loop 15: completed Phase 0 item "`menus.kujo` functionality moved to `backend/routes/menus.kujo`" by publishing backend routes target copy.
+- Loop 14: completed Phase 0 item "`media.kujo` functionality moved to `backend/routes/media.kujo`" by publishing backend routes target copy.
+- Loop 13: completed Phase 0 item "`entries.kujo` functionality moved to `backend/routes/entries.kujo`" by publishing backend routes target copy.
+- Loop 12: completed Phase 0 item "`taxonomies.kujo` functionality moved to `backend/routes/taxonomies.kujo`" by publishing backend routes target copy.
+- Loop 11: completed Phase 0 item "`content_types.kujo` functionality moved to `backend/routes/content_types.kujo`" by publishing backend routes target copy.
+- Loop 10: completed Phase 0 item "`authz.kujo` functionality moved to `backend/modules/authz.kujo`" by publishing backend module target copy.
+- Loop 9: completed Phase 0 item "`auth.kujo` functionality moved to `backend/modules/auth.kujo`" by publishing backend module target copy.
+- Loop 8: completed Phase 0 item "`utils.kujo` functionality moved to `backend/core/utils.kujo`" by publishing backend core target copy.
+- Loop 7: completed Phase 0 item "`migrations.kujo` functionality moved to `backend/core/migrations.kujo`" by publishing backend core target copy.
+- Loop 6: completed Phase 0 item "`database.kujo` functionality moved to `backend/core/database.kujo`" by publishing backend core target copy.
+- Loop 5: completed Phase 0 item "`http.kujo` functionality moved to `backend/core/http.kujo`" by publishing backend core target copy.
+- Loop 4: completed Phase 0 item "`config.kujo` functionality moved to `backend/config/config.kujo`" after validating root delegation and backend target implementation.
+- Loop 3: completed Phase 0 item "`main.kujo` functionality moved to `backend/runtime/main.kujo`" by publishing backend runtime target copy.
 - Loop 2: completed Phase 0 item "Confirm backend folder ownership boundaries" with explicit ownership matrix in backend architecture notes.
 - Loop 1: completed Phase 0 item "Confirm and publish final old-to-new file mapping table for all root runtime modules" with final runtime mapping published in README and backend architecture notes.
 
@@ -94,7 +94,7 @@
 ### TWEAK
 
 - Checklist loops 28-53: completed all remaining backend-restructure checklist items across Phase 3 migration closure, Phase 4 documentation/guidance updates, Phase 5 deprecation policy/gates, and Per-PR finalization checks.
-- Config-domain migration step: documented backend target-path mapping (`config.ruff` -> `backend/config/config.ruff`) with runtime bridge guidance for current Kujo import limitations.
+- Config-domain migration step: documented backend target-path mapping (`config.kujo` -> `backend/config/config.kujo`) with runtime bridge guidance for current Kujo import limitations.
 - Checklist loop 27: completed Phase 3 item "Choose one migration domain only (routing OR config OR resolver OR auth) for the current PR".
 - Checklist loop 26: completed Per-PR checklist item "Smoke tests run and pass".
 - Checklist loop 25: completed Per-PR checklist item "Integration tests run and pass".

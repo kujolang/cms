@@ -13,10 +13,10 @@ LOG_FILE="${RESULTS_DIR}/graceful_restart_${PORT}.log"
 
 if [[ -n "${KUJO_BIN:-}" ]]; then
 	KUJO_BIN_PATH="${KUJO_BIN}"
-elif command -v ruff >/dev/null 2>&1; then
-	KUJO_BIN_PATH="$(command -v ruff)"
-elif [[ -x "${ROOT_DIR}/../ruff/target/debug/ruff" ]]; then
-	KUJO_BIN_PATH="${ROOT_DIR}/../ruff/target/debug/ruff"
+elif command -v kujo >/dev/null 2>&1; then
+	KUJO_BIN_PATH="$(command -v kujo)"
+elif [[ -x "${ROOT_DIR}/../kujo/target/debug/kujo" ]]; then
+	KUJO_BIN_PATH="${ROOT_DIR}/../kujo/target/debug/kujo"
 else
 	echo "Unable to locate Kujo runtime binary. Set KUJO_BIN to continue."
 	exit 1
@@ -50,7 +50,7 @@ start_server() {
 		CMS_SITE_URL="${BASE_URL}" \
 		CMS_DB_PATH="${DB_PATH}" \
 		CMS_API_TOKEN="${TOKEN}" \
-		"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.ruff >"${LOG_FILE}" 2>&1
+		"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
 	) &
 	SERVER_PID="$!"
 

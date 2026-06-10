@@ -6,9 +6,9 @@ Historical note: this file is an execution log of the migration period. For curr
 
 ### Commands
 
-1. `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff`
-2. `CMS_TEST_PORT=53100 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh`
-3. `CMS_SMOKE_PORT=53110 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh`
+1. `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo`
+2. `CMS_TEST_PORT=53100 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh`
+3. `CMS_SMOKE_PORT=53110 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh`
 
 ### Results Summary
 
@@ -30,22 +30,22 @@ Historical note: this file is an execution log of the migration period. For curr
 
 Root runtime files identified for potential migration planning:
 
-- `auth.ruff`
-- `authz.ruff`
-- `config.ruff`
-- `content_types.ruff`
-- `database.ruff`
-- `delivery.ruff`
-- `entries.ruff`
-- `http.ruff`
-- `main.ruff`
-- `media.ruff`
-- `menus.ruff`
-- `migrations.ruff`
-- `plugins.ruff`
-- `taxonomies.ruff`
-- `themes.ruff`
-- `utils.ruff`
+- `auth.kujo`
+- `authz.kujo`
+- `config.kujo`
+- `content_types.kujo`
+- `database.kujo`
+- `delivery.kujo`
+- `entries.kujo`
+- `http.kujo`
+- `main.kujo`
+- `media.kujo`
+- `menus.kujo`
+- `migrations.kujo`
+- `plugins.kujo`
+- `taxonomies.kujo`
+- `themes.kujo`
+- `utils.kujo`
 
 ## Migration Scope Note (Loop 5)
 
@@ -73,9 +73,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`7 passed`, `0 failed`).
-- `CMS_TEST_PORT=59320 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59330 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`7 passed`, `0 failed`).
+- `CMS_TEST_PORT=59320 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59330 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 8 (Phase 1)
 
@@ -99,9 +99,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`7 passed`, `0 failed`).
-- `CMS_TEST_PORT=59340 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59350 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`7 passed`, `0 failed`).
+- `CMS_TEST_PORT=59340 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59350 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 9 (Phase 1)
 
@@ -119,28 +119,28 @@ Root runtime files identified for potential migration planning:
 
 | Old Path | Target Path |
 | --- | --- |
-| `main.ruff` | `backend/runtime/main.ruff` |
-| `http.ruff` | `backend/core/http.ruff` |
-| `database.ruff` | `backend/core/database.ruff` |
-| `migrations.ruff` | `backend/core/migrations.ruff` |
-| `utils.ruff` | `backend/core/utils.ruff` |
-| `delivery.ruff` | `backend/routes/delivery.ruff` |
-| `content_types.ruff` | `backend/routes/content_types.ruff` |
-| `taxonomies.ruff` | `backend/routes/taxonomies.ruff` |
-| `entries.ruff` | `backend/routes/entries.ruff` |
-| `media.ruff` | `backend/routes/media.ruff` |
-| `menus.ruff` | `backend/routes/menus.ruff` |
-| `plugins.ruff` | `backend/routes/plugins.ruff` |
-| `themes.ruff` | `backend/routes/themes.ruff` |
-| `authz.ruff` | `backend/routes/authz.ruff` |
-| `auth.ruff` | `backend/modules/auth.ruff` |
-| `config.ruff` | `backend/config/config.ruff` |
+| `main.kujo` | `backend/runtime/main.kujo` |
+| `http.kujo` | `backend/core/http.kujo` |
+| `database.kujo` | `backend/core/database.kujo` |
+| `migrations.kujo` | `backend/core/migrations.kujo` |
+| `utils.kujo` | `backend/core/utils.kujo` |
+| `delivery.kujo` | `backend/routes/delivery.kujo` |
+| `content_types.kujo` | `backend/routes/content_types.kujo` |
+| `taxonomies.kujo` | `backend/routes/taxonomies.kujo` |
+| `entries.kujo` | `backend/routes/entries.kujo` |
+| `media.kujo` | `backend/routes/media.kujo` |
+| `menus.kujo` | `backend/routes/menus.kujo` |
+| `plugins.kujo` | `backend/routes/plugins.kujo` |
+| `themes.kujo` | `backend/routes/themes.kujo` |
+| `authz.kujo` | `backend/routes/authz.kujo` |
+| `auth.kujo` | `backend/modules/auth.kujo` |
+| `config.kujo` | `backend/config/config.kujo` |
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`7 passed`, `0 failed`).
-- `CMS_TEST_PORT=59360 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59370 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`7 passed`, `0 failed`).
+- `CMS_TEST_PORT=59360 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59370 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 10 (Phase 1)
 
@@ -160,9 +160,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`7 passed`, `0 failed`).
-- `CMS_TEST_PORT=59380 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59390 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`7 passed`, `0 failed`).
+- `CMS_TEST_PORT=59380 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59390 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 11 (Phase 1)
 
@@ -182,9 +182,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`7 passed`, `0 failed`).
-- `CMS_TEST_PORT=59400 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59410 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`7 passed`, `0 failed`).
+- `CMS_TEST_PORT=59400 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59410 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 12 (Phase 1)
 
@@ -200,13 +200,13 @@ Root runtime files identified for potential migration planning:
 
 ### Artifact
 
-- Updated `tests/cms_contract_tests.ruff` with auth-surface contract checks for read access, write auth enforcement, and bootstrap-token write authorization behavior.
+- Updated `tests/cms_contract_tests.kujo` with auth-surface contract checks for read access, write auth enforcement, and bootstrap-token write authorization behavior.
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`8 passed`, `0 failed`).
-- `CMS_TEST_PORT=59420 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59430 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`8 passed`, `0 failed`).
+- `CMS_TEST_PORT=59420 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59430 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 13 (Phase 1 Gate)
 
@@ -222,9 +222,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`8 passed`, `0 failed`).
-- `CMS_TEST_PORT=59440 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59450 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`8 passed`, `0 failed`).
+- `CMS_TEST_PORT=59440 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59450 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 14 (Phase 1 Gate)
 
@@ -241,14 +241,14 @@ Root runtime files identified for potential migration planning:
 ### Coverage Evidence
 
 - Critical surface inventory: `docs/backend-architecture-notes.md`.
-- Contract checks: `tests/cms_contract_tests.ruff` (delivery/helper contracts plus auth-surface behavior).
+- Contract checks: `tests/cms_contract_tests.kujo` (delivery/helper contracts plus auth-surface behavior).
 - Runtime behavior verification: Stage 1 integration and smoke scripts executed per loop.
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`8 passed`, `0 failed`).
-- `CMS_TEST_PORT=59460 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59470 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`8 passed`, `0 failed`).
+- `CMS_TEST_PORT=59460 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59470 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 15 (Phase 2)
 
@@ -277,9 +277,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`8 passed`, `0 failed`).
-- `CMS_TEST_PORT=59480 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59490 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`8 passed`, `0 failed`).
+- `CMS_TEST_PORT=59480 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59490 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 16 (Phase 2)
 
@@ -295,16 +295,16 @@ Root runtime files identified for potential migration planning:
 
 ### Artifact
 
-- Added `backend_config.ruff` as the runtime-compatible config implementation module.
-- Added `backend/config/config.ruff` as the backend-path shim for planned layout alignment.
-- Converted root `config.ruff` into a thin compatibility wrapper delegating to `backend_config.ruff`.
+- Added `backend_config.kujo` as the runtime-compatible config implementation module.
+- Added `backend/config/config.kujo` as the backend-path shim for planned layout alignment.
+- Converted root `config.kujo` into a thin compatibility wrapper delegating to `backend_config.kujo`.
 - Updated `README.md` to document the active wrapper/shim state.
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`8 passed`, `0 failed`).
-- `CMS_TEST_PORT=59520 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59530 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`8 passed`, `0 failed`).
+- `CMS_TEST_PORT=59520 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59530 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 17 (Phase 2)
 
@@ -320,11 +320,11 @@ Root runtime files identified for potential migration planning:
 
 ### Artifact
 
-- Updated `tests/cms_contract_tests.ruff` with wrapper-parity checks that compare `load_config()` and `load_config_backend_impl()` outputs across all config keys.
+- Updated `tests/cms_contract_tests.kujo` with wrapper-parity checks that compare `load_config()` and `load_config_backend_impl()` outputs across all config keys.
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`9 passed`, `0 failed`).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`9 passed`, `0 failed`).
 
 ## Checklist Loop 50 (Per-PR)
 
@@ -340,14 +340,14 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output (Current Cycle)
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/release/ruff test-run tests/cms_contract_tests.ruff` -> pass (`9 passed`, `0 failed`).
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/release/ruff CMS_SMOKE_PORT=50060 bash scripts/smoke-api.sh` -> pass (smoke checks passed).
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/release/ruff CMS_TEST_PORT=50071 bash scripts/integration-stage1.sh` -> pass (Stage 1 integration assertions passed).
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/release/ruff CMS_SECURITY_TEST_PORT_BASE=49940 bash scripts/integration-enterprise-security.sh` -> pass (enterprise security integration passed).
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/release/ruff CMS_GRACEFUL_PORT=49950 bash scripts/validate-graceful-restart.sh` -> pass.
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/release/ruff CMS_OPS_LOAD_PERF_RUNS=6 CMS_OPS_LOAD_PERF_PORT=49990 CMS_OPS_LOAD_MIGRATION_PORT=49991 CMS_OPS_LOAD_PORT=49992 bash scripts/ops-load-validation.sh` -> pass.
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/release/kujo test-run tests/cms_contract_tests.kujo` -> pass (`9 passed`, `0 failed`).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/release/kujo CMS_SMOKE_PORT=50060 bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/release/kujo CMS_TEST_PORT=50071 bash scripts/integration-stage1.sh` -> pass (Stage 1 integration assertions passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/release/kujo CMS_SECURITY_TEST_PORT_BASE=49940 bash scripts/integration-enterprise-security.sh` -> pass (enterprise security integration passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/release/kujo CMS_GRACEFUL_PORT=49950 bash scripts/validate-graceful-restart.sh` -> pass.
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/release/kujo CMS_OPS_LOAD_PERF_RUNS=6 CMS_OPS_LOAD_PERF_PORT=49990 CMS_OPS_LOAD_MIGRATION_PORT=49991 CMS_OPS_LOAD_PORT=49992 bash scripts/ops-load-validation.sh` -> pass.
 - `CMS_PERF_REPORT_FILE=results/perf_baseline_latest.json CMS_PERF_BUDGET_FILE=docs/perf-budget.json bash scripts/perf-budget-check.sh` -> pass.
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/release/ruff CMS_GATE_PERF_RUNS=3 CMS_GATE_PORT_BASE=50020 bash scripts/run-release-gate.sh` -> partial (through Stage 2 Round 2; failing at sitemap index structure, tracked for follow-up).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/release/kujo CMS_GATE_PERF_RUNS=3 CMS_GATE_PORT_BASE=50020 bash scripts/run-release-gate.sh` -> partial (through Stage 2 Round 2; failing at sitemap index structure, tracked for follow-up).
 
 ### Push Output
 
@@ -420,8 +420,8 @@ Root runtime files identified for potential migration planning:
 
 ### Artifacts Updated
 
-- Updated config-domain test imports to consume compatibility exports from `config.ruff`.
-- Promoted `backend/config/config.ruff` to hold backend-target config implementation.
+- Updated config-domain test imports to consume compatibility exports from `config.kujo`.
+- Promoted `backend/config/config.kujo` to hold backend-target config implementation.
 - Updated migration architecture notes with mapping table, rollback steps, and deprecation timeline.
 - Updated README mapping and embedded-backend upgrade guidance.
 - Updated runtime limitations notes with nested-import parser constraints.
@@ -429,14 +429,14 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass.
-- `CMS_TEST_PORT=59820 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass.
-- `CMS_SMOKE_PORT=59830 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass.
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass.
+- `CMS_TEST_PORT=59820 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass.
+- `CMS_SMOKE_PORT=59830 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass.
 
 ### Rollback Steps (Config Domain)
 
-1. Revert `backend/config/config.ruff` to shim-mode delegation if backend-target implementation rollback is required.
-2. Keep `config.ruff` delegating to `backend_config.ruff` for compatibility during rollback.
+1. Revert `backend/config/config.kujo` to shim-mode delegation if backend-target implementation rollback is required.
+2. Keep `config.kujo` delegating to `backend_config.kujo` for compatibility during rollback.
 3. Re-run contract, integration, and smoke checks before push.
 
 ## Checklist Loop 25 (Per-PR)
@@ -453,7 +453,7 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `CMS_TEST_PORT=59700 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all Stage 1 integration checks passed).
+- `CMS_TEST_PORT=59700 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all Stage 1 integration checks passed).
 
 ## Checklist Loop 26 (Per-PR)
 
@@ -469,9 +469,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `CMS_SMOKE_PORT=59710 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
-- `CMS_TEST_PORT=59540 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59550 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `CMS_SMOKE_PORT=59710 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `CMS_TEST_PORT=59540 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59550 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 18 (Phase 2)
 
@@ -487,14 +487,14 @@ Root runtime files identified for potential migration planning:
 
 ### Artifact
 
-- Updated `config.ruff` to export both `load_config` and `load_config_impl` compatibility symbols.
-- Updated `backend/config/config.ruff` to export both `load_config` and `load_config_impl` while delegating to the same backend implementation.
+- Updated `config.kujo` to export both `load_config` and `load_config_impl` compatibility symbols.
+- Updated `backend/config/config.kujo` to export both `load_config` and `load_config_impl` while delegating to the same backend implementation.
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`9 passed`, `0 failed`).
-- `CMS_TEST_PORT=59560 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59570 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`9 passed`, `0 failed`).
+- `CMS_TEST_PORT=59560 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59570 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 19 (Phase 2)
 
@@ -510,15 +510,15 @@ Root runtime files identified for potential migration planning:
 
 ### Artifact
 
-- Added `scripts/verify-compat-startup.sh` to verify root `main.ruff` startup and core endpoint availability (`/health`, `/v1`).
+- Added `scripts/verify-compat-startup.sh` to verify root `main.kujo` startup and core endpoint availability (`/health`, `/v1`).
 - Updated `README.md` testing section with the startup compatibility check command.
 
 ### Validation Output
 
-- `CMS_COMPAT_PORT=59580 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/verify-compat-startup.sh` -> pass (`Compatibility startup checks passed.`).
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`9 passed`, `0 failed`).
-- `CMS_TEST_PORT=59590 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59610 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `CMS_COMPAT_PORT=59580 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/verify-compat-startup.sh` -> pass (`Compatibility startup checks passed.`).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`9 passed`, `0 failed`).
+- `CMS_TEST_PORT=59590 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59610 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 20 (Phase 2 Gate)
 
@@ -534,9 +534,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `CMS_COMPAT_PORT=59620 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/verify-compat-startup.sh` -> pass (`Compatibility startup checks passed.`).
-- `CMS_TEST_PORT=59630 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59640 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `CMS_COMPAT_PORT=59620 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/verify-compat-startup.sh` -> pass (`Compatibility startup checks passed.`).
+- `CMS_TEST_PORT=59630 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59640 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 21 (Phase 2 Gate)
 
@@ -552,9 +552,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`9 passed`, `0 failed`).
-- `CMS_TEST_PORT=59650 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59660 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`9 passed`, `0 failed`).
+- `CMS_TEST_PORT=59650 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59660 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> pass (smoke checks passed).
 
 ## Checklist Loop 22 (Per-PR)
 
@@ -571,13 +571,13 @@ Root runtime files identified for potential migration planning:
 ### Scope Statement
 
 - Active migration domain: `config`.
-- Included paths in this execution window: `config.ruff`, `backend_config.ruff`, `backend/config/config.ruff`, compatibility verification scripts/docs.
+- Included paths in this execution window: `config.kujo`, `backend_config.kujo`, `backend/config/config.kujo`, compatibility verification scripts/docs.
 - Excluded domains: routing, resolver/query, auth/authz behavior, and content module logic.
 
 ### Validation Output
 
-- `CMS_COMPAT_PORT=59670 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/verify-compat-startup.sh` -> pass (`Compatibility startup checks passed.`).
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`9 passed`, `0 failed`).
+- `CMS_COMPAT_PORT=59670 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/verify-compat-startup.sh` -> pass (`Compatibility startup checks passed.`).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`9 passed`, `0 failed`).
 
 ## Checklist Loop 23 (Per-PR)
 
@@ -599,9 +599,9 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`9 passed`, `0 failed`).
-- `CMS_TEST_PORT=59680 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/integration-stage1.sh` -> pass (all assertions passed).
-- `CMS_SMOKE_PORT=59690 KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff bash scripts/smoke-api.sh` -> initial failure (`Address already in use`), re-run on `CMS_SMOKE_PORT=59691` -> pass (smoke checks passed).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`9 passed`, `0 failed`).
+- `CMS_TEST_PORT=59680 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/integration-stage1.sh` -> pass (all assertions passed).
+- `CMS_SMOKE_PORT=59690 KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo bash scripts/smoke-api.sh` -> initial failure (`Address already in use`), re-run on `CMS_SMOKE_PORT=59691` -> pass (smoke checks passed).
 
 ## Checklist Loop 24 (Per-PR)
 
@@ -617,4 +617,4 @@ Root runtime files identified for potential migration planning:
 
 ### Validation Output
 
-- `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff /Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff` -> pass (`9 passed`, `0 failed`).
+- `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo /Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo` -> pass (`9 passed`, `0 failed`).

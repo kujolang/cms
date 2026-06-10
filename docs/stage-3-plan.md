@@ -1,6 +1,6 @@
 # Stage 3 Plan (Enterprise Completion Track)
 
-Stage 3 finalizes Kujo CMS as an enterprise-grade, API-first platform by delivering governance, reliability, and secure extensibility on top of Stage 2 feature completeness.
+Stage 3 finalizes CMS as an enterprise-grade, API-first platform by delivering governance, reliability, and secure extensibility on top of Stage 2 feature completeness.
 
 ## Stage 3 Objective
 

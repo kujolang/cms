@@ -4,7 +4,7 @@ This document tracks obvious operational-readiness gaps identified during a seni
 
 ## Scope
 
-- Repository: Kujo CMS API foundation
+- Repository: CMS API foundation
 - Goal: Raise operational confidence for release-bound backend work before dashboard/frontend implementation
 
 ## Findings And Fixes

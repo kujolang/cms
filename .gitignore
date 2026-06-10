@@ -1,4 +1,4 @@
-kujo_cms.db
+cms.db
 *.db-shm
 *.db-wal
 .env

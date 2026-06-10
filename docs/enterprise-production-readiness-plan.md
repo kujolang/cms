@@ -1,6 +1,6 @@
 # Enterprise Production Readiness Plan
 
-This plan tracks launch-readiness gates for Kujo CMS.
+This plan tracks launch-readiness gates for CMS.
 
 ## Current Posture
 
@@ -49,7 +49,7 @@ For each release-bound change:
 
 ## Definition of Ready
 
-Kujo CMS is launch-ready when:
+CMS is launch-ready when:
 
 1. All code and operational gates remain green.
 2. Branch-protection governance gate is enforced.

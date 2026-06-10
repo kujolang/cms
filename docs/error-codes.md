@@ -1,6 +1,6 @@
 # Error Code Contract
 
-This document defines the API error envelope and the most common error codes used by Kujo CMS v1.
+This document defines the API error envelope and the most common error codes used by CMS v1.
 
 ## Error Envelope
 

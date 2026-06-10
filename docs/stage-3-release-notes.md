@@ -33,7 +33,7 @@ Stage 3 reliability and operations hardening now includes:
 
 ## Validation Evidence
 
-- Contract tests: `tests/cms_contract_tests.ruff`
+- Contract tests: `tests/cms_contract_tests.kujo`
 - Integration checks: Stage 1/2/3 + enterprise security scripts
 - Reliability checks: `scripts/validate-graceful-restart.sh`, `scripts/ops-load-validation.sh`
 - Perf budget checks: `scripts/perf-baseline.sh` + `scripts/perf-budget-check.sh`

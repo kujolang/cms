@@ -140,16 +140,16 @@ func build_api_contract(cfg, schema_version) {
 	return {
 		"openapi": "3.1.0",
 		"info": {
-			"title": to_string(dict_get_or(cfg, "service_name", "Kujo CMS API")),
+			"title": to_string(dict_get_or(cfg, "service_name", "CMS API")),
 			"version": to_string(dict_get_or(cfg, "service_version", "0.1.0"))
 		},
 		"servers": [
 			{"url": site_url}
 		],
-		"x-kujo-cms": {
+		"x-cms": {
 			"schema_version": schema_version,
 			"capabilities_path": "/v1",
-			"generated_by": "backend/runtime/main.ruff"
+			"generated_by": "backend/runtime/main.kujo"
 		},
 		"paths": {
 			"/health": {"get": {"summary": "Health check", "x-auth": "public"}},
@@ -567,7 +567,7 @@ server = register_theme_routes(server, ctx)
 server = register_authz_routes(server, ctx)
 server = register_tenancy_routes(server, ctx)
 
-print("Kujo CMS API")
+print("CMS API")
 print("Server: http://" + api_host + ":" + to_string(cfg["port"]))
 print("Database: " + cfg["db_path"])
 print("Site URL: " + cfg["site_url"])

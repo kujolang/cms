@@ -7,10 +7,10 @@ mkdir -p "${RESULTS_DIR}"
 
 if [[ -n "${KUJO_BIN:-}" ]]; then
 	KUJO_BIN_PATH="${KUJO_BIN}"
-elif command -v ruff >/dev/null 2>&1; then
-	KUJO_BIN_PATH="$(command -v ruff)"
-elif [[ -x "${ROOT_DIR}/../ruff/target/debug/ruff" ]]; then
-	KUJO_BIN_PATH="${ROOT_DIR}/../ruff/target/debug/ruff"
+elif command -v kujo >/dev/null 2>&1; then
+	KUJO_BIN_PATH="$(command -v kujo)"
+elif [[ -x "${ROOT_DIR}/../kujo/target/debug/kujo" ]]; then
+	KUJO_BIN_PATH="${ROOT_DIR}/../kujo/target/debug/kujo"
 else
 	echo "Unable to locate Kujo runtime binary. Set KUJO_BIN to continue."
 	exit 1
@@ -45,7 +45,7 @@ prepare_worktree() {
 }
 
 apply_delivery_repro_patch() {
-	local delivery_file="${WORK_DIR}/backend/routes/delivery.ruff"
+	local delivery_file="${WORK_DIR}/backend/routes/delivery.kujo"
 	perl -0pi -e 's/\t\tif type\(err\) != "null" \{\n\t\t\treturn fail\(cfg, 500, "db_query_failed", "Failed to build sitemap", \{\}\)\n\t\t\}\n\n\t\txml := "\<\?xml version=\\"1\.0\\" encoding=\\"UTF-8\\"\?\>\\n"/\t\tif type\(err\) != "null" \{\n\t\t\treturn fail\(cfg, 500, "db_query_failed", "Failed to build sitemap", \{\}\)\n\t\t\}\n\n\t\thelper_err := null\n\t\txml := ""\n\t\ttry {\n\t\t\txml = build_sitemap_xml\(cfg, rows\)\n\t\t} except e {\n\t\t\thelper_err = e\n\t\t}\n\t\tif type\(helper_err\) != "null" {\n\t\t\treturn api_text\(500, "debug-helper-error: " + to_string\(helper_err\), cfg\)\n\t\t}\n\t\treturn api_text\(200, xml, cfg\)\n\n\t\txml := "<?xml version=\\"1.0\\" encoding=\\"UTF-8\\"?>\\n"/s' "${delivery_file}"
 
 	if ! grep -q 'xml = build_sitemap_xml(cfg, rows)' "${delivery_file}"; then
@@ -55,7 +55,7 @@ apply_delivery_repro_patch() {
 }
 
 apply_tenancy_repro_patch() {
-	local tenancy_file="${WORK_DIR}/backend/routes/tenancy.ruff"
+	local tenancy_file="${WORK_DIR}/backend/routes/tenancy.kujo"
 	perl -0pi -e 's/scope_global := false\n\t\tauth_context := dict_get_or\(guard, "auth", \{\}\)\n\t\tpermissions := dict_get_or\(auth_context, "permissions", \[\]\)\n\t\tif type\(permissions\) == "array" \{\n\t\t\tfor permission in permissions \{\n\t\t\t\tif trim\(to_string\(permission\)\) == "\*" \{\n\t\t\t\t\tscope_global = true\n\t\t\t\t\}\n\t\t\t\}\n\t\t\}\n\t\tif scope_global == false \{\n\t\t\treturn fail\(cfg, 403, "tenant_scope_denied", "This token is not allowed to perform global tenant actions", \{\n\t\t\t\t"required_scope": "global"\n\t\t\t\}\)\n\t\t\}/auth_context := dict_get_or\(guard, "auth", \{\}\)\n\t\tscope_check := {"ok": false}\n\t\thelper_err := null\n\t\ttry {\n\t\t\tscope_check = ensure_global_tenant_access\(auth_context, cfg\)\n\t\t} except e {\n\t\t\thelper_err = e\n\t\t}\n\t\tif type\(helper_err\) != "null" {\n\t\t\treturn api_text\(500, "debug-tenant-helper-error: " + to_string\(helper_err\), cfg\)\n\t\t}\n\t\tif scope_check\["ok"\] == false \{\n\t\t\treturn scope_check\["response"\]\n\t\t\}/s' "${tenancy_file}"
 
 	if ! grep -q 'scope_check = ensure_global_tenant_access(auth_context, cfg)' "${tenancy_file}"; then

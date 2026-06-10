@@ -56,9 +56,9 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 	set +e
 	http_status="$(curl -sS -o "${response_file}" -w "%{http_code}" -X POST "${handler_url}" \
 		-H "Content-Type: application/json" \
-		-H "X-Kujo-Webhook-Event: ${event_type}" \
-		-H "X-Kujo-Webhook-Id: ${event_id}" \
-		-H "X-Kujo-Webhook-Signature: sha256=${signature}" \
+		-H "X-CMS-Webhook-Event: ${event_type}" \
+		-H "X-CMS-Webhook-Id: ${event_id}" \
+		-H "X-CMS-Webhook-Signature: sha256=${signature}" \
 		--connect-timeout "${CONNECT_TIMEOUT_SEC}" \
 		--max-time "${MAX_TIME_SEC}" \
 		--data "${payload_json}")"

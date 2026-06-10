@@ -20,10 +20,10 @@ TOKEN_LABEL="Audit Token ${RUN_TAG}"
 
 if [[ -n "${KUJO_BIN:-}" ]]; then
 	KUJO_BIN_PATH="${KUJO_BIN}"
-elif command -v ruff >/dev/null 2>&1; then
-	KUJO_BIN_PATH="$(command -v ruff)"
-elif [[ -x "${ROOT_DIR}/../ruff/target/debug/ruff" ]]; then
-	KUJO_BIN_PATH="${ROOT_DIR}/../ruff/target/debug/ruff"
+elif command -v kujo >/dev/null 2>&1; then
+	KUJO_BIN_PATH="$(command -v kujo)"
+elif [[ -x "${ROOT_DIR}/../kujo/target/debug/kujo" ]]; then
+	KUJO_BIN_PATH="${ROOT_DIR}/../kujo/target/debug/kujo"
 else
 	echo "Unable to locate Kujo runtime binary. Set KUJO_BIN to continue."
 	exit 1
@@ -120,12 +120,12 @@ assert_audit_row() {
 	echo "[PASS] ${context}: found action='${action}' target_id='${target_id}'"
 }
 
-echo "Starting Kujo CMS API for audit consistency integration checks..."
+echo "Starting CMS API for audit consistency integration checks..."
 (
 	cd "${ROOT_DIR}"
-	RUN_CMD=("${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.ruff)
+	RUN_CMD=("${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo)
 	if command -v stdbuf >/dev/null 2>&1; then
-		RUN_CMD=(stdbuf -oL -eL "${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.ruff)
+		RUN_CMD=(stdbuf -oL -eL "${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo)
 	fi
 	CMS_API_PORT="${PORT}" \
 	CMS_SITE_URL="${BASE_URL}" \

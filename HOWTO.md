@@ -1,4 +1,4 @@
-# Kujo CMS HOWTO (Beta Runbook)
+# CMS HOWTO (Beta Runbook)
 
 This guide is written for people who are new to Kujo and new to this CMS repository.
 
@@ -15,24 +15,24 @@ This project is an API-first CMS backend implemented in Kujo with SQLite storage
 
 Main runtime entrypoint:
 
-- `main.ruff`
+- `main.kujo`
 
 Core local modules used by the runtime:
 
-- `config.ruff`
-- `database.ruff`
-- `migrations.ruff`
-- `http.ruff`
-- `auth.ruff`
-- `delivery.ruff`
-- `content_types.ruff`
-- `taxonomies.ruff`
-- `entries.ruff`
-- `media.ruff`
-- `menus.ruff`
-- `plugins.ruff`
-- `themes.ruff`
-- `authz.ruff`
+- `config.kujo`
+- `database.kujo`
+- `migrations.kujo`
+- `http.kujo`
+- `auth.kujo`
+- `delivery.kujo`
+- `content_types.kujo`
+- `taxonomies.kujo`
+- `entries.kujo`
+- `media.kujo`
+- `menus.kujo`
+- `plugins.kujo`
+- `themes.kujo`
+- `authz.kujo`
 
 ## 2) Prerequisites
 
@@ -45,14 +45,14 @@ You need:
 ### Build Kujo runtime (if you do not already have it)
 
 ```bash
-cd /path/to/ruff
-cargo build --bin ruff
+cd /path/to/kujo
+cargo build --bin kujo
 ```
 
 This guide assumes your runtime is at:
 
 ```bash
-/path/to/kujo/target/debug/ruff
+/path/to/kujo/target/debug/kujo
 ```
 
 ## 3) Initial Setup
@@ -69,7 +69,7 @@ Minimum `.env` values to verify:
 - `CMS_API_HOST=127.0.0.1`
 - `CMS_API_PORT=4200`
 - `CMS_SITE_URL=http://127.0.0.1:4200`
-- `CMS_DB_PATH=kujo_cms.db`
+- `CMS_DB_PATH=cms.db`
 - `CMS_API_TOKEN=change-me-in-production`
 - `CMS_ENV=development`
 
@@ -79,12 +79,12 @@ Minimum `.env` values to verify:
 
 ```bash
 cd /path/to/kujo-cms
-/path/to/kujo/target/debug/ruff run --interpreter main.ruff
+/path/to/kujo/target/debug/kujo run --interpreter main.kujo
 ```
 
 Expected startup output includes:
 
-- `Kujo CMS API`
+- `CMS API`
 - `Server: http://127.0.0.1:<port>` when `CMS_API_HOST=127.0.0.1`
 - `Press Ctrl+C to stop`
 
@@ -98,7 +98,7 @@ CMS_API_HOST=127.0.0.1 \
 CMS_SITE_URL=http://127.0.0.1:4200 \
 CMS_DB_PATH=results/dev_4200.db \
 CMS_API_TOKEN=change-me-in-production \
-/path/to/kujo/target/debug/ruff run --interpreter main.ruff \
+/path/to/kujo/target/debug/kujo run --interpreter main.kujo \
   > results/dev_server_4200.log 2>&1 &
 echo $! > results/dev_server_4200.pid
 ```
@@ -369,14 +369,14 @@ curl -sS "${CMS_BASE}/v1/auth/tokens" \
 Use an explicit runtime binary to avoid drift:
 
 ```bash
-export KUJO_BIN=/path/to/kujo/target/debug/ruff
+export KUJO_BIN=/path/to/kujo/target/debug/kujo
 cd /path/to/kujo-cms
 ```
 
 Run all gates:
 
 ```bash
-"${KUJO_BIN}" test-run tests/cms_contract_tests.ruff
+"${KUJO_BIN}" test-run tests/cms_contract_tests.kujo
 CMS_TEST_PORT=49390 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage1.sh
 CMS_TEST_PORT=49391 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round1.sh
 CMS_TEST_PORT=49392 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round2-sitemaps.sh
@@ -400,14 +400,14 @@ You can also run all gates with one command:
 
 ```bash
 cd /path/to/kujo-cms
-KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/run-release-gate.sh
+KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
 ```
 
 If you want to skip perf in a fast CI-style pass:
 
 ```bash
 cd /path/to/kujo-cms
-CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/run-release-gate.sh
+CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
 ```
 
 ## 10) Important Operational Notes
@@ -427,21 +427,21 @@ Run migration safety validation (fresh boot + restart idempotence):
 
 ```bash
 cd /path/to/kujo-cms
-KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/migration-safety.sh
+KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/migration-safety.sh
 ```
 
 Create a backup:
 
 ```bash
 cd /path/to/kujo-cms
-bash scripts/backup-db.sh ./kujo_cms.db
+bash scripts/backup-db.sh ./cms.db
 ```
 
 Restore a backup:
 
 ```bash
 cd /path/to/kujo-cms
-bash scripts/restore-db.sh ./results/backups/<backup-file>.bak ./kujo_cms.db --force
+bash scripts/restore-db.sh ./results/backups/<backup-file>.bak ./cms.db --force
 ```
 
 Notes:

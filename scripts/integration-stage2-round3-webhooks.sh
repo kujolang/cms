@@ -16,10 +16,10 @@ SINK_LOG="${RESULTS_DIR}/integration_stage2_webhooks_sink_${PORT}.ndjson"
 
 if [[ -n "${KUJO_BIN:-}" ]]; then
 	KUJO_BIN_PATH="${KUJO_BIN}"
-elif command -v ruff >/dev/null 2>&1; then
-	KUJO_BIN_PATH="$(command -v ruff)"
-elif [[ -x "${ROOT_DIR}/../ruff/target/debug/ruff" ]]; then
-	KUJO_BIN_PATH="${ROOT_DIR}/../ruff/target/debug/ruff"
+elif command -v kujo >/dev/null 2>&1; then
+	KUJO_BIN_PATH="$(command -v kujo)"
+elif [[ -x "${ROOT_DIR}/../kujo/target/debug/kujo" ]]; then
+	KUJO_BIN_PATH="${ROOT_DIR}/../kujo/target/debug/kujo"
 else
 	echo "Unable to locate Kujo runtime binary. Set KUJO_BIN to continue."
 	exit 1
@@ -177,12 +177,12 @@ start_webhook_sink() {
 }
 
 start_api() {
-	echo "Starting Kujo CMS API for webhook integration checks..."
+	echo "Starting CMS API for webhook integration checks..."
 	(
 		cd "${ROOT_DIR}"
-		RUN_CMD=("${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.ruff)
+		RUN_CMD=("${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo)
 		if command -v stdbuf >/dev/null 2>&1; then
-			RUN_CMD=(stdbuf -oL -eL "${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.ruff)
+			RUN_CMD=(stdbuf -oL -eL "${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo)
 		fi
 		CMS_API_PORT="${PORT}" \
 		CMS_SITE_URL="${BASE_URL}" \
@@ -288,6 +288,6 @@ assert_sql_equals "SELECT COUNT(*) FROM webhook_dead_letters WHERE outbox_id = $
 )
 
 assert_sql_equals "SELECT status FROM webhook_outbox WHERE id = ${RETRY_OUTBOX_ID};" "dead_letter" "replayed row is processed again"
-assert_file_contains "${SINK_LOG}" '"x-kujo-webhook-event":"entry.created"' "sink captured entry.created payload"
+assert_file_contains "${SINK_LOG}" '"x-cms-webhook-event":"entry.created"' "sink captured entry.created payload"
 
 echo "Stage 2 Round 3 webhook integration checks passed."

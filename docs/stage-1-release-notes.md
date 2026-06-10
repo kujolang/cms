@@ -36,7 +36,7 @@ Stage 1 establishes a production-ready headless CMS API foundation in Kujo with 
 ## Validation Snapshot
 
 - Contract tests:
-	- `tests/cms_contract_tests.ruff` passing
+	- `tests/cms_contract_tests.kujo` passing
 - Integration matrix:
 	- `scripts/integration-stage1.sh` passing
 - Smoke checks:

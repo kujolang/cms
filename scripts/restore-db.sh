@@ -9,7 +9,7 @@ if [[ $# -lt 1 ]]; then
 fi
 
 BACKUP_DB="$1"
-TARGET_DB="${2:-${CMS_DB_PATH:-${ROOT_DIR}/kujo_cms.db}}"
+TARGET_DB="${2:-${CMS_DB_PATH:-${ROOT_DIR}/cms.db}}"
 FORCE_FLAG="${3:-}"
 
 if [[ ! -f "${BACKUP_DB}" ]]; then

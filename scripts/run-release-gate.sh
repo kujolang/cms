@@ -5,10 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ -n "${KUJO_BIN:-}" ]]; then
 	KUJO_BIN_PATH="${KUJO_BIN}"
-elif command -v ruff >/dev/null 2>&1; then
-	KUJO_BIN_PATH="$(command -v ruff)"
-elif [[ -x "${ROOT_DIR}/../ruff/target/debug/ruff" ]]; then
-	KUJO_BIN_PATH="${ROOT_DIR}/../ruff/target/debug/ruff"
+elif command -v kujo >/dev/null 2>&1; then
+	KUJO_BIN_PATH="$(command -v kujo)"
+elif [[ -x "${ROOT_DIR}/../kujo/target/debug/kujo" ]]; then
+	KUJO_BIN_PATH="${ROOT_DIR}/../kujo/target/debug/kujo"
 else
 	echo "Unable to locate Kujo runtime binary. Set KUJO_BIN to continue."
 	exit 1
@@ -58,7 +58,7 @@ run_step() {
 cd "${ROOT_DIR}"
 
 run_step "Contract tests" \
-	"${KUJO_BIN_PATH}" test-run tests/cms_contract_tests.ruff
+	"${KUJO_BIN_PATH}" test-run tests/cms_contract_tests.kujo
 
 run_step "Stage 1 integration" \
 	env CMS_TEST_PORT="${STAGE1_PORT}" KUJO_BIN="${KUJO_BIN_PATH}" \

@@ -1,13 +1,13 @@
-# Kujo CMS
+# CMS
 
-Kujo CMS is a server-first showcase/proof app that demonstrates local Kujo application patterns for content models, delivery routes, auth boundaries, and contract-tested APIs.
+CMS is a server-first showcase/proof app that demonstrates local Kujo application patterns for content models, delivery routes, auth boundaries, and contract-tested APIs.
 
-It boots from `backend/runtime/main.ruff`; there is no standalone CLI wrapper to validate.
+It boots from `backend/runtime/main.kujo`; there is no standalone CLI wrapper to validate.
 
-## Why Kujo CMS
+## Why CMS
 
 - Server-first architecture with clear module ownership under `backend/`
-- Canonical runtime entrypoint at `backend/runtime/main.ruff`
+- Canonical runtime entrypoint at `backend/runtime/main.kujo`
 - Content-model coverage for content types, taxonomies/terms, entries, media, menus, plugins, themes, roles, API tokens, tenants, and workspaces
 - Public delivery and discovery routes for `/.well-known/security.txt`, `/.well-known/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/sitemap-index.xml`, `/rss.xml`, `/health`, `/v1`, `/v1/contract`, and `/v1/openapi.json`
 - Auth-gated write routes, webhook delivery, background jobs, migration safety, and backup/restore
@@ -36,15 +36,15 @@ Canonical runtime and module layout:
 
 Verified startup path:
 
-`backend/runtime/main.ruff`
+`backend/runtime/main.kujo`
 
 | Area | Path |
 | --- | --- |
-| Runtime bootstrap | `backend/runtime/main.ruff` |
-| Config | `backend/config/config.ruff` |
-| Core transport/persistence | `backend/core/http.ruff`, `backend/core/database.ruff`, `backend/core/migrations.ruff`, `backend/core/utils.ruff` |
-| Auth/Authz modules | `backend/modules/auth.ruff`, `backend/modules/authz.ruff` |
-| Domain routes | `backend/routes/*.ruff` |
+| Runtime bootstrap | `backend/runtime/main.kujo` |
+| Config | `backend/config/config.kujo` |
+| Core transport/persistence | `backend/core/http.kujo`, `backend/core/database.kujo`, `backend/core/migrations.kujo`, `backend/core/utils.kujo` |
+| Auth/Authz modules | `backend/modules/auth.kujo`, `backend/modules/authz.kujo` |
+| Domain routes | `backend/routes/*.kujo` |
 
 Import policy:
 
@@ -96,13 +96,13 @@ cp .env.example .env
 
 ```bash
 cd /path/to/kujo-cms
-/path/to/kujo/target/debug/ruff run --interpreter backend/runtime/main.ruff
+/path/to/kujo/target/debug/kujo run --interpreter backend/runtime/main.kujo
 ```
 
 Default bind: `http://127.0.0.1:4200`
 Use `CMS_API_HOST` if you need an explicit non-default bind host; the reviewed showcase path defaults to `127.0.0.1`.
 
-The API boots directly from `backend/runtime/main.ruff`; there is no standalone CLI wrapper.
+The API boots directly from `backend/runtime/main.kujo`; there is no standalone CLI wrapper.
 
 Recommended env overrides:
 
@@ -119,23 +119,23 @@ Contract tests:
 
 ```bash
 cd /path/to/kujo-cms
-/path/to/kujo/target/debug/ruff test-run tests/cms_contract_tests.ruff
+/path/to/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo
 ```
 
 Full release gate:
 
 ```bash
 cd /path/to/kujo-cms
-CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/run-release-gate.sh
+CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
 ```
 
 Useful targeted checks:
 
 ```bash
-KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/integration-enterprise-security.sh
-KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/integration-multitenant.sh
-KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/smoke-api.sh
-KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/verify-compat-startup.sh
+KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/integration-enterprise-security.sh
+KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/integration-multitenant.sh
+KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/smoke-api.sh
+KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/verify-compat-startup.sh
 ```
 
 ## Operational Commands

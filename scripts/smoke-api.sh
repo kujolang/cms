@@ -14,10 +14,10 @@ LOG_FILE="${RESULTS_DIR}/smoke_server.log"
 
 if [[ -n "${KUJO_BIN:-}" ]]; then
 	KUJO_BIN_PATH="${KUJO_BIN}"
-elif command -v ruff >/dev/null 2>&1; then
-	KUJO_BIN_PATH="$(command -v ruff)"
-elif [[ -x "${ROOT_DIR}/../ruff/target/debug/ruff" ]]; then
-	KUJO_BIN_PATH="${ROOT_DIR}/../ruff/target/debug/ruff"
+elif command -v kujo >/dev/null 2>&1; then
+	KUJO_BIN_PATH="$(command -v kujo)"
+elif [[ -x "${ROOT_DIR}/../kujo/target/debug/kujo" ]]; then
+	KUJO_BIN_PATH="${ROOT_DIR}/../kujo/target/debug/kujo"
 else
 	echo "Unable to locate Kujo runtime binary. Set KUJO_BIN to continue."
 	exit 1
@@ -95,7 +95,7 @@ assert_contains() {
 	echo "[PASS] ${context}"
 }
 
-echo "Starting Kujo CMS API smoke check..."
+echo "Starting CMS API smoke check..."
 (
 	cd "${ROOT_DIR}"
 	CMS_API_HOST="${API_HOST}" \
@@ -103,7 +103,7 @@ echo "Starting Kujo CMS API smoke check..."
 	CMS_SITE_URL="${BASE_URL}" \
 	CMS_DB_PATH="${DB_PATH}" \
 	CMS_API_TOKEN="${TOKEN}" \
-	"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.ruff >"${LOG_FILE}" 2>&1
+	"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
 ) &
 SERVER_PID="$!"
 

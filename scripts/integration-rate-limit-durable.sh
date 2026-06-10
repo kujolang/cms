@@ -11,10 +11,10 @@ TOKEN="${CMS_TEST_TOKEN:-durable-rate-limit-token-123456}"
 
 if [[ -n "${KUJO_BIN:-}" ]]; then
 	KUJO_BIN_PATH="${KUJO_BIN}"
-elif command -v ruff >/dev/null 2>&1; then
-	KUJO_BIN_PATH="$(command -v ruff)"
-elif [[ -x "${ROOT_DIR}/../ruff/target/debug/ruff" ]]; then
-	KUJO_BIN_PATH="${ROOT_DIR}/../ruff/target/debug/ruff"
+elif command -v kujo >/dev/null 2>&1; then
+	KUJO_BIN_PATH="$(command -v kujo)"
+elif [[ -x "${ROOT_DIR}/../kujo/target/debug/kujo" ]]; then
+	KUJO_BIN_PATH="${ROOT_DIR}/../kujo/target/debug/kujo"
 else
 	echo "Unable to locate Kujo runtime binary. Set KUJO_BIN to continue."
 	exit 1
@@ -76,7 +76,7 @@ start_server() {
 		CMS_RATE_WINDOW_SEC="3600" \
 		CMS_RATE_MAX_REQUESTS="100" \
 		CMS_RATE_MAX_KEYS="10000" \
-		"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.ruff >"${log_file}" 2>&1
+		"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${log_file}" 2>&1
 	) &
 	SERVER_PID="$!"
 

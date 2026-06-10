@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RESULTS_DIR="${ROOT_DIR}/results"
 BACKUP_DIR="${CMS_BACKUP_DIR:-${RESULTS_DIR}/backups}"
 
-SOURCE_DB="${1:-${CMS_DB_PATH:-${ROOT_DIR}/kujo_cms.db}}"
+SOURCE_DB="${1:-${CMS_DB_PATH:-${ROOT_DIR}/cms.db}}"
 
 if [[ ! -f "${SOURCE_DB}" ]]; then
 	echo "Source database file not found: ${SOURCE_DB}"

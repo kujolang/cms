@@ -1,6 +1,6 @@
 # Documentation Index
 
-This index organizes Kujo CMS documentation by audience and workflow.
+This index organizes CMS documentation by audience and workflow.
 
 ## Start Here
 

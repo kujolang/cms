@@ -11,14 +11,14 @@ Use it as the execution source for the next improvement loop so each item can be
 Validation baseline captured on 2026-05-26:
 
 - Full release gate: pass (`scripts/run-release-gate.sh`)
-- Contract tests: pass (`tests/cms_contract_tests.ruff`)
+- Contract tests: pass (`tests/cms_contract_tests.kujo`)
 - Stage 1/2/3 integration matrix: pass
 - Multi-tenant, enterprise security, webhook/idempotency/background-jobs pipelines: pass
 - Performance budget checks: pass
 
 Current conclusion:
 
-- Kujo CMS is production-capable for v0.1 deployments when standard hardening controls are configured.
+- CMS is production-capable for v0.1 deployments when standard hardening controls are configured.
 - Remaining work below is focused on enterprise optimization, stronger misuse resistance, and DX clarity for wider adoption.
 
 ## Execution Protocol (One Item Per Loop)
@@ -58,7 +58,7 @@ Current conclusion:
   - Existing explicit override knobs still work for controlled environments.
 - **Validation/testing expectations**:
   - `CMS_TEST_PORT=53012 bash scripts/integration-enterprise-security.sh`
-  - `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff -v`
+  - `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo -v`
 - **Dependencies/unknowns**:
   - Decide final entropy rule (length-only vs. character-class rule).
 
@@ -91,7 +91,7 @@ Current conclusion:
 - **Validation/testing expectations**:
   - Extend `scripts/integration-stage2-round3-idempotency.sh`
   - `CMS_TEST_PORT=53014 bash scripts/integration-stage1.sh`
-  - `KUJO_BIN=/Users/robertdevore/2026/ruff/target/debug/ruff test-run tests/cms_contract_tests.ruff -v`
+  - `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo -v`
 - **Dependencies/unknowns**:
   - Prioritize endpoints by write criticality and external retry frequency.
 
@@ -163,7 +163,7 @@ Current conclusion:
 
 - **Implementation expectations**:
   - Keep root wrapper removal status current in architecture/readme docs.
-  - Document consumer migration guidance for canonical `backend/runtime/main.ruff` startup and dotted `from backend...` imports.
+  - Document consumer migration guidance for canonical `backend/runtime/main.kujo` startup and dotted `from backend...` imports.
   - Add contribution guidance for preferred backend import targets in new code.
 - **Acceptance criteria**:
   - Wrapper-removal intent is clear; migration consumers know what to adopt now.

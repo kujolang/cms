@@ -1,6 +1,6 @@
 # Stage 1 Completion Checklist
 
-This checklist defines what must be true before Stage 1 is considered complete for the Kujo CMS API foundation.
+This checklist defines what must be true before Stage 1 is considered complete for the CMS API foundation.
 
 Status legend:
 - [x] completed in current implementation

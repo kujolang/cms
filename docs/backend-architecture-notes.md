@@ -1,6 +1,6 @@
 # Backend Architecture Notes
 
-This document defines the stable architecture contract for Kujo CMS internals.
+This document defines the stable architecture contract for CMS internals.
 
 ## Objectives
 
@@ -12,17 +12,17 @@ This document defines the stable architecture contract for Kujo CMS internals.
 
 | Area | Responsibility | Paths |
 | --- | --- | --- |
-| Runtime | Bootstrap, context wiring, route registration | `backend/runtime/main.ruff` |
-| Config | Environment and policy defaults | `backend/config/config.ruff` |
-| Core | Transport, persistence, migration, utility primitives | `backend/core/*.ruff` |
-| Modules | Reusable domain/security logic | `backend/modules/*.ruff` |
-| Routes | API endpoint composition and request handling | `backend/routes/*.ruff` |
+| Runtime | Bootstrap, context wiring, route registration | `backend/runtime/main.kujo` |
+| Config | Environment and policy defaults | `backend/config/config.kujo` |
+| Core | Transport, persistence, migration, utility primitives | `backend/core/*.kujo` |
+| Modules | Reusable domain/security logic | `backend/modules/*.kujo` |
+| Routes | API endpoint composition and request handling | `backend/routes/*.kujo` |
 
 ## Import and Execution Policy
 
 - Use dotted backend imports only (for example, `from backend.core.http import fail`).
 - Do not use root-level compatibility wrapper modules.
-- Start the service with `backend/runtime/main.ruff`.
+- Start the service with `backend/runtime/main.kujo`.
 
 ## Runtime Composition Rules
 
@@ -63,6 +63,6 @@ For high-risk internal refactors:
 
 ## Current State
 
-- Root compatibility wrapper `.ruff` files have been removed.
+- Root compatibility wrapper `.kujo` files have been removed.
 - Backend module imports and runtime entrypoint migration are complete.
 - Architecture is aligned to a backend-first, enterprise-ready layout.

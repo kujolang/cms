@@ -266,7 +266,7 @@ func ensure_baseline_data(db, cfg) {
 }
 
 export connect_database := func(cfg) {
-	db_path := dict_get_or(cfg, "db_path", "kujo_cms.db")
+	db_path := dict_get_or(cfg, "db_path", "cms.db")
 	db := db_connect("sqlite", db_path)
 	if type(db) == "error" {
 		return {"ok": false, "error": to_string(db)}
