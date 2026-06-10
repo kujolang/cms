@@ -1,0 +1,364 @@
+from backend.core.utils import dict_get_or
+from backend.core.http import fail, guard_request
+
+export register_content_type_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/content-types", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+
+		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
+		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		sort_field := "id"
+		if sort_by == "type_key" {
+			sort_field = "type_key"
+		} else if sort_by == "label" {
+			sort_field = "label"
+		} else if sort_by == "singular_label" {
+			sort_field = "singular_label"
+		} else if sort_by == "created_at" {
+			sort_field = "created_at"
+		} else if sort_by == "updated_at" {
+			sort_field = "updated_at"
+		}
+		sort_dir_sql := "ASC"
+		if sort_dir == "desc" {
+			sort_dir_sql = "DESC"
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(
+				db,
+				"SELECT id, type_key, label, singular_label, description, supports_json, is_system, created_at, updated_at FROM content_types ORDER BY " + sort_field + " " + sort_dir_sql + " LIMIT ? OFFSET ?",
+				[limit, offset]
+			)
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load content types", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM content_types", [])
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count content types", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = count_rows[0]["total"]
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "total": total, "limit": limit, "offset": offset, "sort_by": sort_field, "sort_dir": to_lower(sort_dir_sql)}})
+	})
+
+	server = server.route("POST", "/v1/content-types", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		type_key := trim(to_string(dict_get_or(body, "type_key", "")))
+		label := trim(to_string(dict_get_or(body, "label", "")))
+		singular_label := trim(to_string(dict_get_or(body, "singular_label", label)))
+		description := trim(to_string(dict_get_or(body, "description", "")))
+		supports_json := "{}"
+		if has_key(body, "supports") == 1 {
+			supports := body["supports"]
+			if type(supports) == "dict" || type(supports) == "array" {
+				supports_json = to_json(supports)
+			} else if type(supports) == "string" {
+				supports_json = to_string(supports)
+			}
+		}
+
+		invalid_chars := regex_replace(type_key, "[a-z0-9_\\-]", "")
+		if len(type_key) < 2 || len(type_key) > 64 || type_key != to_lower(type_key) || invalid_chars != "" {
+			return fail(cfg, 400, "invalid_type_key", "type_key must be lowercase slug text", {})
+		}
+		if len(label) < 2 {
+			return fail(cfg, 400, "invalid_label", "label must be at least 2 characters", {})
+		}
+		if len(singular_label) < 2 {
+			return fail(cfg, 400, "invalid_singular_label", "singular_label must be at least 2 characters", {})
+		}
+
+		now_ts := now()
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO content_types (type_key, label, singular_label, description, supports_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				[type_key, label, singular_label, description, supports_json, 0, now_ts, now_ts]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create content type (possibly duplicate type_key)", {})
+		}
+
+		created_rows := []
+		query_err := null
+		try {
+			created_rows = db_query(db, "SELECT * FROM content_types WHERE type_key = ? ORDER BY id DESC LIMIT 1", [type_key])
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" || len(created_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created content type but failed to load it", {})
+		}
+
+		new_id := created_rows[0]["id"]
+		return json_response(201, {"ok": true, "data": created_rows[0]})
+	})
+
+	server = server.route("GET", "/v1/content-types/:id", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		id_text := to_string(dict_get_or(params, "id", "0"))
+		id_value := 0
+		id_err := null
+		try {
+			id_value = to_int(id_text)
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || id_value <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		rows := []
+		query_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM content_types WHERE id = ?", [id_value])
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to query content type", {})
+		}
+		if len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "Content type not found", {})
+		}
+
+		return json_response(200, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/content-types/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		id_text := to_string(dict_get_or(params, "id", "0"))
+		content_type_id := 0
+		id_err := null
+		try {
+			content_type_id = to_int(id_text)
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || content_type_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM content_types WHERE id = ?", [content_type_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load content type", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Content type not found", {})
+		}
+		existing := existing_rows[0]
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		label := trim(to_string(dict_get_or(body, "label", existing["label"])))
+		singular_label := trim(to_string(dict_get_or(body, "singular_label", existing["singular_label"])))
+		description := trim(to_string(dict_get_or(body, "description", existing["description"])))
+		supports_json := existing["supports_json"]
+		if has_key(body, "supports") == 1 {
+			supports := body["supports"]
+			if type(supports) == "dict" || type(supports) == "array" {
+				supports_json = to_json(supports)
+			} else if type(supports) == "string" {
+				supports_json = to_string(supports)
+			}
+		}
+
+		if len(label) < 2 || len(singular_label) < 2 {
+			return fail(cfg, 400, "invalid_label", "label and singular_label must be at least 2 characters", {})
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE content_types SET label = ?, singular_label = ?, description = ?, supports_json = ?, updated_at = ? WHERE id = ?",
+				[label, singular_label, description, supports_json, now(), content_type_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update content type", {})
+		}
+
+		updated_rows := []
+		updated_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM content_types WHERE id = ?", [content_type_id])
+		} except e {
+			updated_err = e
+		}
+		if type(updated_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated content type but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("DELETE", "/v1/content-types/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		id_text := to_string(dict_get_or(params, "id", "0"))
+		content_type_id := 0
+		id_err := null
+		try {
+			content_type_id = to_int(id_text)
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || content_type_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM content_types WHERE id = ?", [content_type_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load content type", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Content type not found", {})
+		}
+		existing := existing_rows[0]
+		if dict_get_or(existing, "is_system", 0) == 1 {
+			return fail(cfg, 403, "system_type", "System content types cannot be deleted", {})
+		}
+
+		usage_rows := []
+		usage_err := null
+		try {
+			usage_rows = db_query(db, "SELECT COUNT(*) AS total FROM entries WHERE content_type_key = ?", [existing["type_key"]])
+		} except e {
+			usage_err = e
+		}
+		if type(usage_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to check content type usage", {})
+		}
+		if len(usage_rows) > 0 && usage_rows[0]["total"] > 0 {
+			return fail(cfg, 409, "in_use", "Cannot delete content type with existing entries", {})
+		}
+
+		delete_err := null
+		try {
+			db_execute(db, "DELETE FROM content_types WHERE id = ?", [content_type_id])
+		} except e {
+			delete_err = e
+		}
+		if type(delete_err) != "null" {
+			return fail(cfg, 500, "delete_failed", "Failed to delete content type", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"deleted": true, "id": content_type_id}})
+	})
+
+	return server
+}

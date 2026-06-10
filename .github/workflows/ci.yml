@@ -1,0 +1,94 @@
+name: Kujo CMS CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  stage1-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve Kujo runtime
+        id: kujo
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v ruff >/dev/null 2>&1; then
+            echo "path=$(command -v ruff)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ -d ../ruff && -f ../ruff/Cargo.toml ]]; then
+            cargo build --manifest-path ../ruff/Cargo.toml --bin ruff
+            echo "path=$(realpath ../ruff/target/debug/ruff)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::error::Unable to locate Kujo runtime binary. Provide it in PATH as 'ruff' or include a sibling ../ruff workspace with Cargo.toml."
+          exit 1
+
+      - name: Contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${{ steps.kujo.outputs.path }}" test-run tests/cms_contract_tests.ruff
+
+      - name: Stage 1 integration harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          KUJO_BIN="${{ steps.kujo.outputs.path }}" CMS_TEST_PORT=4290 bash scripts/integration-stage1.sh
+
+  release-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Resolve Kujo runtime
+        id: kujo
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v ruff >/dev/null 2>&1; then
+            echo "path=$(command -v ruff)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ -d ../ruff && -f ../ruff/Cargo.toml ]]; then
+            cargo build --manifest-path ../ruff/Cargo.toml --bin ruff
+            echo "path=$(realpath ../ruff/target/debug/ruff)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::error::Unable to locate Kujo runtime binary. Provide it in PATH as 'ruff' or include a sibling ../ruff workspace with Cargo.toml."
+          exit 1
+
+      - name: Full release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          CMS_GATE_RUN_PERF=true CMS_GATE_PERF_RUNS=5 CMS_GATE_RUN_PERF_BUDGET=true KUJO_BIN="${{ steps.kujo.outputs.path }}" bash scripts/run-release-gate.sh

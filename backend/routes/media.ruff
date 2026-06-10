@@ -1,0 +1,330 @@
+from backend.core.utils import dict_get_or
+from backend.core.http import fail, guard_request
+
+export register_media_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/media", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
+		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		sort_field := "id"
+		if sort_by == "filename" {
+			sort_field = "filename"
+		} else if sort_by == "mime_type" {
+			sort_field = "mime_type"
+		} else if sort_by == "size_bytes" {
+			sort_field = "size_bytes"
+		} else if sort_by == "created_at" {
+			sort_field = "created_at"
+		} else if sort_by == "updated_at" {
+			sort_field = "updated_at"
+		}
+		sort_dir_sql := "ASC"
+		if sort_dir == "desc" {
+			sort_dir_sql = "DESC"
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT * FROM media_items ORDER BY " + sort_field + " " + sort_dir_sql + " LIMIT ? OFFSET ?", [limit, offset])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load media items", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM media_items", [])
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count media items", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = count_rows[0]["total"]
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "total": total, "limit": limit, "offset": offset, "sort_by": sort_field, "sort_dir": to_lower(sort_dir_sql)}})
+	})
+
+	server = server.route("POST", "/v1/media", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		filename := trim(to_string(dict_get_or(body, "filename", "")))
+		mime_type := trim(to_string(dict_get_or(body, "mime_type", "application/octet-stream")))
+		storage_path := trim(to_string(dict_get_or(body, "storage_path", "")))
+		size_bytes := dict_get_or(body, "size_bytes", 0)
+		alt_text := trim(to_string(dict_get_or(body, "alt_text", "")))
+		meta_json := "{}"
+		if has_key(body, "meta") == 1 {
+			meta_value := body["meta"]
+			if type(meta_value) == "array" || type(meta_value) == "dict" {
+				meta_json = to_json(meta_value)
+			} else if type(meta_value) == "string" {
+				meta_json = to_string(meta_value)
+			}
+		}
+
+		if filename == "" {
+			return fail(cfg, 400, "invalid_filename", "filename is required", {})
+		}
+		if storage_path == "" {
+			return fail(cfg, 400, "invalid_storage_path", "storage_path is required", {})
+		}
+
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO media_items (filename, mime_type, storage_path, size_bytes, alt_text, meta_json, uploaded_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				[filename, mime_type, storage_path, size_bytes, alt_text, meta_json, now(), now()]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 500, "create_failed", "Failed to create media item", {})
+		}
+
+		media_id := db_last_insert_id(db)
+		rows := []
+		load_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM media_items WHERE id = ?", [media_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created media item but failed to load it", {})
+		}
+
+		return json_response(201, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("GET", "/v1/media/:id", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		media_id := -1
+		id_err := null
+		try {
+			media_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || media_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT * FROM media_items WHERE id = ?", [media_id])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load media item", {})
+		}
+		if len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "Media item not found", {})
+		}
+
+		return json_response(200, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/media/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		media_id := -1
+		id_err := null
+		try {
+			media_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || media_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM media_items WHERE id = ?", [media_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load media item", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Media item not found", {})
+		}
+		existing := existing_rows[0]
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		filename := trim(to_string(dict_get_or(body, "filename", existing["filename"])))
+		mime_type := trim(to_string(dict_get_or(body, "mime_type", existing["mime_type"])))
+		storage_path := trim(to_string(dict_get_or(body, "storage_path", existing["storage_path"])))
+		size_bytes := dict_get_or(body, "size_bytes", existing["size_bytes"])
+		alt_text := trim(to_string(dict_get_or(body, "alt_text", existing["alt_text"])))
+		meta_json := to_string(dict_get_or(existing, "meta_json", "{}"))
+		if has_key(body, "meta") == 1 {
+			meta_value := body["meta"]
+			if type(meta_value) == "array" || type(meta_value) == "dict" {
+				meta_json = to_json(meta_value)
+			} else if type(meta_value) == "string" {
+				meta_json = to_string(meta_value)
+			}
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE media_items SET filename = ?, mime_type = ?, storage_path = ?, size_bytes = ?, alt_text = ?, meta_json = ?, updated_at = ? WHERE id = ?",
+				[filename, mime_type, storage_path, size_bytes, alt_text, meta_json, now(), media_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update media item", {})
+		}
+
+		updated_rows := []
+		load_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM media_items WHERE id = ?", [media_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated media item but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("DELETE", "/v1/media/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		media_id := -1
+		id_err := null
+		try {
+			media_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || media_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		delete_err := null
+		try {
+			db_execute(db, "DELETE FROM media_items WHERE id = ?", [media_id])
+		} except e {
+			delete_err = e
+		}
+		if type(delete_err) != "null" {
+			return fail(cfg, 500, "delete_failed", "Failed to delete media item", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"deleted": true, "id": media_id}})
+	})
+
+	return server
+}

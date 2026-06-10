@@ -1,0 +1,321 @@
+from backend.core.utils import dict_get_or, ensure_json_text
+from backend.core.migrations import get_schema_version, run_post_bootstrap_migrations
+
+export db_query_safe := func(db, sql, params) {
+	rows := db_query(db, sql, params)
+	if type(rows) == "error" {
+		return {"ok": false, "error": to_string(rows), "rows": []}
+	}
+	return {"ok": true, "rows": rows}
+}
+
+export db_execute_safe := func(db, sql, params) {
+	result := db_execute(db, sql, params)
+	if type(result) == "error" {
+		return {"ok": false, "error": to_string(result)}
+	}
+	return {"ok": true, "result": result}
+}
+
+func ensure_seed_row(db, table_name, key_name, key_value, insert_sql, insert_params) {
+	count_sql := "SELECT COUNT(*) AS total FROM " + table_name + " WHERE " + key_name + " = ?"
+	found := db_query_safe(db, count_sql, [key_value])
+	if found["ok"] == false {
+		return found
+	}
+	rows := found["rows"]
+	total := 0
+	if len(rows) > 0 {
+		total := rows[0]["total"]
+	}
+	if total > 0 {
+		return {"ok": true}
+	}
+	return db_execute_safe(db, insert_sql, insert_params)
+}
+
+func ensure_schema(db) {
+	pragma_steps := [
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA synchronous=NORMAL",
+		"PRAGMA foreign_keys=ON",
+		"PRAGMA busy_timeout=5000"
+	]
+
+	for sql in pragma_steps {
+		result := db_query_safe(db, sql, [])
+		if result["ok"] == false {
+			return result
+		}
+	}
+
+	schema_steps := [
+		"CREATE TABLE IF NOT EXISTS content_types (id INTEGER PRIMARY KEY AUTOINCREMENT, type_key TEXT NOT NULL UNIQUE, label TEXT NOT NULL, singular_label TEXT NOT NULL, description TEXT NOT NULL, supports_json TEXT NOT NULL, is_system INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS taxonomies (id INTEGER PRIMARY KEY AUTOINCREMENT, taxonomy_key TEXT NOT NULL UNIQUE, label TEXT NOT NULL, description TEXT NOT NULL, hierarchical INTEGER NOT NULL DEFAULT 0, is_system INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS taxonomy_terms (id INTEGER PRIMARY KEY AUTOINCREMENT, taxonomy_id INTEGER NOT NULL, name TEXT NOT NULL, slug TEXT NOT NULL, description TEXT NOT NULL, parent_id INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(taxonomy_id) REFERENCES taxonomies(id) ON DELETE CASCADE)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_taxonomy_terms_unique ON taxonomy_terms(taxonomy_id, slug)",
+		"CREATE TABLE IF NOT EXISTS entries (id INTEGER PRIMARY KEY AUTOINCREMENT, content_type_key TEXT NOT NULL, title TEXT NOT NULL, slug TEXT NOT NULL, status TEXT NOT NULL, excerpt TEXT NOT NULL, body TEXT NOT NULL, meta_json TEXT NOT NULL, author_id TEXT NOT NULL, published_at TEXT, unpublish_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE INDEX IF NOT EXISTS idx_entries_content_type ON entries(content_type_key)",
+		"CREATE INDEX IF NOT EXISTS idx_entries_status ON entries(status)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_entries_slug_type ON entries(content_type_key, slug)",
+		"CREATE TABLE IF NOT EXISTS entry_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER NOT NULL, title TEXT NOT NULL, slug TEXT NOT NULL, status TEXT NOT NULL, excerpt TEXT NOT NULL, body TEXT NOT NULL, meta_json TEXT NOT NULL, author_id TEXT NOT NULL, published_at TEXT, revision_note TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(entry_id) REFERENCES entries(id) ON DELETE CASCADE)",
+		"CREATE INDEX IF NOT EXISTS idx_entry_revisions_entry_created ON entry_revisions(entry_id, created_at DESC)",
+		"CREATE TABLE IF NOT EXISTS entry_locks (entry_id INTEGER PRIMARY KEY, lock_token TEXT NOT NULL, locked_by TEXT NOT NULL, lock_note TEXT NOT NULL, locked_at TEXT NOT NULL, expires_at TEXT NOT NULL, FOREIGN KEY(entry_id) REFERENCES entries(id) ON DELETE CASCADE)",
+		"CREATE INDEX IF NOT EXISTS idx_entry_locks_expires_at ON entry_locks(expires_at)",
+		"CREATE TABLE IF NOT EXISTS entry_terms (entry_id INTEGER NOT NULL, term_id INTEGER NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(entry_id, term_id), FOREIGN KEY(entry_id) REFERENCES entries(id) ON DELETE CASCADE, FOREIGN KEY(term_id) REFERENCES taxonomy_terms(id) ON DELETE CASCADE)",
+		"CREATE TABLE IF NOT EXISTS media_items (id INTEGER PRIMARY KEY AUTOINCREMENT, filename TEXT NOT NULL, mime_type TEXT NOT NULL, storage_path TEXT NOT NULL, size_bytes INTEGER NOT NULL DEFAULT 0, alt_text TEXT NOT NULL, meta_json TEXT NOT NULL, uploaded_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE INDEX IF NOT EXISTS idx_media_mime ON media_items(mime_type)",
+		"CREATE TABLE IF NOT EXISTS menus (id INTEGER PRIMARY KEY AUTOINCREMENT, menu_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, location TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS menu_items (id INTEGER PRIMARY KEY AUTOINCREMENT, menu_id INTEGER NOT NULL, label TEXT NOT NULL, url TEXT NOT NULL, parent_id INTEGER, position INTEGER NOT NULL DEFAULT 0, target TEXT NOT NULL DEFAULT '_self', meta_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(menu_id) REFERENCES menus(id) ON DELETE CASCADE)",
+		"CREATE INDEX IF NOT EXISTS idx_menu_items_menu_position ON menu_items(menu_id, position)",
+		"CREATE TABLE IF NOT EXISTS plugins (id INTEGER PRIMARY KEY AUTOINCREMENT, plugin_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, version TEXT NOT NULL, status TEXT NOT NULL, capabilities_json TEXT NOT NULL, config_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS plugin_hooks (id INTEGER PRIMARY KEY AUTOINCREMENT, plugin_id INTEGER NOT NULL, hook_name TEXT NOT NULL, handler_url TEXT NOT NULL, shared_secret TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(plugin_id) REFERENCES plugins(id) ON DELETE CASCADE)",
+		"CREATE INDEX IF NOT EXISTS idx_plugin_hooks_name ON plugin_hooks(hook_name)",
+		"CREATE TABLE IF NOT EXISTS webhook_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, hook_id INTEGER NOT NULL, event_id TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL, handler_url TEXT NOT NULL, shared_secret TEXT NOT NULL, status TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 5, next_attempt_at TEXT NOT NULL, last_error TEXT, last_status_code INTEGER, delivered_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(hook_id) REFERENCES plugin_hooks(id) ON DELETE CASCADE)",
+		"CREATE INDEX IF NOT EXISTS idx_webhook_outbox_status_next_attempt ON webhook_outbox(status, next_attempt_at)",
+		"CREATE INDEX IF NOT EXISTS idx_webhook_outbox_event_type ON webhook_outbox(event_type)",
+		"CREATE INDEX IF NOT EXISTS idx_webhook_outbox_hook_id ON webhook_outbox(hook_id)",
+		"CREATE TABLE IF NOT EXISTS webhook_dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, outbox_id INTEGER NOT NULL, hook_id INTEGER NOT NULL, event_id TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL, handler_url TEXT NOT NULL, shared_secret TEXT NOT NULL, attempt_count INTEGER NOT NULL, last_error TEXT, last_status_code INTEGER, failed_at TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(outbox_id) REFERENCES webhook_outbox(id) ON DELETE CASCADE, FOREIGN KEY(hook_id) REFERENCES plugin_hooks(id) ON DELETE CASCADE)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_dead_letters_outbox_id ON webhook_dead_letters(outbox_id)",
+		"CREATE INDEX IF NOT EXISTS idx_webhook_dead_letters_failed_at ON webhook_dead_letters(failed_at)",
+		"CREATE TABLE IF NOT EXISTS webhook_dispatch_state (id INTEGER PRIMARY KEY CHECK (id = 1), last_audit_id INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS background_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, job_type TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 5, run_after TEXT NOT NULL, last_error TEXT, result_json TEXT, started_at TEXT, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE INDEX IF NOT EXISTS idx_background_jobs_status_run_after ON background_jobs(status, run_after)",
+		"CREATE INDEX IF NOT EXISTS idx_background_jobs_job_type_status ON background_jobs(job_type, status)",
+		"CREATE TABLE IF NOT EXISTS background_job_dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, job_type TEXT NOT NULL, payload_json TEXT NOT NULL, attempt_count INTEGER NOT NULL, max_attempts INTEGER NOT NULL, last_error TEXT, failed_at TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(job_id) REFERENCES background_jobs(id) ON DELETE CASCADE)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_background_job_dead_letters_job_id ON background_job_dead_letters(job_id)",
+		"CREATE TABLE IF NOT EXISTS idempotency_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, idempotency_key TEXT NOT NULL UNIQUE, request_method TEXT NOT NULL, request_path TEXT NOT NULL, request_hash TEXT NOT NULL, status TEXT NOT NULL, response_status INTEGER NOT NULL DEFAULT 200, response_json TEXT NOT NULL, request_id TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT)",
+		"CREATE INDEX IF NOT EXISTS idx_idempotency_keys_created_at ON idempotency_keys(created_at)",
+		"CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires_at ON idempotency_keys(expires_at)",
+		"CREATE TABLE IF NOT EXISTS rate_limit_buckets (rate_key TEXT PRIMARY KEY, window_start_ms INTEGER NOT NULL, count INTEGER NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_updated_at ON rate_limit_buckets(updated_at)",
+		"CREATE TABLE IF NOT EXISTS themes (id INTEGER PRIMARY KEY AUTOINCREMENT, theme_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, version TEXT NOT NULL, status TEXT NOT NULL, config_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, role_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, permissions_json TEXT NOT NULL, is_system INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, role_key TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT, last_used_at TEXT)",
+		"CREATE TABLE IF NOT EXISTS tenants (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, disabled_at TEXT, archived_at TEXT)",
+		"CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(status)",
+		"CREATE TABLE IF NOT EXISTS workspaces (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, workspace_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, disabled_at TEXT, archived_at TEXT, FOREIGN KEY(tenant_id) REFERENCES tenants(id) ON DELETE CASCADE)",
+		"CREATE INDEX IF NOT EXISTS idx_workspaces_tenant_id ON workspaces(tenant_id)",
+		"CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status)",
+		"CREATE TABLE IF NOT EXISTS settings (id INTEGER PRIMARY KEY AUTOINCREMENT, setting_key TEXT NOT NULL UNIQUE, setting_value TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, ip TEXT NOT NULL, method TEXT NOT NULL, path TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, status_code INTEGER NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL, details_json TEXT NOT NULL)"
+	]
+
+	for sql in schema_steps {
+		result := db_execute_safe(db, sql, [])
+		if result["ok"] == false {
+			return result
+		}
+	}
+
+	return {"ok": true}
+}
+
+func ensure_baseline_data(db, cfg) {
+	now_ts := now()
+
+	seed_1 := ensure_seed_row(
+		db,
+		"content_types",
+		"type_key",
+		"article",
+		"INSERT INTO content_types (type_key, label, singular_label, description, supports_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		["article", "Articles", "Article", "Long-form content type", to_json({"title": true, "body": true, "excerpt": true, "featured_media": true}), 1, now_ts, now_ts]
+	)
+	if seed_1["ok"] == false {
+		return seed_1
+	}
+
+	seed_2 := ensure_seed_row(
+		db,
+		"content_types",
+		"type_key",
+		"page",
+		"INSERT INTO content_types (type_key, label, singular_label, description, supports_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		["page", "Pages", "Page", "Static structured pages", to_json({"title": true, "body": true, "template": true}), 1, now_ts, now_ts]
+	)
+	if seed_2["ok"] == false {
+		return seed_2
+	}
+
+	seed_3 := ensure_seed_row(
+		db,
+		"taxonomies",
+		"taxonomy_key",
+		"category",
+		"INSERT INTO taxonomies (taxonomy_key, label, description, hierarchical, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		["category", "Categories", "Hierarchical organization", 1, 1, now_ts, now_ts]
+	)
+	if seed_3["ok"] == false {
+		return seed_3
+	}
+
+	seed_4 := ensure_seed_row(
+		db,
+		"taxonomies",
+		"taxonomy_key",
+		"tag",
+		"INSERT INTO taxonomies (taxonomy_key, label, description, hierarchical, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		["tag", "Tags", "Flat keyword labels", 0, 1, now_ts, now_ts]
+	)
+	if seed_4["ok"] == false {
+		return seed_4
+	}
+
+	seed_5 := ensure_seed_row(
+		db,
+		"menus",
+		"menu_key",
+		"main",
+		"INSERT INTO menus (menu_key, name, location, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+		["main", "Main Navigation", "header", now_ts, now_ts]
+	)
+	if seed_5["ok"] == false {
+		return seed_5
+	}
+
+	seed_6 := ensure_seed_row(
+		db,
+		"themes",
+		"theme_key",
+		"starter",
+		"INSERT INTO themes (theme_key, name, version, status, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		["starter", "Starter Theme", "1.0.0", "active", to_json({"supports": ["layouts", "templates"], "version": 1}), now_ts, now_ts]
+	)
+	if seed_6["ok"] == false {
+		return seed_6
+	}
+
+	seed_7 := ensure_seed_row(
+		db,
+		"plugins",
+		"plugin_key",
+		"analytics",
+		"INSERT INTO plugins (plugin_key, name, version, status, capabilities_json, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		["analytics", "Analytics Connector", "0.1.0", "inactive", to_json(["event.track", "event.pageview"]), to_json({"provider": "internal"}), now_ts, now_ts]
+	)
+	if seed_7["ok"] == false {
+		return seed_7
+	}
+
+	seed_8 := ensure_seed_row(
+		db,
+		"entries",
+		"slug",
+		"welcome",
+		"INSERT INTO entries (content_type_key, title, slug, status, excerpt, body, meta_json, author_id, published_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		["article", "Welcome", "welcome", "published", "Seeded demo article", "This entry exists so the API has immediate sample content.", to_json({"featured": true}), "system", now_ts, now_ts, now_ts]
+	)
+	if seed_8["ok"] == false {
+		return seed_8
+	}
+
+	seed_9 := ensure_seed_row(
+		db,
+		"roles",
+		"role_key",
+		"super_admin",
+		"INSERT INTO roles (role_key, name, permissions_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		["super_admin", "Super Admin", to_json(["*"]), 1, now_ts, now_ts]
+	)
+	if seed_9["ok"] == false {
+		return seed_9
+	}
+
+	seed_10 := ensure_seed_row(
+		db,
+		"roles",
+		"role_key",
+		"editor",
+		"INSERT INTO roles (role_key, name, permissions_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		["editor", "Editor", to_json(["cms.read", "cms.write", "entries.*", "media.*", "taxonomies.*", "menus.*"]), 1, now_ts, now_ts]
+	)
+	if seed_10["ok"] == false {
+		return seed_10
+	}
+
+	seed_11 := ensure_seed_row(
+		db,
+		"roles",
+		"role_key",
+		"viewer",
+		"INSERT INTO roles (role_key, name, permissions_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		["viewer", "Viewer", to_json(["cms.read"]), 1, now_ts, now_ts]
+	)
+	if seed_11["ok"] == false {
+		return seed_11
+	}
+
+	bootstrap_token := trim(to_string(dict_get_or(cfg, "api_token", "")))
+	if bootstrap_token != "" {
+		bootstrap_hash := sha256(bootstrap_token)
+		seed_12 := ensure_seed_row(
+			db,
+			"api_tokens",
+			"token_hash",
+			bootstrap_hash,
+			"INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+			[bootstrap_hash, "bootstrap-env-token", "super_admin", 1, now_ts, now_ts, null, null]
+		)
+		if seed_12["ok"] == false {
+			return seed_12
+		}
+	}
+
+	return {"ok": true}
+}
+
+export connect_database := func(cfg) {
+	db_path := dict_get_or(cfg, "db_path", "kujo_cms.db")
+	db := db_connect("sqlite", db_path)
+	if type(db) == "error" {
+		return {"ok": false, "error": to_string(db)}
+	}
+
+	schema_result := ensure_schema(db)
+	if schema_result["ok"] == false {
+		return schema_result
+	}
+
+	seed_result := ensure_baseline_data(db, cfg)
+	if seed_result["ok"] == false {
+		return seed_result
+	}
+
+	migration_result := run_post_bootstrap_migrations(db)
+	if migration_result["ok"] == false {
+		return migration_result
+	}
+
+	version_result := get_schema_version(db)
+	if version_result["ok"] == false {
+		return version_result
+	}
+
+	return {
+		"ok": true,
+		"db": db,
+		"schema_version": version_result["version"],
+		"migrations_applied": dict_get_or(migration_result, "applied", [])
+	}
+}
+
+export write_audit_event := func(db, event) {
+	details_json := ensure_json_text(dict_get_or(event, "details", {}), {})
+	return db_execute_safe(
+		db,
+		"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[
+			dict_get_or(event, "created_at", now()),
+			dict_get_or(event, "ip", "unknown"),
+			dict_get_or(event, "method", "UNKNOWN"),
+			dict_get_or(event, "path", ""),
+			dict_get_or(event, "actor", "system"),
+			dict_get_or(event, "action", "unknown"),
+			dict_get_or(event, "status_code", 0),
+			dict_get_or(event, "target_type", "none"),
+			to_string(dict_get_or(event, "target_id", "0")),
+			details_json
+		]
+	)
+}

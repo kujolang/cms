@@ -1,0 +1,183 @@
+# Kujo CMS
+
+Kujo CMS is a server-first showcase/proof app that demonstrates local Kujo application patterns for content models, delivery routes, auth boundaries, and contract-tested APIs.
+
+It boots from `backend/runtime/main.ruff`; there is no standalone CLI wrapper to validate.
+
+## Why Kujo CMS
+
+- Server-first architecture with clear module ownership under `backend/`
+- Canonical runtime entrypoint at `backend/runtime/main.ruff`
+- Content-model coverage for content types, taxonomies/terms, entries, media, menus, plugins, themes, roles, API tokens, tenants, and workspaces
+- Public delivery and discovery routes for `/.well-known/security.txt`, `/.well-known/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/sitemap-index.xml`, `/rss.xml`, `/health`, `/v1`, `/v1/contract`, and `/v1/openapi.json`
+- Auth-gated write routes, webhook delivery, background jobs, migration safety, and backup/restore
+- Release-gate automation covering contract, smoke, startup compatibility, integration, security, and optional performance checks
+
+## Core Capabilities
+
+- Content types, taxonomies/terms, entries, media, menus
+- Plugin registry and webhook hooks
+- Theme registry and activation controls
+- Roles and API tokens with lifecycle controls
+- Tenants and workspaces with isolation controls
+- Public delivery and discovery routes (`/.well-known/security.txt`, `/.well-known/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/sitemap-index.xml`, `/rss.xml`, `/health`, `/v1`, `/v1/contract`, `/v1/openapi.json`)
+- Scheduler, revisions, rollback, and entry locking
+
+## Showcase Positioning
+
+- CMS proves Kujo can support a practical server-first application surface.
+- CRUD API Showcase demonstrates a smaller API pattern.
+- SSG demonstrates static publishing.
+- Lens and ShipCheck help review and gate the result.
+
+## Architecture
+
+Canonical runtime and module layout:
+
+Verified startup path:
+
+`backend/runtime/main.ruff`
+
+| Area | Path |
+| --- | --- |
+| Runtime bootstrap | `backend/runtime/main.ruff` |
+| Config | `backend/config/config.ruff` |
+| Core transport/persistence | `backend/core/http.ruff`, `backend/core/database.ruff`, `backend/core/migrations.ruff`, `backend/core/utils.ruff` |
+| Auth/Authz modules | `backend/modules/auth.ruff`, `backend/modules/authz.ruff` |
+| Domain routes | `backend/routes/*.ruff` |
+
+Import policy:
+
+- Use dotted backend imports for local modules (for example, `from backend.core.http import fail`).
+- Do not reintroduce root-level compatibility wrapper modules.
+- Start the API from the verified runtime entrypoint; there is no standalone CLI wrapper.
+
+## Security and Operations Baseline
+
+Security controls:
+
+- Bearer token enforcement for write routes
+- Bootstrap token hardening (production-safe defaults, entropy policy)
+- Strict JSON mutation validation and body-size limits
+- Rate limiting (`memory`, `sqlite`, `external`, `off` modes)
+- Idempotency support for mutation retry safety
+- Plugin hook URL policy controls (allowlist/denylist, scheme restrictions)
+- Structured audit logging for sensitive mutations
+
+Operations controls:
+
+- Health, readiness, and metrics endpoints
+- Webhook outbox retries + dead-letter replay
+- Background job processing + dead-letter replay
+- Migration safety and graceful restart validation
+- Backup and restore scripts
+
+## Verified Launch Status
+
+Code and validation status:
+
+- Contract tests, smoke API checks, compatibility startup, and the release gate all pass.
+- The verified release-gate run disables performance checks with `CMS_GATE_RUN_PERF=false`.
+- Repository code and docs are aligned to the backend-first architecture.
+
+Open governance item before public launch:
+
+- Branch protection/ruleset enforcement for required release-gate checks is pending repository plan/visibility constraints (documented in `docs/enterprise-production-readiness-plan.md`).
+
+## Quick Start
+
+1. Configure environment:
+
+```bash
+cp .env.example .env
+```
+
+2. Start the API:
+
+```bash
+cd /path/to/kujo-cms
+/path/to/kujo/target/debug/ruff run --interpreter backend/runtime/main.ruff
+```
+
+Default bind: `http://127.0.0.1:4200`
+Use `CMS_API_HOST` if you need an explicit non-default bind host; the reviewed showcase path defaults to `127.0.0.1`.
+
+The API boots directly from `backend/runtime/main.ruff`; there is no standalone CLI wrapper.
+
+Recommended env overrides:
+
+- `CMS_API_HOST`
+- `CMS_ENV`
+- `CMS_API_PORT`
+- `CMS_API_TOKEN`
+- `CMS_DB_PATH`
+- `CMS_SITE_URL`
+
+## Validation and Release Gate
+
+Contract tests:
+
+```bash
+cd /path/to/kujo-cms
+/path/to/kujo/target/debug/ruff test-run tests/cms_contract_tests.ruff
+```
+
+Full release gate:
+
+```bash
+cd /path/to/kujo-cms
+CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/run-release-gate.sh
+```
+
+Useful targeted checks:
+
+```bash
+KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/integration-enterprise-security.sh
+KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/integration-multitenant.sh
+KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/smoke-api.sh
+KUJO_BIN=/path/to/kujo/target/debug/ruff bash scripts/verify-compat-startup.sh
+```
+
+## Operational Commands
+
+Webhook pipeline:
+
+```bash
+bash scripts/process-webhook-outbox.sh
+bash scripts/replay-webhook-dead-letters.sh
+```
+
+Background jobs:
+
+```bash
+bash scripts/process-background-jobs.sh
+bash scripts/replay-background-job-dead-letters.sh
+```
+
+Data safety:
+
+```bash
+bash scripts/backup-db.sh
+bash scripts/restore-db.sh
+bash scripts/migration-safety.sh
+```
+
+## Documentation
+
+Start with the docs index:
+
+- `docs/README.md`
+
+Key docs:
+
+- `docs/backend-architecture-notes.md`
+- `docs/enterprise-production-readiness-plan.md`
+- `docs/enterprise-hardening-checklist.md`
+- `docs/error-codes.md`
+- `docs/high-sla-failure-drills.md`
+- `docs/runtime-limitations.md`
+
+## Contribution
+
+- Use `docs/contributor-one-loop-playbook.md` for contribution flow and validation expectations.
+- Keep changes scoped, behavior-compatible, and release-gate validated.

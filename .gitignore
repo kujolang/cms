@@ -1,0 +1,15 @@
+kujo_cms.db
+*.db-shm
+*.db-wal
+.env
+
+# OS/editor artifacts
+.DS_Store
+*.swp
+
+# Logs/temp artifacts
+*.log
+*.tmp
+
+# Runtime output
+results/

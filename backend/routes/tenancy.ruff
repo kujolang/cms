@@ -1,0 +1,897 @@
+from backend.core.utils import dict_get_or
+from backend.core.http import fail, guard_request, write_audit
+
+get_tenant_scope := func(auth_context) {
+	permissions := []
+	if type(auth_context) == "dict" && has_key(auth_context, "permissions") == 1 {
+		permissions = auth_context["permissions"]
+	}
+	if type(permissions) != "array" {
+		return {"global": false, "tenant_id": 0}
+	}
+
+	scoped_tenant_id := 0
+	for permission in permissions {
+		perm := trim(to_string(permission))
+		if perm == "*" {
+			return {"global": true, "tenant_id": 0}
+		}
+		if starts_with(perm, "tenant:") {
+			tenant_id_text := trim(substring(perm, 7, len(perm)))
+			tenant_id := 0
+			tenant_err := null
+			try {
+				tenant_id = parse_int(tenant_id_text)
+			} except e {
+				tenant_err = e
+			}
+			if type(tenant_err) == "null" && tenant_id > 0 {
+				scoped_tenant_id = tenant_id
+			}
+		}
+	}
+
+	return {"global": false, "tenant_id": scoped_tenant_id}
+}
+
+ensure_global_tenant_access := func(auth_context, cfg) {
+	scope := get_tenant_scope(auth_context)
+	if scope["global"] == true {
+		return {"ok": true}
+	}
+
+	return {
+		"ok": false,
+		"response": fail(cfg, 403, "tenant_scope_denied", "This token is not allowed to perform global tenant actions", {
+			"required_scope": "global"
+		})
+	}
+}
+
+ensure_tenant_scoped_access := func(auth_context, cfg, tenant_id) {
+	scope := get_tenant_scope(auth_context)
+	if scope["global"] == true {
+		return {"ok": true}
+	}
+	if scope["tenant_id"] == tenant_id {
+		return {"ok": true}
+	}
+
+	return {
+		"ok": false,
+		"response": fail(cfg, 403, "tenant_scope_denied", "Token scope does not allow access to this tenant", {
+			"tenant_id": tenant_id,
+			"scoped_tenant_id": scope["tenant_id"]
+		})
+	}
+}
+
+export register_tenancy_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/tenants", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
+		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		sort_field := "id"
+		if sort_by == "tenant_key" {
+			sort_field = "tenant_key"
+		} else if sort_by == "name" {
+			sort_field = "name"
+		} else if sort_by == "status" {
+			sort_field = "status"
+		} else if sort_by == "created_at" {
+			sort_field = "created_at"
+		} else if sort_by == "updated_at" {
+			sort_field = "updated_at"
+		} else if sort_by == "disabled_at" {
+			sort_field = "disabled_at"
+		} else if sort_by == "archived_at" {
+			sort_field = "archived_at"
+		}
+		sort_dir_sql := "ASC"
+		if sort_dir == "desc" {
+			sort_dir_sql = "DESC"
+		}
+		auth_context := dict_get_or(guard, "auth", {})
+		scope := get_tenant_scope(auth_context)
+		sql := "SELECT id, tenant_key, name, status, created_at, updated_at, disabled_at, archived_at FROM tenants"
+		count_sql := "SELECT COUNT(*) AS total FROM tenants"
+		params := []
+		count_params := []
+		if scope["global"] == false {
+			if scope["tenant_id"] <= 0 {
+				return fail(cfg, 403, "tenant_scope_denied", "Token has no tenant scope for tenant listing", {})
+			}
+			sql = sql + " WHERE id = ?"
+			count_sql = count_sql + " WHERE id = ?"
+			params = [scope["tenant_id"]]
+			count_params = [scope["tenant_id"]]
+		}
+		sql = sql + " ORDER BY " + sort_field + " " + sort_dir_sql + " LIMIT ? OFFSET ?"
+		params = push(params, limit)
+		params = push(params, offset)
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(ctx["db"], sql, params)
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load tenants", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(ctx["db"], count_sql, count_params)
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count tenants", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = to_int(count_rows[0]["total"])
+		}
+
+		return json_response(200, {
+			"ok": true,
+			"data": {
+				"items": rows,
+				"count": len(rows),
+				"total": total,
+				"limit": limit,
+				"offset": offset,
+				"sort_by": sort_field,
+				"sort_dir": to_lower(sort_dir_sql)
+			}
+		})
+	})
+
+	server = server.route("POST", "/v1/tenants", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		tenant_key := trim(to_string(dict_get_or(body, "tenant_key", "")))
+		name := trim(to_string(dict_get_or(body, "name", "")))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", "active"))))
+		if len(tenant_key) < 2 {
+			return fail(cfg, 400, "invalid_tenant_key", "tenant_key is required", {})
+		}
+		if len(name) < 2 {
+			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
+		}
+		if status != "active" && status != "disabled" && status != "archived" {
+			return fail(cfg, 400, "invalid_status", "status must be active, disabled, or archived", {})
+		}
+
+		auth_context := dict_get_or(guard, "auth", {})
+		global_access := ensure_global_tenant_access(auth_context, cfg)
+		if global_access["ok"] == false {
+			return global_access["response"]
+		}
+
+		tenant_max_count := dict_get_or(cfg, "tenant_max_count", 5000)
+		tenant_total_rows := []
+		tenant_total_err := null
+		try {
+			tenant_total_rows = db_query(db, "SELECT COUNT(*) AS total FROM tenants", [])
+		} except e {
+			tenant_total_err = e
+		}
+		if type(tenant_total_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate tenant quota", {})
+		}
+		tenant_total := 0
+		if len(tenant_total_rows) > 0 {
+			tenant_total = to_int(tenant_total_rows[0]["total"])
+		}
+		if tenant_total >= tenant_max_count {
+			return fail(cfg, 409, "tenant_limit_reached", "Tenant limit reached for this instance", {
+				"limit": tenant_max_count,
+				"current_count": tenant_total
+			})
+		}
+
+		now_ts := now()
+		disabled_at := null
+		archived_at := null
+		if status == "disabled" {
+			disabled_at = now_ts
+		}
+		if status == "archived" {
+			disabled_at = now_ts
+			archived_at = now_ts
+		}
+
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO tenants (tenant_key, name, status, created_at, updated_at, disabled_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				[tenant_key, name, status, now_ts, now_ts, disabled_at, archived_at]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create tenant (duplicate tenant_key)", {})
+		}
+
+		rows := []
+		row_err := null
+		try {
+			rows = db_query(db, "SELECT id, tenant_key, name, status, created_at, updated_at, disabled_at, archived_at FROM tenants WHERE tenant_key = ? ORDER BY id DESC LIMIT 1", [tenant_key])
+		} except e {
+			row_err = e
+		}
+		if type(row_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created tenant but failed to load it", {})
+		}
+
+		audit_details := {
+			"tenant_key": tenant_key,
+			"status": status
+		}
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "tenant.create", 201, "tenant", to_string(rows[0]["id"]), audit_details)
+		} except e {
+			audit_err = e
+		}
+		if type(audit_err) != "null" {
+			fallback_details := audit_details
+			fallback_details["request_id"] = to_string(dict_get_or(req, "request_id", ""))
+			auth_context := dict_get_or(req, "auth_context", null)
+			if type(auth_context) == "dict" {
+				fallback_details["role_key"] = to_string(dict_get_or(auth_context, "role_key", ""))
+				fallback_details["token_id"] = to_string(dict_get_or(auth_context, "token_id", ""))
+				fallback_details["token_label"] = to_string(dict_get_or(auth_context, "token_label", ""))
+			}
+			fallback_insert_err := null
+			try {
+				db_execute(
+					db,
+					"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					[
+						now(),
+						to_string(dict_get_or(req, "remote_addr", "unknown")),
+						to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
+						to_string(dict_get_or(req, "path", "")),
+						"token",
+						"tenant.create",
+						201,
+						"tenant",
+						to_string(rows[0]["id"]),
+						to_json(fallback_details)
+					]
+				)
+			} except e {
+				fallback_insert_err = e
+			}
+		}
+
+		return json_response(201, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("POST", "/v1/tenants/update", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		tenant_id := 0
+		id_err := null
+		try {
+			tenant_id = parse_int(trim(to_string(dict_get_or(body, "tenant_id", "0"))))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || tenant_id <= 0 {
+			return fail(cfg, 400, "invalid_tenant_id", "tenant_id must be a positive integer", {})
+		}
+
+		auth_context := dict_get_or(guard, "auth", {})
+		tenant_access := ensure_tenant_scoped_access(auth_context, cfg, tenant_id)
+		if tenant_access["ok"] == false {
+			return tenant_access["response"]
+		}
+
+		existing := []
+		existing_err := null
+		try {
+			existing = db_query(db, "SELECT id, name, status FROM tenants WHERE id = ?", [tenant_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load tenant", {})
+		}
+		if len(existing) == 0 {
+			return fail(cfg, 404, "not_found", "Tenant not found", {})
+		}
+
+		name := trim(to_string(dict_get_or(body, "name", existing[0]["name"])))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", existing[0]["status"]))))
+		if len(name) < 2 {
+			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
+		}
+		if status != "active" && status != "disabled" && status != "archived" {
+			return fail(cfg, 400, "invalid_status", "status must be active, disabled, or archived", {})
+		}
+
+		now_ts := now()
+		disabled_at := null
+		archived_at := null
+		if status == "disabled" {
+			disabled_at = now_ts
+		}
+		if status == "archived" {
+			disabled_at = now_ts
+			archived_at = now_ts
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE tenants SET name = ?, status = ?, disabled_at = ?, archived_at = ?, updated_at = ? WHERE id = ?",
+				[name, status, disabled_at, archived_at, now_ts, tenant_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update tenant", {})
+		}
+
+		rows := []
+		row_err := null
+		try {
+			rows = db_query(db, "SELECT id, tenant_key, name, status, created_at, updated_at, disabled_at, archived_at FROM tenants WHERE id = ?", [tenant_id])
+		} except e {
+			row_err = e
+		}
+		if type(row_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated tenant but failed to load it", {})
+		}
+
+		audit_details := {
+			"status": status
+		}
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "tenant.update", 200, "tenant", to_string(rows[0]["id"]), audit_details)
+		} except e {
+			audit_err = e
+		}
+		if type(audit_err) != "null" {
+			fallback_details := audit_details
+			fallback_details["request_id"] = to_string(dict_get_or(req, "request_id", ""))
+			auth_context := dict_get_or(req, "auth_context", null)
+			if type(auth_context) == "dict" {
+				fallback_details["role_key"] = to_string(dict_get_or(auth_context, "role_key", ""))
+				fallback_details["token_id"] = to_string(dict_get_or(auth_context, "token_id", ""))
+				fallback_details["token_label"] = to_string(dict_get_or(auth_context, "token_label", ""))
+			}
+			fallback_insert_err := null
+			try {
+				db_execute(
+					db,
+					"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					[
+						now(),
+						to_string(dict_get_or(req, "remote_addr", "unknown")),
+						to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
+						to_string(dict_get_or(req, "path", "")),
+						"token",
+						"tenant.update",
+						200,
+						"tenant",
+						to_string(rows[0]["id"]),
+						to_json(fallback_details)
+					]
+				)
+			} except e {
+				fallback_insert_err = e
+			}
+		}
+
+		return json_response(200, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("POST", "/v1/tenants/disable", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		tenant_id := 0
+		id_err := null
+		try {
+			tenant_id = parse_int(trim(to_string(dict_get_or(body, "tenant_id", "0"))))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || tenant_id <= 0 {
+			return fail(cfg, 400, "invalid_tenant_id", "tenant_id must be a positive integer", {})
+		}
+
+		auth_context := dict_get_or(guard, "auth", {})
+		tenant_access := ensure_tenant_scoped_access(auth_context, cfg, tenant_id)
+		if tenant_access["ok"] == false {
+			return tenant_access["response"]
+		}
+
+		now_ts := now()
+		update_err := null
+		try {
+			db_execute(db, "UPDATE tenants SET status = ?, disabled_at = ?, archived_at = ?, updated_at = ? WHERE id = ?", ["disabled", now_ts, null, now_ts, tenant_id])
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to disable tenant", {})
+		}
+
+		rows := []
+		row_err := null
+		try {
+			rows = db_query(db, "SELECT id, tenant_key, name, status, created_at, updated_at, disabled_at, archived_at FROM tenants WHERE id = ?", [tenant_id])
+		} except e {
+			row_err = e
+		}
+		if type(row_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "Tenant not found", {})
+		}
+
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "tenant.disable", 200, "tenant", to_string(rows[0]["id"]), {})
+		} except e {
+			audit_err = e
+		}
+
+		return json_response(200, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("POST", "/v1/tenants/archive", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		tenant_id := 0
+		id_err := null
+		try {
+			tenant_id = parse_int(trim(to_string(dict_get_or(body, "tenant_id", "0"))))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || tenant_id <= 0 {
+			return fail(cfg, 400, "invalid_tenant_id", "tenant_id must be a positive integer", {})
+		}
+
+		auth_context := dict_get_or(guard, "auth", {})
+		tenant_access := ensure_tenant_scoped_access(auth_context, cfg, tenant_id)
+		if tenant_access["ok"] == false {
+			return tenant_access["response"]
+		}
+
+		now_ts := now()
+		update_err := null
+		try {
+			db_execute(db, "UPDATE tenants SET status = ?, disabled_at = ?, archived_at = ?, updated_at = ? WHERE id = ?", ["archived", now_ts, now_ts, now_ts, tenant_id])
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to archive tenant", {})
+		}
+
+		rows := []
+		row_err := null
+		try {
+			rows = db_query(db, "SELECT id, tenant_key, name, status, created_at, updated_at, disabled_at, archived_at FROM tenants WHERE id = ?", [tenant_id])
+		} except e {
+			row_err = e
+		}
+		if type(row_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "Tenant not found", {})
+		}
+
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "tenant.archive", 200, "tenant", to_string(rows[0]["id"]), {})
+		} except e {
+			audit_err = e
+		}
+
+		return json_response(200, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("GET", "/v1/workspaces", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
+		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		sort_field := "id"
+		if sort_by == "tenant_id" {
+			sort_field = "tenant_id"
+		} else if sort_by == "workspace_key" {
+			sort_field = "workspace_key"
+		} else if sort_by == "name" {
+			sort_field = "name"
+		} else if sort_by == "status" {
+			sort_field = "status"
+		} else if sort_by == "created_at" {
+			sort_field = "created_at"
+		} else if sort_by == "updated_at" {
+			sort_field = "updated_at"
+		} else if sort_by == "disabled_at" {
+			sort_field = "disabled_at"
+		} else if sort_by == "archived_at" {
+			sort_field = "archived_at"
+		}
+		sort_dir_sql := "ASC"
+		if sort_dir == "desc" {
+			sort_dir_sql = "DESC"
+		}
+		auth_context := dict_get_or(guard, "auth", {})
+		scope := get_tenant_scope(auth_context)
+		sql := "SELECT id, tenant_id, workspace_key, name, status, created_at, updated_at, disabled_at, archived_at FROM workspaces"
+		count_sql := "SELECT COUNT(*) AS total FROM workspaces"
+		params := []
+		count_params := []
+		if scope["global"] == false {
+			if scope["tenant_id"] <= 0 {
+				return fail(cfg, 403, "tenant_scope_denied", "Token has no tenant scope for workspace listing", {})
+			}
+			sql = sql + " WHERE tenant_id = ?"
+			count_sql = count_sql + " WHERE tenant_id = ?"
+			params = [scope["tenant_id"]]
+			count_params = [scope["tenant_id"]]
+		}
+		sql = sql + " ORDER BY " + sort_field + " " + sort_dir_sql + " LIMIT ? OFFSET ?"
+		params = push(params, limit)
+		params = push(params, offset)
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(ctx["db"], sql, params)
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load workspaces", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(ctx["db"], count_sql, count_params)
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count workspaces", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = to_int(count_rows[0]["total"])
+		}
+
+		return json_response(200, {
+			"ok": true,
+			"data": {
+				"items": rows,
+				"count": len(rows),
+				"total": total,
+				"limit": limit,
+				"offset": offset,
+				"sort_by": sort_field,
+				"sort_dir": to_lower(sort_dir_sql)
+			}
+		})
+	})
+
+	server = server.route("POST", "/v1/workspaces", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		tenant_id := 0
+		tenant_err := null
+		try {
+			tenant_id = parse_int(trim(to_string(dict_get_or(body, "tenant_id", "0"))))
+		} except e {
+			tenant_err = e
+		}
+		if type(tenant_err) != "null" || tenant_id <= 0 {
+			return fail(cfg, 400, "invalid_tenant_id", "tenant_id must be a positive integer", {})
+		}
+
+		auth_context := dict_get_or(guard, "auth", {})
+		tenant_access := ensure_tenant_scoped_access(auth_context, cfg, tenant_id)
+		if tenant_access["ok"] == false {
+			return tenant_access["response"]
+		}
+
+		tenant_rows := []
+		check_err := null
+		try {
+			tenant_rows = db_query(db, "SELECT id, status FROM tenants WHERE id = ? LIMIT 1", [tenant_id])
+		} except e {
+			check_err = e
+		}
+		if type(check_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate tenant", {})
+		}
+		if len(tenant_rows) == 0 {
+			return fail(cfg, 404, "tenant_not_found", "Tenant not found", {})
+		}
+		if tenant_rows[0]["status"] != "active" {
+			return fail(cfg, 409, "tenant_inactive", "Cannot create workspace for disabled or archived tenant", {
+				"tenant_id": tenant_id,
+				"status": tenant_rows[0]["status"]
+			})
+		}
+
+		workspace_max_count := dict_get_or(cfg, "tenant_workspace_max_count", 250)
+		workspace_total_rows := []
+		workspace_total_err := null
+		try {
+			workspace_total_rows = db_query(db, "SELECT COUNT(*) AS total FROM workspaces WHERE tenant_id = ?", [tenant_id])
+		} except e {
+			workspace_total_err = e
+		}
+		if type(workspace_total_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate workspace quota", {})
+		}
+		workspace_total := 0
+		if len(workspace_total_rows) > 0 {
+			workspace_total = to_int(workspace_total_rows[0]["total"])
+		}
+		if workspace_total >= workspace_max_count {
+			return fail(cfg, 409, "workspace_limit_reached", "Workspace limit reached for tenant", {
+				"tenant_id": tenant_id,
+				"limit": workspace_max_count,
+				"current_count": workspace_total
+			})
+		}
+
+		workspace_key := trim(to_string(dict_get_or(body, "workspace_key", "")))
+		name := trim(to_string(dict_get_or(body, "name", "")))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", "active"))))
+		if len(workspace_key) < 2 {
+			return fail(cfg, 400, "invalid_workspace_key", "workspace_key is required", {})
+		}
+		if len(name) < 2 {
+			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
+		}
+		if status != "active" && status != "disabled" && status != "archived" {
+			return fail(cfg, 400, "invalid_status", "status must be active, disabled, or archived", {})
+		}
+
+		now_ts := now()
+		disabled_at := null
+		archived_at := null
+		if status == "disabled" {
+			disabled_at = now_ts
+		}
+		if status == "archived" {
+			disabled_at = now_ts
+			archived_at = now_ts
+		}
+
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO workspaces (tenant_id, workspace_key, name, status, created_at, updated_at, disabled_at, archived_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				[tenant_id, workspace_key, name, status, now_ts, now_ts, disabled_at, archived_at]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create workspace (duplicate workspace_key)", {})
+		}
+
+		rows := []
+		row_err := null
+		try {
+			rows = db_query(db, "SELECT id, tenant_id, workspace_key, name, status, created_at, updated_at, disabled_at, archived_at FROM workspaces WHERE workspace_key = ? ORDER BY id DESC LIMIT 1", [workspace_key])
+		} except e {
+			row_err = e
+		}
+		if type(row_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created workspace but failed to load it", {})
+		}
+
+		audit_details := {
+			"tenant_id": tenant_id,
+			"workspace_key": workspace_key,
+			"status": status
+		}
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "workspace.create", 201, "workspace", to_string(rows[0]["id"]), audit_details)
+		} except e {
+			audit_err = e
+		}
+		if type(audit_err) != "null" {
+			fallback_details := audit_details
+			fallback_details["request_id"] = to_string(dict_get_or(req, "request_id", ""))
+			auth_context := dict_get_or(req, "auth_context", null)
+			if type(auth_context) == "dict" {
+				fallback_details["role_key"] = to_string(dict_get_or(auth_context, "role_key", ""))
+				fallback_details["token_id"] = to_string(dict_get_or(auth_context, "token_id", ""))
+				fallback_details["token_label"] = to_string(dict_get_or(auth_context, "token_label", ""))
+			}
+			fallback_insert_err := null
+			try {
+				db_execute(
+					db,
+					"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					[
+						now(),
+						to_string(dict_get_or(req, "remote_addr", "unknown")),
+						to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
+						to_string(dict_get_or(req, "path", "")),
+						"token",
+						"workspace.create",
+						201,
+						"workspace",
+						to_string(rows[0]["id"]),
+						to_json(fallback_details)
+					]
+				)
+			} except e {
+				fallback_insert_err = e
+			}
+		}
+
+		return json_response(201, {"ok": true, "data": rows[0]})
+	})
+
+	return server
+}

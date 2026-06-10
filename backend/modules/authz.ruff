@@ -1,0 +1,953 @@
+from backend.core.utils import dict_get_or, ensure_json_text, is_valid_slug_key, trim_or
+from backend.core.database import db_execute_safe, db_query_safe
+from backend.core.http import created, fail, get_query, guard_request, ok, parse_bounded_int, parse_id_param, parse_json_body, write_audit
+
+func generate_token_secret(label, role_key) {
+	seed := trim(label) + ":" + trim(role_key) + ":" + now() + ":" + to_string(current_timestamp())
+	return "cms_" + substring(sha256(seed), 0, 48)
+}
+
+func normalize_token_expires_input(db, raw_expires_at) {
+	if type(raw_expires_at) == "null" {
+		return {"ok": true, "value": null}
+	}
+
+	raw_expires_text := trim(to_string(raw_expires_at))
+	if raw_expires_text == "" {
+		return {"ok": true, "value": null}
+	}
+
+	expires_at_ms := 0
+	parse_err := null
+	try {
+		expires_at_ms = parse_int(raw_expires_text)
+	} except e {
+		parse_err = e
+	}
+	if type(parse_err) == "null" && expires_at_ms > 0 {
+		return {"ok": true, "value": expires_at_ms}
+	}
+
+	converted := db_query_safe(db, "SELECT CAST(strftime('%s', ?) AS INTEGER) AS ts", [raw_expires_text])
+	if converted["ok"] == true && len(converted["rows"]) > 0 {
+		ts_raw := dict_get_or(converted["rows"][0], "ts", 0)
+		ts_sec := 0
+		ts_err := null
+		try {
+			ts_sec = parse_int(trim(to_string(ts_raw)))
+		} except e {
+			ts_err = e
+		}
+		if type(ts_err) == "null" && ts_sec > 0 {
+			return {"ok": true, "value": ts_sec * 1000}
+		}
+	}
+
+	return {"ok": false, "error": "expires_at must be a positive epoch-millisecond integer or ISO-8601 timestamp"}
+}
+
+list_roles := func(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+
+	limit_parsed := parse_bounded_int(get_query(req, "limit", "100"), "limit", 1, 200)
+	if limit_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_limit", limit_parsed["error"], {})
+	}
+	offset_parsed := parse_bounded_int(get_query(req, "offset", "0"), "offset", 0, 1000000)
+	if offset_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_offset", offset_parsed["error"], {})
+	}
+
+	result := db_query_safe(
+		db,
+		"SELECT id, role_key, name, permissions_json, is_system, created_at, updated_at FROM roles ORDER BY id ASC LIMIT ? OFFSET ?",
+		[limit_parsed["value"], offset_parsed["value"]]
+	)
+	if result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to load roles", {})
+	}
+
+	count_result := db_query_safe(db, "SELECT COUNT(*) AS total FROM roles", [])
+	if count_result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to count roles", {})
+	}
+
+	total := 0
+	if len(count_result["rows"]) > 0 {
+		total = count_result["rows"][0]["total"]
+	}
+
+	return ok(cfg, {
+		"items": result["rows"],
+		"count": len(result["rows"]),
+		"total": total,
+		"limit": limit_parsed["value"],
+		"offset": offset_parsed["value"]
+	})
+}
+
+list_tokens := func(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+
+	limit_parsed := parse_bounded_int(get_query(req, "limit", "100"), "limit", 1, 200)
+	if limit_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_limit", limit_parsed["error"], {})
+	}
+	offset_parsed := parse_bounded_int(get_query(req, "offset", "0"), "offset", 0, 1000000)
+	if offset_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_offset", offset_parsed["error"], {})
+	}
+
+	result := db_query_safe(
+		db,
+		"SELECT id, label, role_key, is_active, expires_at, last_used_at, created_at, updated_at FROM api_tokens ORDER BY id ASC LIMIT ? OFFSET ?",
+		[limit_parsed["value"], offset_parsed["value"]]
+	)
+	if result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to load API tokens", {})
+	}
+
+	count_result := db_query_safe(db, "SELECT COUNT(*) AS total FROM api_tokens", [])
+	if count_result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to count API tokens", {})
+	}
+
+	total := 0
+	if len(count_result["rows"]) > 0 {
+		total = count_result["rows"][0]["total"]
+	}
+
+	return ok(cfg, {
+		"items": result["rows"],
+		"count": len(result["rows"]),
+		"total": total,
+		"limit": limit_parsed["value"],
+		"offset": offset_parsed["value"]
+	})
+}
+
+func create_token(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+
+	body_result := parse_json_body(req, cfg)
+	if body_result["ok"] == false {
+		return fail(cfg, 400, "invalid_body", body_result["error"], {})
+	}
+	body := body_result["data"]
+
+	label := trim_or(dict_get_or(body, "label", ""), "")
+	token := trim_or(dict_get_or(body, "token", ""), "")
+	role_key := trim_or(dict_get_or(body, "role_key", ""), "")
+	expires_at := dict_get_or(body, "expires_at", null)
+
+	if len(label) < 3 {
+		return fail(cfg, 400, "invalid_label", "label must be at least 3 characters", {})
+	}
+	if token == "" {
+		token = generate_token_secret(label, role_key)
+	}
+	if len(token) < 12 {
+		return fail(cfg, 400, "invalid_token", "token must be at least 12 characters", {})
+	}
+	if len(role_key) < 2 {
+		return fail(cfg, 400, "invalid_role", "role_key is required", {})
+	}
+
+	expires_result := normalize_token_expires_input(db, expires_at)
+	if expires_result["ok"] == false {
+		return fail(cfg, 400, "invalid_expires_at", expires_result["error"], {})
+	}
+	expires_at = expires_result["value"]
+
+	role_exists := db_query_safe(db, "SELECT id FROM roles WHERE role_key = ? LIMIT 1", [role_key])
+	if role_exists["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to validate role", {})
+	}
+	if len(role_exists["rows"]) == 0 {
+		return fail(cfg, 404, "role_not_found", "Unknown role_key", {})
+	}
+
+	token_hash := sha256(token)
+	insert_result := db_execute_safe(
+		db,
+		"INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		[token_hash, label, role_key, 1, now(), now(), expires_at, null]
+	)
+	if insert_result["ok"] == false {
+		return fail(cfg, 409, "create_failed", "Could not create token (duplicate token hash)", {})
+	}
+
+	token_id := db_last_insert_id(db)
+	row_result := db_query_safe(db, "SELECT id, label, role_key, is_active, expires_at, last_used_at, created_at, updated_at FROM api_tokens WHERE id = ?", [token_id])
+	if row_result["ok"] == false || len(row_result["rows"]) == 0 {
+		return fail(cfg, 500, "load_failed", "Created token but failed to load it", {})
+	}
+
+	row := row_result["rows"][0]
+	row["token_secret"] := token
+	row["revealed_once"] := true
+
+	_ := write_audit(ctx, req, "token.create", 201, "api_token", token_id, {"label": label, "role_key": role_key, "revealed_once": true})
+	return created(cfg, row)
+}
+
+func patch_token(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+
+	id_parsed := parse_id_param(req, "id")
+	if id_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_token_id", id_parsed["error"], {})
+	}
+	token_id := id_parsed["value"]
+
+	existing_result := db_query_safe(db, "SELECT * FROM api_tokens WHERE id = ?", [token_id])
+	if existing_result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to load API token", {})
+	}
+	if len(existing_result["rows"]) == 0 {
+		return fail(cfg, 404, "not_found", "API token not found", {})
+	}
+	existing := existing_result["rows"][0]
+
+	body_result := parse_json_body(req, cfg)
+	if body_result["ok"] == false {
+		return fail(cfg, 400, "invalid_body", body_result["error"], {})
+	}
+	body := body_result["data"]
+
+	label := trim_or(dict_get_or(body, "label", existing["label"]), existing["label"])
+	role_key := trim_or(dict_get_or(body, "role_key", existing["role_key"]), existing["role_key"])
+	token := trim_or(dict_get_or(body, "token", ""), "")
+	expires_at := existing["expires_at"]
+	if has_key(body, "expires_at") == 1 {
+		expires_result := normalize_token_expires_input(db, body["expires_at"])
+		if expires_result["ok"] == false {
+			return fail(cfg, 400, "invalid_expires_at", expires_result["error"], {})
+		}
+		expires_at = expires_result["value"]
+	}
+	is_active := dict_get_or(body, "is_active", existing["is_active"])
+	active_int := 0
+	if is_active == true || is_active == 1 {
+		active_int = 1
+	}
+
+	role_exists := db_query_safe(db, "SELECT id FROM roles WHERE role_key = ? LIMIT 1", [role_key])
+	if role_exists["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to validate role", {})
+	}
+	if len(role_exists["rows"]) == 0 {
+		return fail(cfg, 404, "role_not_found", "Unknown role_key", {})
+	}
+
+	token_hash := existing["token_hash"]
+	last_used_at := existing["last_used_at"]
+	if token != "" {
+		if len(token) < 12 {
+			return fail(cfg, 400, "invalid_token", "token must be at least 12 characters", {})
+		}
+		token_hash = sha256(token)
+		last_used_at = null
+	}
+
+	update_result := db_execute_safe(
+		db,
+		"UPDATE api_tokens SET token_hash = ?, label = ?, role_key = ?, is_active = ?, expires_at = ?, last_used_at = ?, updated_at = ? WHERE id = ?",
+		[token_hash, label, role_key, active_int, expires_at, last_used_at, now(), token_id]
+	)
+	if update_result["ok"] == false {
+		if token != "" {
+			return fail(cfg, 409, "rotate_failed", "Could not rotate token (duplicate token hash)", {})
+		}
+		return fail(cfg, 500, "update_failed", "Failed to update API token", {})
+	}
+
+	updated := db_query_safe(db, "SELECT id, label, role_key, is_active, expires_at, last_used_at, created_at, updated_at FROM api_tokens WHERE id = ?", [token_id])
+	if updated["ok"] == false || len(updated["rows"]) == 0 {
+		return fail(cfg, 500, "load_failed", "Updated token but failed to load it", {})
+	}
+
+	row := updated["rows"][0]
+	if token != "" {
+		row["token_secret"] := token
+		row["revealed_once"] := true
+		_ := write_audit(ctx, req, "token.rotate", 200, "api_token", token_id, {"role_key": role_key, "is_active": active_int, "revealed_once": true})
+		return ok(cfg, row)
+	}
+
+	_ := write_audit(ctx, req, "token.update", 200, "api_token", token_id, {"role_key": role_key, "is_active": active_int})
+	return ok(cfg, row)
+}
+
+func delete_token(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+	id_parsed := parse_id_param(req, "id")
+	if id_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_token_id", id_parsed["error"], {})
+	}
+	token_id := id_parsed["value"]
+
+	existing_result := db_query_safe(db, "SELECT id FROM api_tokens WHERE id = ? LIMIT 1", [token_id])
+	if existing_result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to load API token", {})
+	}
+	if len(existing_result["rows"]) == 0 {
+		return fail(cfg, 404, "not_found", "API token not found", {})
+	}
+
+	update_result := db_execute_safe(db, "UPDATE api_tokens SET is_active = 0, updated_at = ? WHERE id = ?", [now(), token_id])
+	if update_result["ok"] == false {
+		return fail(cfg, 500, "delete_failed", "Failed to deactivate API token", {})
+	}
+
+	_ := write_audit(ctx, req, "token.deactivate", 200, "api_token", token_id, {})
+	return ok(cfg, {"deactivated": true, "id": token_id})
+}
+
+func create_role(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+	body_result := parse_json_body(req, cfg)
+	if body_result["ok"] == false {
+		return fail(cfg, 400, "invalid_body", body_result["error"], {})
+	}
+	body := body_result["data"]
+
+	role_key := trim_or(dict_get_or(body, "role_key", ""), "")
+	name := trim_or(dict_get_or(body, "name", ""), "")
+	permissions_json := ensure_json_text(dict_get_or(body, "permissions", []), [])
+
+	if is_valid_slug_key(role_key) == false {
+		return fail(cfg, 400, "invalid_role", "role_key must be lowercase slug text", {})
+	}
+	if len(name) < 2 {
+		return fail(cfg, 400, "invalid_role", "name is required", {})
+	}
+
+	insert_result := db_execute_safe(
+		db,
+		"INSERT INTO roles (role_key, name, permissions_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		[role_key, name, permissions_json, 0, now(), now()]
+	)
+	if insert_result["ok"] == false {
+		return fail(cfg, 409, "create_failed", "Could not create role (duplicate role_key)", {})
+	}
+
+	role_id := db_last_insert_id(db)
+	row_result := db_query_safe(db, "SELECT id, role_key, name, permissions_json, is_system, created_at, updated_at FROM roles WHERE id = ?", [role_id])
+	if row_result["ok"] == false || len(row_result["rows"]) == 0 {
+		return fail(cfg, 500, "load_failed", "Created role but failed to load it", {})
+	}
+
+	_ := write_audit(ctx, req, "role.create", 201, "role", role_id, {"role_key": role_key})
+	return created(cfg, row_result["rows"][0])
+}
+
+func patch_role(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+	id_parsed := parse_id_param(req, "id")
+	if id_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_role_id", id_parsed["error"], {})
+	}
+	role_id := id_parsed["value"]
+
+	existing_result := db_query_safe(db, "SELECT * FROM roles WHERE id = ?", [role_id])
+	if existing_result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to load role", {})
+	}
+	if len(existing_result["rows"]) == 0 {
+		return fail(cfg, 404, "not_found", "Role not found", {})
+	}
+	existing := existing_result["rows"][0]
+	if dict_get_or(existing, "is_system", 0) == 1 {
+		return fail(cfg, 403, "system_role", "System roles cannot be modified", {})
+	}
+
+	body_result := parse_json_body(req, cfg)
+	if body_result["ok"] == false {
+		return fail(cfg, 400, "invalid_body", body_result["error"], {})
+	}
+	body := body_result["data"]
+
+	name := trim_or(dict_get_or(body, "name", existing["name"]), existing["name"])
+	permissions_json := existing["permissions_json"]
+	if has_key(body, "permissions") == 1 {
+		permissions_json = ensure_json_text(body["permissions"], [])
+	}
+
+	update_result := db_execute_safe(db, "UPDATE roles SET name = ?, permissions_json = ?, updated_at = ? WHERE id = ?", [name, permissions_json, now(), role_id])
+	if update_result["ok"] == false {
+		return fail(cfg, 500, "update_failed", "Failed to update role", {})
+	}
+
+	updated := db_query_safe(db, "SELECT id, role_key, name, permissions_json, is_system, created_at, updated_at FROM roles WHERE id = ?", [role_id])
+	if updated["ok"] == false || len(updated["rows"]) == 0 {
+		return fail(cfg, 500, "load_failed", "Updated role but failed to load it", {})
+	}
+
+	_ := write_audit(ctx, req, "role.update", 200, "role", role_id, {})
+	return ok(cfg, updated["rows"][0])
+}
+
+export register_authz_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/auth/roles", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT * FROM roles ORDER BY id ASC LIMIT ? OFFSET ?", [limit, offset])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load roles", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "limit": limit, "offset": offset}})
+	})
+
+	server = server.route("POST", "/v1/auth/roles", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		return create_role(req, ctx)
+	})
+
+	server = server.route("PATCH", "/v1/auth/roles/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		return patch_role(req, ctx)
+	})
+
+	server = server.route("GET", "/v1/auth/tokens", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT id, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at FROM api_tokens ORDER BY id ASC LIMIT ? OFFSET ?", [limit, offset])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load tokens", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "limit": limit, "offset": offset}})
+	})
+
+	server = server.route("POST", "/v1/auth/tokens", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+
+		err := null
+		response := null
+		try {
+			raw_body := dict_get_or(req, "body", null)
+			body := {}
+			if type(raw_body) == "dict" {
+				body = raw_body
+			} else {
+				body_text := to_string(raw_body)
+				if trim(body_text) == "" {
+					response = fail(cfg, 400, "invalid_body", "Request body is required", {})
+				} else {
+					body_err := null
+					try {
+						body = parse_json(body_text)
+					} except e {
+						body_err = e
+					}
+					if type(body_err) != "null" || type(body) != "dict" {
+						response = fail(cfg, 400, "invalid_body", "Body must be valid JSON object", {})
+					}
+				}
+			}
+
+			if type(response) == "null" {
+				label := trim(to_string(dict_get_or(body, "label", "")))
+				token := trim(to_string(dict_get_or(body, "token", "")))
+				role_key := trim(to_string(dict_get_or(body, "role_key", "")))
+				expires_at := dict_get_or(body, "expires_at", null)
+
+				if len(label) < 3 {
+					response = fail(cfg, 400, "invalid_label", "label must be at least 3 characters", {})
+				}
+				if type(response) == "null" && token == "" {
+					seed := trim(label) + ":" + trim(role_key) + ":" + to_string(now()) + ":" + to_string(current_timestamp())
+					token = "cms_" + substring(sha256(seed), 0, 48)
+				}
+				if type(response) == "null" && len(token) < 12 {
+					response = fail(cfg, 400, "invalid_token", "token must be at least 12 characters", {})
+				}
+				if type(response) == "null" && len(role_key) < 2 {
+					response = fail(cfg, 400, "invalid_role", "role_key is required", {})
+				}
+
+				if type(response) == "null" {
+					if type(expires_at) == "null" {
+						expires_at = null
+					} else {
+						raw_expires_text := trim(to_string(expires_at))
+						if raw_expires_text == "" {
+							expires_at = null
+						} else {
+						expires_at_ms := 0
+						parse_err := null
+						try {
+							expires_at_ms = parse_int(raw_expires_text)
+						} except e {
+							parse_err = e
+						}
+						if type(parse_err) == "null" && expires_at_ms > 0 {
+							expires_at = expires_at_ms
+						} else {
+							converted_rows := []
+							converted_err := null
+							try {
+								converted_rows = db_query(db, "SELECT CAST(strftime('%s', ?) AS INTEGER) AS ts", [raw_expires_text])
+							} except e {
+								converted_err = e
+							}
+							if type(converted_err) == "null" && len(converted_rows) > 0 {
+								ts_raw := dict_get_or(converted_rows[0], "ts", 0)
+								ts_sec := 0
+								ts_err := null
+								try {
+									ts_sec = parse_int(trim(to_string(ts_raw)))
+								} except e {
+									ts_err = e
+								}
+								if type(ts_err) == "null" && ts_sec > 0 {
+									expires_at = ts_sec * 1000
+								} else {
+									response = fail(cfg, 400, "invalid_expires_at", "expires_at must be a positive epoch-millisecond integer or ISO-8601 timestamp", {})
+								}
+							} else {
+								response = fail(cfg, 400, "invalid_expires_at", "expires_at must be a positive epoch-millisecond integer or ISO-8601 timestamp", {})
+							}
+						}
+					}
+					}
+				}
+
+				if type(response) == "null" {
+					role_exists := []
+					role_err := null
+					try {
+						role_exists = db_query(db, "SELECT id FROM roles WHERE role_key = ? LIMIT 1", [role_key])
+					} except e {
+						role_err = e
+					}
+					if type(role_err) != "null" {
+						response = fail(cfg, 500, "db_query_failed", "Failed to validate role", {})
+					} else {
+						if len(role_exists) == 0 {
+							response = fail(cfg, 404, "role_not_found", "Unknown role_key", {})
+						}
+					}
+				}
+
+				if type(response) == "null" {
+					token_hash := sha256(token)
+					insert_err := null
+					try {
+						db_execute(
+							db,
+							"INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+							[token_hash, label, role_key, 1, now(), now(), expires_at, null]
+						)
+					} except e {
+						insert_err = e
+					}
+					if type(insert_err) != "null" {
+						response = fail(cfg, 409, "create_failed", "Could not create token (duplicate token hash)", {})
+					} else {
+						row_result := []
+						row_err := null
+						try {
+							row_result = db_query(db, "SELECT id, label, role_key, is_active, expires_at, last_used_at, created_at, updated_at FROM api_tokens WHERE token_hash = ? ORDER BY id DESC LIMIT 1", [token_hash])
+						} except e {
+							row_err = e
+						}
+						if type(row_err) != "null" || len(row_result) == 0 {
+							response = fail(cfg, 500, "load_failed", "Created token but failed to load it", {})
+						} else {
+							row := row_result[0]
+							payload := {
+								"id": row["id"],
+								"label": row["label"],
+								"role_key": row["role_key"],
+								"is_active": row["is_active"],
+								"expires_at": row["expires_at"],
+								"last_used_at": row["last_used_at"],
+								"created_at": row["created_at"],
+								"updated_at": row["updated_at"],
+								"token_secret": token,
+								"revealed_once": true
+							}
+							audit_err := null
+							try {
+								_ = write_audit(ctx, req, "token.create", 201, "api_token", row["id"], {"label": label, "role_key": role_key, "revealed_once": true})
+							} except e {
+								audit_err = e
+							}
+							if type(audit_err) != "null" {
+								fallback_details := {
+									"label": label,
+									"role_key": role_key,
+									"revealed_once": true,
+									"request_id": to_string(dict_get_or(req, "request_id", ""))
+								}
+								auth_context := dict_get_or(req, "auth_context", null)
+								if type(auth_context) == "dict" {
+									fallback_details["role_key"] = to_string(dict_get_or(auth_context, "role_key", role_key))
+									fallback_details["token_id"] = to_string(dict_get_or(auth_context, "token_id", ""))
+									fallback_details["token_label"] = to_string(dict_get_or(auth_context, "token_label", ""))
+								}
+								fallback_err := null
+								try {
+									db_execute(
+										db,
+										"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+										[
+											now(),
+											to_string(dict_get_or(req, "remote_addr", "unknown")),
+											to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
+											to_string(dict_get_or(req, "path", "")),
+											"token",
+											"token.create",
+											201,
+											"api_token",
+											to_string(row["id"]),
+											to_json(fallback_details)
+										]
+									)
+								} except e {
+									fallback_err = e
+								}
+							}
+							response = json_response(201, {"ok": true, "data": payload})
+						}
+					}
+				}
+			}
+		} except e {
+			err = e
+		}
+
+		if type(err) != "null" {
+			return fail(cfg, 500, "token_create_runtime_error", to_string(err), {})
+		}
+		if type(response) == "null" {
+			return fail(cfg, 500, "token_create_runtime_error", "No response generated", {})
+		}
+
+		return response
+	})
+
+	server = server.route("PATCH", "/v1/auth/tokens/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_token_id", "Missing required route parameter: id", {})
+		}
+
+		token_id := -1
+		id_err := null
+		try {
+			token_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || token_id <= 0 {
+			return fail(cfg, 400, "invalid_token_id", "id must be a positive integer", {})
+		}
+
+		existing_result := []
+		existing_err := null
+		try {
+			existing_result = db_query(db, "SELECT * FROM api_tokens WHERE id = ?", [token_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load API token", {})
+		}
+		if len(existing_result) == 0 {
+			return fail(cfg, 404, "not_found", "API token not found", {})
+		}
+		existing := existing_result[0]
+
+		raw_body := dict_get_or(req, "body", null)
+		body := {}
+		if type(raw_body) == "dict" {
+			body = raw_body
+		} else {
+			body_text := to_string(raw_body)
+			if trim(body_text) == "" {
+				return fail(cfg, 400, "invalid_body", "Request body is required", {})
+			}
+
+			body_err := null
+			try {
+				body = parse_json(body_text)
+			} except e {
+				body_err = e
+			}
+			if type(body_err) != "null" || type(body) != "dict" {
+				return fail(cfg, 400, "invalid_body", "Body must be valid JSON object", {})
+			}
+		}
+
+		label := trim(to_string(dict_get_or(body, "label", existing["label"])))
+		role_key := trim(to_string(dict_get_or(body, "role_key", existing["role_key"])))
+		token := trim(to_string(dict_get_or(body, "token", "")))
+		expires_at := existing["expires_at"]
+		if has_key(body, "expires_at") == 1 {
+			if type(body["expires_at"]) == "null" {
+				expires_at = null
+			} else {
+				raw_expires_text := trim(to_string(body["expires_at"]))
+				if raw_expires_text == "" {
+					expires_at = null
+				} else {
+				expires_at_ms := 0
+				parse_err := null
+				try {
+					expires_at_ms = parse_int(raw_expires_text)
+				} except e {
+					parse_err = e
+				}
+				if type(parse_err) == "null" && expires_at_ms > 0 {
+					expires_at = expires_at_ms
+				} else {
+					converted_rows := []
+					converted_err := null
+					try {
+						converted_rows = db_query(db, "SELECT CAST(strftime('%s', ?) AS INTEGER) AS ts", [raw_expires_text])
+					} except e {
+						converted_err = e
+					}
+					if type(converted_err) == "null" && len(converted_rows) > 0 {
+						ts_raw := dict_get_or(converted_rows[0], "ts", 0)
+						ts_sec := 0
+						ts_err := null
+						try {
+							ts_sec = parse_int(trim(to_string(ts_raw)))
+						} except e {
+							ts_err = e
+						}
+						if type(ts_err) == "null" && ts_sec > 0 {
+							expires_at = ts_sec * 1000
+						} else {
+							return fail(cfg, 400, "invalid_expires_at", "expires_at must be a positive epoch-millisecond integer or ISO-8601 timestamp", {})
+						}
+					} else {
+						return fail(cfg, 400, "invalid_expires_at", "expires_at must be a positive epoch-millisecond integer or ISO-8601 timestamp", {})
+					}
+				}
+			}
+			}
+		}
+		is_active := dict_get_or(body, "is_active", existing["is_active"])
+		active_int := 0
+		if is_active == true || is_active == 1 {
+			active_int = 1
+		}
+
+		role_exists := []
+		role_err := null
+		try {
+			role_exists = db_query(db, "SELECT id FROM roles WHERE role_key = ? LIMIT 1", [role_key])
+		} except e {
+			role_err = e
+		}
+		if type(role_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate role", {})
+		}
+		if len(role_exists) == 0 {
+			return fail(cfg, 404, "role_not_found", "Unknown role_key", {})
+		}
+
+		token_hash := existing["token_hash"]
+		last_used_at := existing["last_used_at"]
+		if token != "" {
+			if len(token) < 12 {
+				return fail(cfg, 400, "invalid_token", "token must be at least 12 characters", {})
+			}
+			token_hash = sha256(token)
+			last_used_at = null
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE api_tokens SET token_hash = ?, label = ?, role_key = ?, is_active = ?, expires_at = ?, last_used_at = ?, updated_at = ? WHERE id = ?",
+				[token_hash, label, role_key, active_int, expires_at, last_used_at, now(), token_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			if token != "" {
+				return fail(cfg, 409, "rotate_failed", "Could not rotate token (duplicate token hash)", {})
+			}
+			return fail(cfg, 500, "update_failed", "Failed to update API token", {})
+		}
+
+		updated := []
+		updated_err := null
+		try {
+			updated = db_query(db, "SELECT id, label, role_key, is_active, expires_at, last_used_at, created_at, updated_at FROM api_tokens WHERE id = ?", [token_id])
+		} except e {
+			updated_err = e
+		}
+		if type(updated_err) != "null" || len(updated) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated token but failed to load it", {})
+		}
+
+		row := updated[0]
+		if token != "" {
+			payload := {
+				"id": row["id"],
+				"label": row["label"],
+				"role_key": row["role_key"],
+				"is_active": row["is_active"],
+				"expires_at": row["expires_at"],
+				"last_used_at": row["last_used_at"],
+				"created_at": row["created_at"],
+				"updated_at": row["updated_at"],
+				"token_secret": token,
+				"revealed_once": true
+			}
+			return json_response(200, {"ok": true, "data": payload})
+		}
+
+		return json_response(200, {"ok": true, "data": row})
+	})
+
+	server = server.route("DELETE", "/v1/auth/tokens/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		token_id := -1
+		id_err := null
+		try {
+			token_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || token_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		token_rows := []
+		query_err := null
+		try {
+			token_rows = db_query(db, "SELECT * FROM api_tokens WHERE id = ?", [token_id])
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to query token", {})
+		}
+		if len(token_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Token not found", {})
+		}
+
+		update_err := null
+		try {
+			db_execute(db, "UPDATE api_tokens SET is_active = 0, updated_at = ? WHERE id = ?", [now(), token_id])
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "delete_failed", "Failed to deactivate token", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"deleted": true, "id": token_id}})
+	})
+
+	return server
+}

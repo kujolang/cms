@@ -1,0 +1,788 @@
+from backend.core.http import api_text, fail, guard_request
+from backend.core.utils import dict_get_or, trim_or
+
+func query_rows_safe(db, sql, params) {
+	err := null
+	rows := []
+	try {
+		rows = db_query(db, sql, params)
+	} except e {
+		err = e
+	}
+
+	if type(err) != "null" {
+		return {"ok": false, "error": to_string(err), "rows": []}
+	}
+
+	return {"ok": true, "rows": rows}
+}
+
+func get_site_url(cfg) {
+	site_url := trim_or(dict_get_or(cfg, "site_url", "http://127.0.0.1:4200"), "http://127.0.0.1:4200")
+	if site_url == "" {
+		site_url = "http://127.0.0.1:4200"
+	}
+	if ends_with(site_url, "/") {
+		site_url = substring(site_url, 0, len(site_url) - 1)
+	}
+	return site_url
+}
+
+func xml_escape(value) {
+	text := to_string(value)
+	text = regex_replace(text, "&", "&amp;")
+	text = regex_replace(text, "<", "&lt;")
+	text = regex_replace(text, ">", "&gt;")
+	text = regex_replace(text, "\"", "&quot;")
+	text = regex_replace(text, "'", "&apos;")
+	return text
+}
+
+func entry_url(site_url, row) {
+	content_type_key := to_string(dict_get_or(row, "content_type_key", "entry"))
+	slug := to_string(dict_get_or(row, "slug", ""))
+	if slug == "" {
+		return site_url
+	}
+	return site_url + "/" + content_type_key + "/" + slug
+}
+
+func load_published_entries(db, limit_value) {
+	return query_rows_safe(
+		db,
+		"SELECT id, content_type_key, slug, title, excerpt, body, published_at, updated_at FROM entries WHERE status = 'published' AND slug IS NOT NULL AND TRIM(slug) != '' ORDER BY COALESCE(published_at, updated_at) DESC, id DESC LIMIT ?",
+		[limit_value]
+	)
+}
+
+func normalize_sitemap_rows(rows, default_content_type_key) {
+	normalized := []
+	for row in rows {
+		slug := trim(to_string(dict_get_or(row, "slug", "")))
+		if slug == "" {
+			continue
+		}
+
+		content_type_key := trim(to_string(dict_get_or(row, "content_type_key", default_content_type_key)))
+		if content_type_key == "" {
+			content_type_key = default_content_type_key
+		}
+
+		lastmod := trim(to_string(dict_get_or(row, "lastmod", "")))
+		if lastmod == "" {
+			lastmod = trim(to_string(dict_get_or(row, "updated_at", "")))
+		}
+		if lastmod == "" {
+			lastmod = trim(to_string(dict_get_or(row, "published_at", "")))
+		}
+
+		normalized = push(normalized, {
+			"content_type_key": content_type_key,
+			"slug": slug,
+			"updated_at": lastmod
+		})
+	}
+
+	return normalized
+}
+
+func normalize_rss_rows(rows, default_content_type_key) {
+	normalized := []
+	for row in rows {
+		slug := trim(to_string(dict_get_or(row, "slug", "")))
+		if slug == "" {
+			continue
+		}
+
+		content_type_key := trim(to_string(dict_get_or(row, "content_type_key", default_content_type_key)))
+		if content_type_key == "" {
+			content_type_key = default_content_type_key
+		}
+
+		published_value := trim(to_string(dict_get_or(row, "published_value", "")))
+		if published_value == "" {
+			published_value = trim(to_string(dict_get_or(row, "published_at", "")))
+		}
+		if published_value == "" {
+			published_value = trim(to_string(dict_get_or(row, "updated_at", "")))
+		}
+
+		normalized = push(normalized, {
+			"title": to_string(dict_get_or(row, "title", "Untitled")),
+			"excerpt": to_string(dict_get_or(row, "excerpt", "")),
+			"slug": slug,
+			"content_type_key": content_type_key,
+			"published_at": published_value,
+			"updated_at": published_value
+		})
+	}
+
+	return normalized
+}
+
+func lines_to_text(lines) {
+	text := ""
+	for line in lines {
+		line_text := to_string(line)
+		if text == "" {
+			text = line_text
+		} else {
+			text = text + "\n" + line_text
+		}
+	}
+	return text + "\n"
+}
+
+export build_robots_txt := func(cfg) {
+	site_url := get_site_url(cfg)
+	lines := [
+		"User-agent: *",
+		"Allow: /",
+		"",
+		"Sitemap: " + site_url + "/sitemap.xml"
+	]
+	return lines_to_text(lines)
+}
+
+export build_llms_txt := func(cfg) {
+	site_url := get_site_url(cfg)
+	service_name := to_string(dict_get_or(cfg, "service_name", "Kujo CMS API"))
+	lines := [
+		"# " + service_name,
+		"",
+		"This installation provides a headless CMS API and machine-readable discovery documents.",
+		"",
+		"- API root: " + site_url + "/v1",
+		"- Health: " + site_url + "/health",
+		"- Sitemap: " + site_url + "/sitemap.xml",
+		"- RSS: " + site_url + "/rss.xml",
+		"- Entry listing: " + site_url + "/v1/entries",
+		"- Entry by slug: " + site_url + "/v1/entries/by-slug/{content_type}/{slug}",
+		"",
+		"Use bearer auth for write routes. Read routes are publicly consumable by default."
+	]
+	return lines_to_text(lines)
+}
+
+export build_security_txt := func(cfg) {
+	site_url := get_site_url(cfg)
+	contact := trim_or(dict_get_or(cfg, "security_contact", "mailto:security@example.com"), "mailto:security@example.com")
+	if contact == "" {
+		contact = "mailto:security@example.com"
+	}
+
+	expires := trim_or(dict_get_or(cfg, "security_expires", "2027-12-31T23:59:59Z"), "2027-12-31T23:59:59Z")
+	if expires == "" {
+		expires = "2027-12-31T23:59:59Z"
+	}
+
+	preferred_languages := trim_or(dict_get_or(cfg, "security_preferred_languages", "en"), "en")
+	if preferred_languages == "" {
+		preferred_languages = "en"
+	}
+
+	policy_url := trim_or(dict_get_or(cfg, "security_policy_url", ""), "")
+	acknowledgments_url := trim_or(dict_get_or(cfg, "security_acknowledgments_url", ""), "")
+
+	lines := [
+		"Contact: " + contact,
+		"Expires: " + expires,
+		"Preferred-Languages: " + preferred_languages,
+		"Canonical: " + site_url + "/.well-known/security.txt"
+	]
+
+	if policy_url != "" {
+		lines = push(lines, "Policy: " + policy_url)
+	}
+	if acknowledgments_url != "" {
+		lines = push(lines, "Acknowledgments: " + acknowledgments_url)
+	}
+
+	return lines_to_text(lines)
+}
+
+export build_sitemap_xml := func(cfg, rows) {
+	site_url := get_site_url(cfg)
+	lines := [
+		"<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+		"<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">"
+	]
+
+	lines = push(lines, "  <url>")
+	lines = push(lines, "    <loc>" + xml_escape(site_url + "/") + "</loc>")
+	lines = push(lines, "  </url>")
+
+	for row in rows {
+		loc := entry_url(site_url, row)
+		lastmod := to_string(dict_get_or(row, "updated_at", ""))
+		if trim(lastmod) == "" {
+			lastmod = to_string(dict_get_or(row, "published_at", ""))
+		}
+
+		lines = push(lines, "  <url>")
+		lines = push(lines, "    <loc>" + xml_escape(loc) + "</loc>")
+		if trim(lastmod) != "" {
+			lines = push(lines, "    <lastmod>" + xml_escape(lastmod) + "</lastmod>")
+		}
+		lines = push(lines, "  </url>")
+	}
+
+	lines = push(lines, "</urlset>")
+	return lines_to_text(lines)
+}
+
+export build_rss_xml := func(cfg, rows) {
+	site_url := get_site_url(cfg)
+	service_name := xml_escape(to_string(dict_get_or(cfg, "service_name", "Kujo CMS API")))
+	service_version := xml_escape(to_string(dict_get_or(cfg, "service_version", "0.1.0")))
+
+	lines := [
+		"<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+		"<rss version=\"2.0\">",
+		"<channel>",
+		"  <title>" + service_name + "</title>",
+		"  <link>" + xml_escape(site_url) + "</link>",
+		"  <description>Headless content feed for " + service_name + "</description>",
+		"  <generator>Kujo CMS " + service_version + "</generator>"
+	]
+
+	for row in rows {
+		title := xml_escape(to_string(dict_get_or(row, "title", "Untitled")))
+		link := xml_escape(entry_url(site_url, row))
+		excerpt := xml_escape(to_string(dict_get_or(row, "excerpt", "")))
+		guid := to_string(dict_get_or(row, "id", "0"))
+		pub_date := to_string(dict_get_or(row, "published_at", ""))
+		if trim(pub_date) == "" {
+			pub_date = to_string(dict_get_or(row, "updated_at", ""))
+		}
+
+		lines = push(lines, "  <item>")
+		lines = push(lines, "    <title>" + title + "</title>")
+		lines = push(lines, "    <link>" + link + "</link>")
+		lines = push(lines, "    <guid isPermaLink=\"true\">" + link + "</guid>")
+		if trim(pub_date) != "" {
+			lines = push(lines, "    <pubDate>" + xml_escape(pub_date) + "</pubDate>")
+		}
+		lines = push(lines, "    <description>" + excerpt + "</description>")
+		lines = push(lines, "  </item>")
+	}
+
+	lines = push(lines, "</channel>")
+	lines = push(lines, "</rss>")
+	return lines_to_text(lines)
+}
+
+export register_delivery_routes := func(server, ctx) {
+	server = server.route("GET", "/robots.txt", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		body := build_robots_txt(cfg)
+		return api_text(200, body, cfg)
+	})
+
+	server = server.route("HEAD", "/robots.txt", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		return api_text(200, "", cfg)
+	})
+
+	server = server.route("GET", "/llms.txt", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		body := build_llms_txt(cfg)
+		return api_text(200, body, cfg)
+	})
+
+	server = server.route("HEAD", "/llms.txt", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		return api_text(200, "", cfg)
+	})
+
+	server = server.route("GET", "/.well-known/llms.txt", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		body := build_llms_txt(cfg)
+		return api_text(200, body, cfg)
+	})
+
+	server = server.route("GET", "/.well-known/security.txt", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		body := build_security_txt(cfg)
+		return api_text(200, body, cfg)
+	})
+
+	server = server.route("HEAD", "/.well-known/security.txt", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		return api_text(200, "", cfg)
+	})
+
+	server = server.route("GET", "/sitemap.xml", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		site_url := to_string(dict_get_or(cfg, "site_url", "http://127.0.0.1:4200"))
+		if trim(site_url) == "" {
+			site_url = "http://127.0.0.1:4200"
+		}
+		if ends_with(site_url, "/") {
+			site_url = substring(site_url, 0, len(site_url) - 1)
+		}
+
+		query := dict_get_or(req, "query", {})
+		limit_value := 1000
+		if has_key(query, "limit") == 1 {
+			limit_value = to_int(query["limit"])
+		}
+		if limit_value < 1 {
+			limit_value = 1
+		}
+		if limit_value > 5000 {
+			limit_value = 5000
+		}
+
+		rows_result := load_published_entries(db, limit_value)
+		if rows_result["ok"] == false {
+			return fail(cfg, 500, "db_query_failed", "Failed to build sitemap", {})
+		}
+
+		xml := build_sitemap_xml(cfg, rows_result["rows"])
+		return api_text(200, xml, cfg)
+	})
+
+	server = server.route("HEAD", "/sitemap.xml", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		return api_text(200, "", cfg)
+	})
+
+	server = server.route("GET", "/sitemap-index.xml", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		site_url := to_string(dict_get_or(cfg, "site_url", "http://127.0.0.1:4200"))
+		if trim(site_url) == "" {
+			site_url = "http://127.0.0.1:4200"
+		}
+		if ends_with(site_url, "/") {
+			site_url = substring(site_url, 0, len(site_url) - 1)
+		}
+
+		content_type_err := null
+		content_type_rows := []
+		try {
+			content_type_rows = db_query(
+				db,
+				"SELECT DISTINCT content_type_key FROM entries WHERE status = 'published' AND slug IS NOT NULL AND TRIM(slug) != '' ORDER BY content_type_key ASC",
+				[]
+			)
+		} except e {
+			content_type_err = e
+		}
+		if type(content_type_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to build sitemap index", {})
+		}
+
+		bucket_err := null
+		bucket_rows := []
+		try {
+			bucket_rows = db_query(
+				db,
+				"SELECT DISTINCT CASE WHEN instr(CAST(COALESCE(published_at, updated_at) AS TEXT), '-') > 0 THEN substr(CAST(COALESCE(published_at, updated_at) AS TEXT), 1, 7) ELSE strftime('%Y-%m', CAST(COALESCE(published_at, updated_at) AS INTEGER) / 1000, 'unixepoch') END AS bucket FROM entries WHERE status = 'published' AND slug IS NOT NULL AND TRIM(slug) != '' AND COALESCE(published_at, updated_at) IS NOT NULL ORDER BY bucket DESC",
+				[]
+			)
+		} except e {
+			bucket_err = e
+		}
+		if type(bucket_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to build sitemap index", {})
+		}
+
+		xml := "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+		xml = xml + "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+		xml = xml + "  <sitemap><loc>" + site_url + "/sitemap.xml</loc></sitemap>\n"
+		xml = xml + "  <sitemap><loc>" + site_url + "/sitemaps/content-types.xml</loc></sitemap>\n"
+		xml = xml + "  <sitemap><loc>" + site_url + "/sitemaps/dates.xml</loc></sitemap>\n"
+
+		for row in content_type_rows {
+			content_type_key := trim(to_string(dict_get_or(row, "content_type_key", "")))
+			if content_type_key == "" {
+				continue
+			}
+			xml = xml + "  <sitemap><loc>" + site_url + "/sitemaps/content-type/" + content_type_key + "</loc></sitemap>\n"
+		}
+
+		for row in bucket_rows {
+			bucket := trim(to_string(dict_get_or(row, "bucket", "")))
+			if bucket == "" {
+				continue
+			}
+			xml = xml + "  <sitemap><loc>" + site_url + "/sitemaps/date/" + bucket + "</loc></sitemap>\n"
+		}
+
+		xml = xml + "</sitemapindex>\n"
+		return api_text(200, xml, cfg)
+	})
+
+	server = server.route("GET", "/sitemaps/content-types.xml", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		site_url := get_site_url(cfg)
+		rows_err := null
+		rows := []
+		try {
+			rows = db_query(
+				db,
+				"SELECT DISTINCT content_type_key FROM entries WHERE status = 'published' AND slug IS NOT NULL AND TRIM(slug) != '' ORDER BY content_type_key ASC",
+				[]
+			)
+		} except e {
+			rows_err = e
+		}
+		if type(rows_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to build content-type sitemap index", {})
+		}
+
+		xml := "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+		xml = xml + "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+		for row in rows {
+			content_type_key := trim(to_string(dict_get_or(row, "content_type_key", "")))
+			if content_type_key == "" {
+				continue
+			}
+			xml = xml + "  <sitemap><loc>" + site_url + "/sitemaps/content-type/" + content_type_key + "</loc></sitemap>\n"
+		}
+		xml = xml + "</sitemapindex>\n"
+		return api_text(200, xml, cfg)
+	})
+
+	server = server.route("GET", "/sitemaps/content-type/:content_type_key", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		content_type_key := trim(to_string(dict_get_or(params, "content_type_key", "")))
+		if content_type_key == "" {
+			return fail(cfg, 400, "invalid_content_type", "content_type_key path parameter is required", {})
+		}
+
+		query := dict_get_or(req, "query", {})
+		limit_value := 5000
+		if has_key(query, "limit") == 1 {
+			limit_value = to_int(query["limit"])
+		}
+		if limit_value < 1 {
+			limit_value = 1
+		}
+		if limit_value > 10000 {
+			limit_value = 10000
+		}
+
+		site_url := to_string(dict_get_or(cfg, "site_url", "http://127.0.0.1:4200"))
+		if trim(site_url) == "" {
+			site_url = "http://127.0.0.1:4200"
+		}
+		if ends_with(site_url, "/") {
+			site_url = substring(site_url, 0, len(site_url) - 1)
+		}
+
+		rows_err := null
+		rows := []
+		try {
+			rows = db_query(
+				db,
+				"SELECT slug, COALESCE(published_at, updated_at) AS lastmod FROM entries WHERE status = 'published' AND content_type_key = ? AND slug IS NOT NULL AND TRIM(slug) != '' ORDER BY COALESCE(published_at, updated_at) DESC, id DESC LIMIT ?",
+				[content_type_key, limit_value]
+			)
+		} except e {
+			rows_err = e
+		}
+		if type(rows_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to build content-type sitemap", {})
+		}
+
+		normalized_rows := normalize_sitemap_rows(rows, content_type_key)
+		xml := build_sitemap_xml(cfg, normalized_rows)
+		return api_text(200, xml, cfg)
+	})
+
+	server = server.route("GET", "/sitemaps/dates.xml", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		site_url := get_site_url(cfg)
+		rows_err := null
+		rows := []
+		try {
+			rows = db_query(
+				db,
+				"SELECT DISTINCT CASE WHEN instr(CAST(COALESCE(published_at, updated_at) AS TEXT), '-') > 0 THEN substr(CAST(COALESCE(published_at, updated_at) AS TEXT), 1, 7) ELSE strftime('%Y-%m', CAST(COALESCE(published_at, updated_at) AS INTEGER) / 1000, 'unixepoch') END AS bucket FROM entries WHERE status = 'published' AND slug IS NOT NULL AND TRIM(slug) != '' AND COALESCE(published_at, updated_at) IS NOT NULL ORDER BY bucket DESC",
+				[]
+			)
+		} except e {
+			rows_err = e
+		}
+		if type(rows_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to build date sitemap index", {})
+		}
+
+		xml := "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+		xml = xml + "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+		for row in rows {
+			bucket := trim(to_string(dict_get_or(row, "bucket", "")))
+			if bucket == "" {
+				continue
+			}
+			xml = xml + "  <sitemap><loc>" + site_url + "/sitemaps/date/" + bucket + "</loc></sitemap>\n"
+		}
+		xml = xml + "</sitemapindex>\n"
+		return api_text(200, xml, cfg)
+	})
+
+	server = server.route("GET", "/sitemaps/date/:bucket", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		bucket := trim(to_string(dict_get_or(params, "bucket", "")))
+		if bucket == "" || len(bucket) != 7 || substring(bucket, 4, 5) != "-" {
+			return fail(cfg, 400, "invalid_bucket", "bucket must use YYYY-MM format", {})
+		}
+
+		query := dict_get_or(req, "query", {})
+		limit_value := 5000
+		if has_key(query, "limit") == 1 {
+			limit_value = to_int(query["limit"])
+		}
+		if limit_value < 1 {
+			limit_value = 1
+		}
+		if limit_value > 10000 {
+			limit_value = 10000
+		}
+
+		site_url := to_string(dict_get_or(cfg, "site_url", "http://127.0.0.1:4200"))
+		if trim(site_url) == "" {
+			site_url = "http://127.0.0.1:4200"
+		}
+		if ends_with(site_url, "/") {
+			site_url = substring(site_url, 0, len(site_url) - 1)
+		}
+
+		rows_err := null
+		rows := []
+		try {
+			rows = db_query(
+				db,
+				"SELECT content_type_key, slug, COALESCE(published_at, updated_at) AS lastmod FROM entries WHERE status = 'published' AND slug IS NOT NULL AND TRIM(slug) != '' AND CASE WHEN instr(CAST(COALESCE(published_at, updated_at) AS TEXT), '-') > 0 THEN substr(CAST(COALESCE(published_at, updated_at) AS TEXT), 1, 7) ELSE strftime('%Y-%m', CAST(COALESCE(published_at, updated_at) AS INTEGER) / 1000, 'unixepoch') END = ? ORDER BY COALESCE(published_at, updated_at) DESC, id DESC LIMIT ?",
+				[bucket, limit_value]
+			)
+		} except e {
+			rows_err = e
+		}
+		if type(rows_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to build date sitemap", {})
+		}
+
+		normalized_rows := normalize_sitemap_rows(rows, "entry")
+		xml := build_sitemap_xml(cfg, normalized_rows)
+		return api_text(200, xml, cfg)
+	})
+
+	server = server.route("GET", "/rss/content-type/:content_type_key", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		content_type_key := trim(to_string(dict_get_or(params, "content_type_key", "")))
+		if content_type_key == "" {
+			return fail(cfg, 400, "invalid_content_type", "content_type_key path parameter is required", {})
+		}
+
+		query := dict_get_or(req, "query", {})
+		limit_value := 100
+		if has_key(query, "limit") == 1 {
+			limit_value = to_int(query["limit"])
+		}
+		if limit_value < 1 {
+			limit_value = 1
+		}
+		if limit_value > 500 {
+			limit_value = 500
+		}
+
+		rows_err := null
+		rows := []
+		try {
+			rows = db_query(
+				db,
+				"SELECT title, excerpt, slug, COALESCE(published_at, updated_at) AS published_value FROM entries WHERE status = 'published' AND content_type_key = ? AND slug IS NOT NULL AND TRIM(slug) != '' ORDER BY COALESCE(published_at, updated_at) DESC, id DESC LIMIT ?",
+				[content_type_key, limit_value]
+			)
+		} except e {
+			rows_err = e
+		}
+		if type(rows_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to build content-type RSS feed", {})
+		}
+
+		normalized_rows := normalize_rss_rows(rows, content_type_key)
+		xml := build_rss_xml(cfg, normalized_rows)
+		return api_text(200, xml, cfg)
+	})
+
+	server = server.route("GET", "/rss/taxonomy/:taxonomy_key/:term_slug", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		taxonomy_key := trim(to_string(dict_get_or(params, "taxonomy_key", "")))
+		term_slug := trim(to_string(dict_get_or(params, "term_slug", "")))
+		if taxonomy_key == "" || term_slug == "" {
+			return fail(cfg, 400, "invalid_taxonomy_scope", "taxonomy_key and term_slug path parameters are required", {})
+		}
+
+		query := dict_get_or(req, "query", {})
+		limit_value := 100
+		if has_key(query, "limit") == 1 {
+			limit_value = to_int(query["limit"])
+		}
+		if limit_value < 1 {
+			limit_value = 1
+		}
+		if limit_value > 500 {
+			limit_value = 500
+		}
+
+		term_err := null
+		term_rows := []
+		try {
+			term_rows = db_query(
+				db,
+				"SELECT tt.id AS term_id, tt.name AS term_name FROM taxonomy_terms tt INNER JOIN taxonomies tx ON tx.id = tt.taxonomy_id WHERE tx.taxonomy_key = ? AND tt.slug = ? LIMIT 1",
+				[taxonomy_key, term_slug]
+			)
+		} except e {
+			term_err = e
+		}
+		if type(term_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to resolve taxonomy scope", {})
+		}
+		if len(term_rows) == 0 {
+			return fail(cfg, 404, "term_not_found", "Taxonomy term not found", {})
+		}
+		term_row := term_rows[0]
+		term_id := to_int(dict_get_or(term_row, "term_id", 0))
+		term_name := to_string(dict_get_or(term_row, "term_name", term_slug))
+
+		rows_err := null
+		rows := []
+		try {
+			rows = db_query(
+				db,
+				"SELECT e.title, e.excerpt, e.slug, e.content_type_key, COALESCE(e.published_at, e.updated_at) AS published_value FROM entries e INNER JOIN entry_terms et ON et.entry_id = e.id WHERE et.term_id = ? AND e.status = 'published' AND e.slug IS NOT NULL AND TRIM(e.slug) != '' ORDER BY COALESCE(e.published_at, e.updated_at) DESC, e.id DESC LIMIT ?",
+				[term_id, limit_value]
+			)
+		} except e {
+			rows_err = e
+		}
+		if type(rows_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to build taxonomy RSS feed", {})
+		}
+
+		normalized_rows := normalize_rss_rows(rows, "entry")
+		xml := build_rss_xml(cfg, normalized_rows)
+		return api_text(200, xml, cfg)
+	})
+
+	server = server.route("GET", "/rss.xml", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		limit_value := 100
+		if has_key(query, "limit") == 1 {
+			limit_value = to_int(query["limit"])
+		}
+		if limit_value < 1 {
+			limit_value = 1
+		}
+		if limit_value > 500 {
+			limit_value = 500
+		}
+
+		rows_result := load_published_entries(db, limit_value)
+		if rows_result["ok"] == false {
+			return fail(cfg, 500, "db_query_failed", "Failed to build RSS feed", {})
+		}
+
+		normalized_rows := normalize_rss_rows(rows_result["rows"], "entry")
+		xml := build_rss_xml(cfg, normalized_rows)
+		return api_text(200, xml, cfg)
+	})
+
+	server = server.route("HEAD", "/rss.xml", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+		cfg := ctx["cfg"]
+		return api_text(200, "", cfg)
+	})
+
+	return server
+}

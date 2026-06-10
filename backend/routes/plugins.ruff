@@ -1,0 +1,1160 @@
+from backend.core.utils import bool_or, dict_get_or, ensure_json_text, is_valid_slug_key, trim_or
+from backend.core.http import fail, guard_request
+
+func webhook_event_names() {
+	return [
+		"entry.created",
+		"entry.updated",
+		"entry.published",
+		"entry.deleted",
+		"taxonomy.term.created",
+		"media.created",
+		"plugin.activated"
+	]
+}
+
+func parse_policy_entries(raw_value) {
+	entries := []
+	text := to_lower(trim(to_string(raw_value)))
+	if text == "" {
+		return entries
+	}
+
+	tokens := split(text, ",")
+	for token_raw in tokens {
+		token := to_lower(trim(to_string(token_raw)))
+		if token != "" {
+			entries = push(entries, token)
+		}
+	}
+
+	return entries
+}
+
+func parse_ipv4_int(ip_text) {
+	parts := split(trim(to_string(ip_text)), ".")
+	if len(parts) != 4 {
+		return -1
+	}
+
+	ip_value := 0
+	for part in parts {
+		octet_text := trim(to_string(part))
+		if octet_text == "" {
+			return -1
+		}
+		octet := -1
+		octet_err := null
+		try {
+			octet = parse_int(octet_text)
+		} except e {
+			octet_err = e
+		}
+		if type(octet_err) != "null" || octet < 0 || octet > 255 {
+			return -1
+		}
+		ip_value = (ip_value * 256) + octet
+	}
+
+	return ip_value
+}
+
+func host_is_private_ipv4(host_text) {
+	host_int := parse_ipv4_int(host_text)
+	if host_int < 0 {
+		return false
+	}
+
+	first := to_int(host_int / 16777216)
+	second := to_int((host_int - (first * 16777216)) / 65536)
+
+	if first == 0 || first == 10 || first == 127 {
+		return true
+	}
+	if first == 169 && second == 254 {
+		return true
+	}
+	if first == 172 && second >= 16 && second <= 31 {
+		return true
+	}
+	if first == 192 && second == 168 {
+		return true
+	}
+	if first == 100 && second >= 64 && second <= 127 {
+		return true
+	}
+	if first == 198 && (second == 18 || second == 19) {
+		return true
+	}
+	if first >= 224 {
+		return true
+	}
+
+	return false
+}
+
+func host_is_ipv6_literal(host_text) {
+	host_value := trim(to_string(host_text))
+	if index_of(host_value, ":") < 0 {
+		return false
+	}
+	invalid_chars := regex_replace(host_value, "[0-9a-fA-F:\\.]", "")
+	return invalid_chars == ""
+}
+
+func host_is_private_ipv6(host_text) {
+	host := to_lower(trim(to_string(host_text)))
+	if host == "::" || host == "::1" {
+		return true
+	}
+	if starts_with(host, "fc") || starts_with(host, "fd") {
+		return true
+	}
+	if starts_with(host, "fe8") || starts_with(host, "fe9") || starts_with(host, "fea") || starts_with(host, "feb") {
+		return true
+	}
+	if starts_with(host, "::ffff:") {
+		mapped_ipv4 := trim(substring(host, 7, len(host)))
+		if host_is_private_ipv4(mapped_ipv4) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func host_is_reserved_label(host_text) {
+	host := to_lower(trim(to_string(host_text)))
+	if host == "localhost" || ends_with(host, ".localhost") || ends_with(host, ".local") || ends_with(host, ".internal") {
+		return true
+	}
+	if host == "metadata.google.internal" {
+		return true
+	}
+	return false
+}
+
+func ipv4_matches_cidr(host, cidr_text) {
+	cidr_parts := split(trim(to_string(cidr_text)), "/")
+	if len(cidr_parts) != 2 {
+		return false
+	}
+
+	base_int := parse_ipv4_int(cidr_parts[0])
+	host_int := parse_ipv4_int(host)
+	if base_int < 0 || host_int < 0 {
+		return false
+	}
+
+	prefix := -1
+	prefix_err := null
+	try {
+		prefix = parse_int(trim(to_string(cidr_parts[1])))
+	} except e {
+		prefix_err = e
+	}
+	if type(prefix_err) != "null" || prefix < 0 || prefix > 32 {
+		return false
+	}
+	if prefix == 0 {
+		return true
+	}
+
+	divisor := 1
+	remaining_bits := 32 - prefix
+	step := 0
+	while step < remaining_bits {
+		divisor = divisor * 2
+		step = step + 1
+	}
+
+	return to_int(host_int / divisor) == to_int(base_int / divisor)
+}
+
+func host_matches_policy_entry(host, entry) {
+	if entry == "*" {
+		return true
+	}
+
+	if index_of(entry, "/") >= 0 {
+		if ipv4_matches_cidr(host, entry) {
+			return true
+		}
+	}
+
+	if starts_with(entry, "*.") {
+		suffix := substring(entry, 1, len(entry))
+		return ends_with(host, suffix)
+	}
+
+	if ends_with(entry, "*") {
+		prefix := substring(entry, 0, len(entry) - 1)
+		return starts_with(host, prefix)
+	}
+
+	return host == entry
+}
+
+func is_allowed_handler_host(cfg, host) {
+	deny_entries := parse_policy_entries(dict_get_or(cfg, "plugin_hook_url_denylist", ""))
+	for deny_entry in deny_entries {
+		if host_matches_policy_entry(host, deny_entry) {
+			return false
+		}
+	}
+
+	allow_entries := parse_policy_entries(dict_get_or(cfg, "plugin_hook_url_allowlist", ""))
+	if len(allow_entries) == 0 {
+		return true
+	}
+
+	for allow_entry in allow_entries {
+		if host_matches_policy_entry(host, allow_entry) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func validate_handler_url_policy(cfg, handler_url) {
+	handler_url_text := to_lower(trim(to_string(handler_url)))
+	if len(handler_url_text) < 8 {
+		return {
+			"ok": false,
+			"code": "invalid_handler_url",
+			"message": "handler_url must be a valid URL"
+		}
+	}
+
+	allow_http := bool_or(dict_get_or(cfg, "plugin_hook_allow_http", false), false)
+	remainder := ""
+	if starts_with(handler_url_text, "https://") {
+		remainder = substring(handler_url_text, 8, len(handler_url_text))
+	} else if starts_with(handler_url_text, "http://") {
+		if allow_http == false {
+			return {
+				"ok": false,
+				"code": "invalid_handler_url_scheme",
+				"message": "handler_url must use https:// by default"
+			}
+		}
+		remainder = substring(handler_url_text, 7, len(handler_url_text))
+	} else {
+		return {
+			"ok": false,
+			"code": "invalid_handler_url_scheme",
+			"message": "handler_url must use http:// or https://"
+		}
+	}
+
+	if remainder == "" {
+		return {
+			"ok": false,
+			"code": "invalid_handler_url",
+			"message": "handler_url must include a host"
+		}
+	}
+
+	host_port := trim(to_string(split(remainder, "/")[0]))
+	if host_port == "" {
+		return {
+			"ok": false,
+			"code": "invalid_handler_url",
+			"message": "handler_url must include a host"
+		}
+	}
+
+	if len(split(host_port, "@")) > 1 {
+		return {
+			"ok": false,
+			"code": "invalid_handler_url",
+			"message": "handler_url must not include userinfo"
+		}
+	}
+
+	host := ""
+	if starts_with(host_port, "[") {
+		closing_index := index_of(host_port, "]")
+		if closing_index < 0 {
+			return {
+				"ok": false,
+				"code": "invalid_handler_url",
+				"message": "handler_url must include a valid host"
+			}
+		}
+		host = to_lower(trim(substring(host_port, 1, closing_index)))
+		port_suffix := trim(substring(host_port, closing_index + 1, len(host_port)))
+		if port_suffix != "" && starts_with(port_suffix, ":") == false {
+			return {
+				"ok": false,
+				"code": "invalid_handler_url",
+				"message": "handler_url must include a valid host"
+			}
+		}
+	} else {
+		host = to_lower(host_port)
+		host_parts := split(host_port, ":")
+		if len(host_parts) > 1 {
+			host = to_lower(trim(to_string(host_parts[0])))
+		}
+	}
+
+	if host == "" {
+		return {
+			"ok": false,
+			"code": "invalid_handler_url",
+			"message": "handler_url must include a host"
+		}
+	}
+
+	if host_is_reserved_label(host) {
+		return {
+			"ok": false,
+			"code": "unsafe_handler_url",
+			"message": "handler_url host is not allowed by egress policy"
+		}
+	}
+	if host_is_private_ipv4(host) {
+		return {
+			"ok": false,
+			"code": "unsafe_handler_url",
+			"message": "handler_url host is not allowed by egress policy"
+		}
+	}
+	if host_is_private_ipv6(host) {
+		return {
+			"ok": false,
+			"code": "unsafe_handler_url",
+			"message": "handler_url host is not allowed by egress policy"
+		}
+	}
+
+	is_ipv4 := parse_ipv4_int(host) >= 0
+	is_ipv6 := host_is_ipv6_literal(host)
+	if is_ipv4 == false && is_ipv6 == false && len(split(host, ".")) < 2 {
+		return {
+			"ok": false,
+			"code": "unsafe_handler_url",
+			"message": "handler_url host is not allowed by egress policy"
+		}
+	}
+
+	if is_allowed_handler_host(cfg, host) == false {
+		return {
+			"ok": false,
+			"code": "unsafe_handler_url",
+			"message": "handler_url host is not allowed by egress policy"
+		}
+	}
+
+	return {
+		"ok": true,
+		"host": host
+	}
+}
+
+export webhook_schema_for := func(event_type) {
+	if event_type == "entry.created" {
+		return {
+			"event_type": "entry.created",
+			"schema_version": "1.0",
+			"required_top_level": ["event_id", "event_type", "occurred_at", "resource", "action", "data"],
+			"required_data": ["entry_id", "content_type_key", "slug", "status"]
+		}
+	}
+	if event_type == "entry.updated" {
+		return {
+			"event_type": "entry.updated",
+			"schema_version": "1.0",
+			"required_top_level": ["event_id", "event_type", "occurred_at", "resource", "action", "data"],
+			"required_data": ["entry_id", "content_type_key", "slug", "status"]
+		}
+	}
+	if event_type == "entry.published" {
+		return {
+			"event_type": "entry.published",
+			"schema_version": "1.0",
+			"required_top_level": ["event_id", "event_type", "occurred_at", "resource", "action", "data"],
+			"required_data": ["entry_id", "content_type_key", "slug", "published_at"]
+		}
+	}
+	if event_type == "entry.deleted" {
+		return {
+			"event_type": "entry.deleted",
+			"schema_version": "1.0",
+			"required_top_level": ["event_id", "event_type", "occurred_at", "resource", "action", "data"],
+			"required_data": ["entry_id", "content_type_key"]
+		}
+	}
+	if event_type == "taxonomy.term.created" {
+		return {
+			"event_type": "taxonomy.term.created",
+			"schema_version": "1.0",
+			"required_top_level": ["event_id", "event_type", "occurred_at", "resource", "action", "data"],
+			"required_data": ["taxonomy_id", "term_id", "taxonomy_key", "term_slug"]
+		}
+	}
+	if event_type == "media.created" {
+		return {
+			"event_type": "media.created",
+			"schema_version": "1.0",
+			"required_top_level": ["event_id", "event_type", "occurred_at", "resource", "action", "data"],
+			"required_data": ["media_id", "filename", "mime_type"]
+		}
+	}
+	if event_type == "plugin.activated" {
+		return {
+			"event_type": "plugin.activated",
+			"schema_version": "1.0",
+			"required_top_level": ["event_id", "event_type", "occurred_at", "resource", "action", "data"],
+			"required_data": ["plugin_id", "plugin_key", "version"]
+		}
+	}
+
+	return null
+}
+
+export list_webhook_event_schemas := func() {
+	names := webhook_event_names()
+	items := []
+	for event_name in names {
+		schema := webhook_schema_for(event_name)
+		if type(schema) == "dict" {
+			items = push(items, schema)
+		}
+	}
+	return items
+}
+
+export validate_webhook_event_payload := func(event_type, payload) {
+	schema := webhook_schema_for(event_type)
+	if type(schema) != "dict" {
+		return {
+			"ok": false,
+			"error": "Unsupported webhook event type",
+			"details": {
+				"event_type": event_type,
+				"supported_events": webhook_event_names()
+			}
+		}
+	}
+
+	if type(payload) != "dict" {
+		return {
+			"ok": false,
+			"error": "payload must be a JSON object",
+			"details": {
+				"event_type": event_type,
+				"missing_fields": schema["required_top_level"],
+				"missing_data_fields": schema["required_data"]
+			}
+		}
+	}
+
+	missing_fields := []
+	for key in schema["required_top_level"] {
+		if has_key(payload, key) == 0 {
+			missing_fields = push(missing_fields, key)
+		}
+	}
+
+	data_value := dict_get_or(payload, "data", null)
+	data_obj := {}
+	if type(data_value) == "dict" {
+		data_obj = data_value
+	}
+
+	missing_data_fields := []
+	for key in schema["required_data"] {
+		if has_key(data_obj, key) == 0 {
+			missing_data_fields = push(missing_data_fields, key)
+		}
+	}
+
+	payload_event_type := trim_or(dict_get_or(payload, "event_type", ""), "")
+	if payload_event_type != event_type {
+		missing_fields = push(missing_fields, "event_type_match")
+	}
+
+	if len(missing_fields) > 0 || len(missing_data_fields) > 0 {
+		return {
+			"ok": false,
+			"error": "Payload does not satisfy webhook event schema",
+			"details": {
+				"event_type": event_type,
+				"missing_fields": missing_fields,
+				"missing_data_fields": missing_data_fields
+			}
+		}
+	}
+
+	return {
+		"ok": true,
+		"event_schema": schema
+	}
+}
+
+export register_plugin_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/plugins", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT * FROM plugins ORDER BY id ASC LIMIT ? OFFSET ?", [limit, offset])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load plugins", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM plugins", [])
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count plugins", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = count_rows[0]["total"]
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "total": total, "limit": limit, "offset": offset}})
+	})
+
+	server = server.route("POST", "/v1/plugins", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		plugin_key := trim(to_string(dict_get_or(body, "plugin_key", "")))
+		name := trim(to_string(dict_get_or(body, "name", "")))
+		version := trim(to_string(dict_get_or(body, "version", "0.1.0")))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", "inactive"))))
+		if version == "" {
+			version = "0.1.0"
+		}
+		if status == "" {
+			status = "inactive"
+		}
+
+		capabilities_json := "[]"
+		if has_key(body, "capabilities") == 1 {
+			cap_value := body["capabilities"]
+			if type(cap_value) == "array" || type(cap_value) == "dict" {
+				capabilities_json = to_json(cap_value)
+			} else if type(cap_value) == "string" {
+				capabilities_json = to_string(cap_value)
+			}
+		}
+
+		config_json := "{}"
+		if has_key(body, "config") == 1 {
+			cfg_value := body["config"]
+			if type(cfg_value) == "array" || type(cfg_value) == "dict" {
+				config_json = to_json(cfg_value)
+			} else if type(cfg_value) == "string" {
+				config_json = to_string(cfg_value)
+			}
+		}
+
+		invalid_chars := regex_replace(plugin_key, "[a-z0-9_\\-]", "")
+		if len(plugin_key) < 2 || len(plugin_key) > 64 || plugin_key != to_lower(plugin_key) || invalid_chars != "" {
+			return fail(cfg, 400, "invalid_plugin_key", "plugin_key must be lowercase slug text", {})
+		}
+		if len(name) < 2 {
+			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
+		}
+		if status != "active" && status != "inactive" && status != "blocked" {
+			return fail(cfg, 400, "invalid_status", "status must be active, inactive, or blocked", {})
+		}
+
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO plugins (plugin_key, name, version, status, capabilities_json, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+				[plugin_key, name, version, status, capabilities_json, config_json, now(), now()]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create plugin (possibly duplicate plugin_key)", {})
+		}
+
+		plugin_id := db_last_insert_id(db)
+		rows := []
+		load_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM plugins WHERE id = ?", [plugin_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created plugin but failed to load it", {})
+		}
+
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "plugin.create", 201, "plugin", plugin_id, {"plugin_key": plugin_key})
+		} except e {
+			audit_err = e
+		}
+		if type(audit_err) != "null" {
+			fallback_details := {
+				"plugin_key": plugin_key,
+				"request_id": to_string(dict_get_or(req, "request_id", ""))
+			}
+			auth_context := dict_get_or(req, "auth_context", null)
+			if type(auth_context) == "dict" {
+				fallback_details["role_key"] = to_string(dict_get_or(auth_context, "role_key", ""))
+				fallback_details["token_id"] = to_string(dict_get_or(auth_context, "token_id", ""))
+				fallback_details["token_label"] = to_string(dict_get_or(auth_context, "token_label", ""))
+			}
+			fallback_err := null
+			try {
+				db_execute(
+					db,
+					"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					[
+						now(),
+						to_string(dict_get_or(req, "remote_addr", "unknown")),
+						to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
+						to_string(dict_get_or(req, "path", "")),
+						"token",
+						"plugin.create",
+						201,
+						"plugin",
+						to_string(plugin_id),
+						to_json(fallback_details)
+					]
+				)
+			} except e {
+				fallback_err = e
+			}
+		}
+
+		return json_response(201, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/plugins/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_plugin_id", "Missing required route parameter: id", {})
+		}
+
+		plugin_id := -1
+		id_err := null
+		try {
+			plugin_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || plugin_id <= 0 {
+			return fail(cfg, 400, "invalid_plugin_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM plugins WHERE id = ?", [plugin_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load plugin", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Plugin not found", {})
+		}
+		existing := existing_rows[0]
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		name := trim(to_string(dict_get_or(body, "name", existing["name"])))
+		version := trim(to_string(dict_get_or(body, "version", existing["version"])))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", existing["status"]))))
+		if version == "" {
+			version = to_string(existing["version"])
+		}
+		if status == "" {
+			status = to_lower(to_string(existing["status"]))
+		}
+
+		capabilities_json := to_string(dict_get_or(existing, "capabilities_json", "[]"))
+		if has_key(body, "capabilities") == 1 {
+			cap_value := body["capabilities"]
+			if type(cap_value) == "array" || type(cap_value) == "dict" {
+				capabilities_json = to_json(cap_value)
+			} else if type(cap_value) == "string" {
+				capabilities_json = to_string(cap_value)
+			}
+		}
+
+		config_json := to_string(dict_get_or(existing, "config_json", "{}"))
+		if has_key(body, "config") == 1 {
+			cfg_value := body["config"]
+			if type(cfg_value) == "array" || type(cfg_value) == "dict" {
+				config_json = to_json(cfg_value)
+			} else if type(cfg_value) == "string" {
+				config_json = to_string(cfg_value)
+			}
+		}
+
+		if len(name) < 2 {
+			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
+		}
+		if status != "active" && status != "inactive" && status != "blocked" {
+			return fail(cfg, 400, "invalid_status", "status must be active, inactive, or blocked", {})
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE plugins SET name = ?, version = ?, status = ?, capabilities_json = ?, config_json = ?, updated_at = ? WHERE id = ?",
+				[name, version, status, capabilities_json, config_json, now(), plugin_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update plugin", {})
+		}
+
+		updated_rows := []
+		load_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM plugins WHERE id = ?", [plugin_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated plugin but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("GET", "/v1/plugins/:id/hooks", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_plugin_id", "Missing required route parameter: id", {})
+		}
+
+		plugin_id := -1
+		id_err := null
+		try {
+			plugin_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || plugin_id <= 0 {
+			return fail(cfg, 400, "invalid_plugin_id", "id must be a positive integer", {})
+		}
+
+		plugin_rows := []
+		plugin_err := null
+		try {
+			plugin_rows = db_query(db, "SELECT id FROM plugins WHERE id = ?", [plugin_id])
+		} except e {
+			plugin_err = e
+		}
+		if type(plugin_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate plugin", {})
+		}
+		if len(plugin_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Plugin not found", {})
+		}
+
+		query := dict_get_or(req, "query", {})
+		limit := 100
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 500 {
+			limit = 500
+		}
+		if offset < 0 {
+			offset = 0
+		}
+
+		rows := []
+		rows_err := null
+		try {
+			rows = db_query(db, "SELECT id, plugin_id, hook_name, handler_url, enabled, created_at, updated_at FROM plugin_hooks WHERE plugin_id = ? ORDER BY id ASC LIMIT ? OFFSET ?", [plugin_id, limit, offset])
+		} except e {
+			rows_err = e
+		}
+		if type(rows_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load plugin hooks", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM plugin_hooks WHERE plugin_id = ?", [plugin_id])
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count plugin hooks", {})
+		}
+
+		total := 0
+		if len(count_rows) > 0 {
+			total = count_rows[0]["total"]
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "total": total, "limit": limit, "offset": offset}})
+	})
+
+	server = server.route("POST", "/v1/plugins/:id/hooks", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_plugin_id", "Missing required route parameter: id", {})
+		}
+
+		plugin_id := -1
+		id_err := null
+		try {
+			plugin_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || plugin_id <= 0 {
+			return fail(cfg, 400, "invalid_plugin_id", "id must be a positive integer", {})
+		}
+
+		plugin_rows := []
+		plugin_err := null
+		try {
+			plugin_rows = db_query(db, "SELECT id FROM plugins WHERE id = ?", [plugin_id])
+		} except e {
+			plugin_err = e
+		}
+		if type(plugin_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load plugin", {})
+		}
+		if len(plugin_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Plugin not found", {})
+		}
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		parse_err := null
+		body := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		hook_name := trim(to_string(dict_get_or(body, "hook_name", "")))
+		handler_url := trim(to_string(dict_get_or(body, "handler_url", "")))
+		shared_secret := trim(to_string(dict_get_or(body, "shared_secret", "")))
+		if len(hook_name) < 2 || len(handler_url) < 5 || len(shared_secret) < 4 {
+			return fail(cfg, 400, "invalid_body", "hook_name, handler_url, and shared_secret are required", {})
+		}
+
+		url_policy := validate_handler_url_policy(cfg, handler_url)
+		if url_policy["ok"] == false {
+			return fail(
+				cfg,
+				400,
+				to_string(dict_get_or(url_policy, "code", "invalid_handler_url")),
+				to_string(dict_get_or(url_policy, "message", "handler_url validation failed")),
+				{}
+			)
+		}
+
+		now_ts := now()
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO plugin_hooks (plugin_id, hook_name, handler_url, shared_secret, enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				[plugin_id, hook_name, handler_url, shared_secret, 1, now_ts, now_ts]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create plugin hook", {})
+		}
+
+		hook_rows := []
+		hook_err := null
+		try {
+			hook_rows = db_query(db, "SELECT id, plugin_id, hook_name, handler_url, enabled, created_at, updated_at FROM plugin_hooks WHERE plugin_id = ? AND hook_name = ? ORDER BY id DESC LIMIT 1", [plugin_id, hook_name])
+		} except e {
+			hook_err = e
+		}
+		if type(hook_err) != "null" || len(hook_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created plugin hook but failed to load it", {})
+		}
+
+		return json_response(201, {"ok": true, "data": hook_rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/plugin-hooks/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_hook_id", "Missing required route parameter: id", {})
+		}
+
+		hook_id := -1
+		id_err := null
+		try {
+			hook_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || hook_id <= 0 {
+			return fail(cfg, 400, "invalid_hook_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM plugin_hooks WHERE id = ?", [hook_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load plugin hook", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Plugin hook not found", {})
+		}
+		existing := existing_rows[0]
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		hook_name := trim(to_string(dict_get_or(body, "hook_name", existing["hook_name"])))
+		handler_url := trim(to_string(dict_get_or(body, "handler_url", existing["handler_url"])))
+		shared_secret := trim(to_string(dict_get_or(body, "shared_secret", existing["shared_secret"])))
+		enabled_raw := dict_get_or(body, "enabled", existing["enabled"])
+		enabled_int := 0
+		if enabled_raw == true || enabled_raw == 1 {
+			enabled_int = 1
+		}
+
+		if len(hook_name) < 2 {
+			return fail(cfg, 400, "invalid_hook_name", "hook_name must be at least 2 characters", {})
+		}
+
+		url_policy := validate_handler_url_policy(cfg, handler_url)
+		if url_policy["ok"] == false {
+			return fail(
+				cfg,
+				400,
+				to_string(dict_get_or(url_policy, "code", "invalid_handler_url")),
+				to_string(dict_get_or(url_policy, "message", "handler_url validation failed")),
+				{}
+			)
+		}
+
+		if len(shared_secret) < 8 {
+			return fail(cfg, 400, "invalid_shared_secret", "shared_secret must be at least 8 characters", {})
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE plugin_hooks SET hook_name = ?, handler_url = ?, shared_secret = ?, enabled = ?, updated_at = ? WHERE id = ?",
+				[hook_name, handler_url, shared_secret, enabled_int, now(), hook_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update plugin hook", {})
+		}
+
+		updated_rows := []
+		load_err := null
+		try {
+			updated_rows = db_query(db, "SELECT id, plugin_id, hook_name, handler_url, enabled, created_at, updated_at FROM plugin_hooks WHERE id = ?", [hook_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated plugin hook but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("DELETE", "/v1/plugin-hooks/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_hook_id", "Missing required route parameter: id", {})
+		}
+
+		hook_id := -1
+		id_err := null
+		try {
+			hook_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || hook_id <= 0 {
+			return fail(cfg, 400, "invalid_hook_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT id FROM plugin_hooks WHERE id = ? LIMIT 1", [hook_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load plugin hook", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Plugin hook not found", {})
+		}
+
+		delete_err := null
+		try {
+			db_execute(db, "DELETE FROM plugin_hooks WHERE id = ?", [hook_id])
+		} except e {
+			delete_err = e
+		}
+		if type(delete_err) != "null" {
+			return fail(cfg, 500, "delete_failed", "Failed to delete plugin hook", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"deleted": true, "id": hook_id}})
+	})
+
+	return server
+}

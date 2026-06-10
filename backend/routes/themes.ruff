@@ -1,0 +1,395 @@
+from backend.core.utils import dict_get_or
+from backend.core.http import fail, guard_request
+
+export register_theme_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/themes", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
+		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		sort_field := "id"
+		if sort_by == "theme_key" {
+			sort_field = "theme_key"
+		} else if sort_by == "name" {
+			sort_field = "name"
+		} else if sort_by == "version" {
+			sort_field = "version"
+		} else if sort_by == "status" {
+			sort_field = "status"
+		} else if sort_by == "created_at" {
+			sort_field = "created_at"
+		} else if sort_by == "updated_at" {
+			sort_field = "updated_at"
+		}
+		sort_dir_sql := "ASC"
+		if sort_dir == "desc" {
+			sort_dir_sql = "DESC"
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT * FROM themes ORDER BY " + sort_field + " " + sort_dir_sql + " LIMIT ? OFFSET ?", [limit, offset])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load themes", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM themes", [])
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count themes", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = count_rows[0]["total"]
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "total": total, "limit": limit, "offset": offset, "sort_by": sort_field, "sort_dir": to_lower(sort_dir_sql)}})
+	})
+
+	server = server.route("POST", "/v1/themes", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		theme_key := trim(to_string(dict_get_or(body, "theme_key", "")))
+		name := trim(to_string(dict_get_or(body, "name", "")))
+		version := trim(to_string(dict_get_or(body, "version", "0.1.0")))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", "inactive"))))
+		if version == "" {
+			version = "0.1.0"
+		}
+		if status == "" {
+			status = "inactive"
+		}
+
+		config_json := "{}"
+		if has_key(body, "config") == 1 {
+			config_value := body["config"]
+			if type(config_value) == "dict" || type(config_value) == "array" {
+				config_json = to_json(config_value)
+			} else if type(config_value) == "string" {
+				config_json = to_string(config_value)
+			}
+		}
+
+		invalid_chars := regex_replace(theme_key, "[a-z0-9_\\-]", "")
+		if len(theme_key) < 2 || len(theme_key) > 64 || theme_key != to_lower(theme_key) || invalid_chars != "" {
+			return fail(cfg, 400, "invalid_theme_key", "theme_key must be lowercase slug text", {})
+		}
+		if len(name) < 2 {
+			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
+		}
+		if status != "active" && status != "inactive" {
+			return fail(cfg, 400, "invalid_status", "status must be active or inactive", {})
+		}
+
+		if status == "active" {
+			reset_err := null
+			try {
+				db_execute(db, "UPDATE themes SET status = 'inactive', updated_at = ?", [now()])
+			} except e {
+				reset_err = e
+			}
+			if type(reset_err) != "null" {
+				return fail(cfg, 500, "update_failed", "Failed to update active theme state", {})
+			}
+		}
+
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO themes (theme_key, name, version, status, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				[theme_key, name, version, status, config_json, now(), now()]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create theme (possibly duplicate theme_key)", {})
+		}
+
+		theme_id := db_last_insert_id(db)
+		rows := []
+		load_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM themes WHERE id = ?", [theme_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created theme but failed to load it", {})
+		}
+
+		return json_response(201, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/themes/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_theme_id", "Missing required route parameter: id", {})
+		}
+
+		theme_id := -1
+		id_err := null
+		try {
+			theme_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || theme_id <= 0 {
+			return fail(cfg, 400, "invalid_theme_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM themes WHERE id = ?", [theme_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load theme", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Theme not found", {})
+		}
+		existing := existing_rows[0]
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		name := trim(to_string(dict_get_or(body, "name", existing["name"])))
+		version := trim(to_string(dict_get_or(body, "version", existing["version"])))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", existing["status"]))))
+		if version == "" {
+			version = to_string(existing["version"])
+		}
+		if status == "" {
+			status = to_lower(to_string(existing["status"]))
+		}
+
+		config_json := to_string(dict_get_or(existing, "config_json", "{}"))
+		if has_key(body, "config") == 1 {
+			config_value := body["config"]
+			if type(config_value) == "dict" || type(config_value) == "array" {
+				config_json = to_json(config_value)
+			} else if type(config_value) == "string" {
+				config_json = to_string(config_value)
+			}
+		}
+
+		if status != "active" && status != "inactive" {
+			return fail(cfg, 400, "invalid_status", "status must be active or inactive", {})
+		}
+
+		if status == "active" {
+			reset_err := null
+			try {
+				db_execute(db, "UPDATE themes SET status = 'inactive', updated_at = ? WHERE id != ?", [now(), theme_id])
+			} except e {
+				reset_err = e
+			}
+			if type(reset_err) != "null" {
+				return fail(cfg, 500, "update_failed", "Failed to update active theme state", {})
+			}
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE themes SET name = ?, version = ?, status = ?, config_json = ?, updated_at = ? WHERE id = ?",
+				[name, version, status, config_json, now(), theme_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update theme", {})
+		}
+
+		updated_rows := []
+		load_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM themes WHERE id = ?", [theme_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated theme but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("POST", "/v1/themes/:id/activate", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_theme_id", "Missing required route parameter: id", {})
+		}
+
+		theme_id := -1
+		id_err := null
+		try {
+			theme_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || theme_id <= 0 {
+			return fail(cfg, 400, "invalid_theme_id", "id must be a positive integer", {})
+		}
+
+		theme_rows := []
+		theme_err := null
+		try {
+			theme_rows = db_query(db, "SELECT * FROM themes WHERE id = ?", [theme_id])
+		} except e {
+			theme_err = e
+		}
+		if type(theme_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load theme", {})
+		}
+		if len(theme_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Theme not found", {})
+		}
+
+		deactivate_err := null
+		try {
+			db_execute(db, "UPDATE themes SET status = 'inactive' WHERE status = 'active'", [])
+		} except e {
+			deactivate_err = e
+		}
+		if type(deactivate_err) != "null" {
+			return fail(cfg, 500, "activate_failed", "Failed to deactivate existing active themes", {})
+		}
+
+		update_err := null
+		try {
+			db_execute(db, "UPDATE themes SET status = 'active', updated_at = ? WHERE id = ?", [now(), theme_id])
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "activate_failed", "Failed to activate theme", {})
+		}
+
+		updated_rows := []
+		updated_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM themes WHERE id = ?", [theme_id])
+		} except e {
+			updated_err = e
+		}
+		if type(updated_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Activated theme but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("GET", "/v1/themes/active", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT * FROM themes WHERE status = 'active' ORDER BY id DESC LIMIT 1", [])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load active theme", {})
+		}
+		if len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "No active theme", {})
+		}
+
+		return json_response(200, {"ok": true, "data": rows[0]})
+	})
+
+	return server
+}

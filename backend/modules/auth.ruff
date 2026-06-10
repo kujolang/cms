@@ -1,0 +1,235 @@
+from backend.core.database import db_execute_safe, db_query_safe
+from backend.core.utils import bool_or, dict_get_or, parse_positive_int_text
+
+func parse_permissions(permissions_json) {
+	err := null
+	parsed := []
+	try {
+		parsed = parse_json(to_string(permissions_json))
+	} except e {
+		err = e
+	}
+	if type(err) != "null" || type(parsed) != "array" {
+		return []
+	}
+	return parsed
+}
+
+export permissions_allow := func(permissions, required_permission) {
+	if required_permission == "" {
+		return true
+	}
+	if type(permissions) != "array" {
+		return false
+	}
+
+	for permission in permissions {
+		perm := to_string(permission)
+		if perm == "*" || perm == required_permission {
+			return true
+		}
+		if ends_with(perm, ".*") {
+			prefix := substring(perm, 0, len(perm) - 1)
+			if starts_with(required_permission, prefix) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func extract_bearer_token(req, get_header_func) {
+	authorization := get_header_func(req, "Authorization")
+	if authorization == "" {
+		authorization = get_header_func(req, "authorization")
+	}
+	if len(authorization) > 8192 {
+		return {"present": true, "invalid": true, "token": ""}
+	}
+	if starts_with(authorization, "Bearer ") == false {
+		return {"present": false, "invalid": false, "token": ""}
+	}
+
+	token := trim(substring(authorization, 7, len(authorization)))
+	if token == "" {
+		return {"present": true, "invalid": true, "token": ""}
+	}
+	if len(token) > 512 {
+		return {"present": true, "invalid": true, "token": ""}
+	}
+
+	invalid_chars := regex_replace(token, "[A-Za-z0-9\\-\\._~\\+/=:]", "")
+	if invalid_chars != "" {
+		return {"present": true, "invalid": true, "token": ""}
+	}
+
+	return {"present": true, "invalid": false, "token": token}
+}
+
+func load_token_auth(db, token) {
+	token_hash := sha256(token)
+	result := db_query_safe(
+		db,
+		"SELECT id, token_hash, label, role_key, is_active, expires_at, CASE WHEN expires_at IS NULL OR trim(CAST(expires_at AS TEXT)) = '' THEN NULL WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END AS expires_at_ms FROM api_tokens WHERE token_hash = ? LIMIT 1",
+		[token_hash]
+	)
+	if result["ok"] == false {
+		return {"ok": false, "error": result["error"]}
+	}
+	if len(result["rows"]) == 0 {
+		return {"ok": false, "error": "Token not found"}
+	}
+	row := result["rows"][0]
+	if dict_get_or(row, "is_active", 0) != 1 {
+		return {"ok": false, "error": "Token inactive"}
+	}
+
+	expires_value := dict_get_or(row, "expires_at", null)
+	expires_has_text := false
+	if type(expires_value) != "null" {
+		expires_raw := trim(to_string(expires_value))
+		if expires_raw != "" {
+			expires_has_text = true
+		}
+	}
+	expires_at_ms := parse_positive_int_text(dict_get_or(row, "expires_at_ms", 0), 0)
+	if expires_has_text == true && expires_at_ms <= 0 {
+		return {"ok": false, "error": "Token expiry format invalid"}
+	}
+	if expires_at_ms > 0 {
+		now_num := parse_positive_int_text(now(), 0)
+		if now_num > expires_at_ms {
+			return {"ok": false, "error": "Token expired"}
+		}
+	}
+
+	role_key := to_string(dict_get_or(row, "role_key", ""))
+	if role_key == "" {
+		return {"ok": false, "error": "Token has no role"}
+	}
+
+	role_result := db_query_safe(db, "SELECT role_key, permissions_json FROM roles WHERE role_key = ? LIMIT 1", [role_key])
+	if role_result["ok"] == false {
+		return {"ok": false, "error": role_result["error"]}
+	}
+	if len(role_result["rows"]) == 0 {
+		return {"ok": false, "error": "Role not found"}
+	}
+
+	permissions := parse_permissions(role_result["rows"][0]["permissions_json"])
+	_ := db_execute_safe(db, "UPDATE api_tokens SET last_used_at = ?, updated_at = ? WHERE id = ?", [now(), now(), row["id"]])
+
+	return {
+		"ok": true,
+		"actor": "token:" + substring(token_hash, 0, 12),
+		"role_key": role_key,
+		"permissions": permissions,
+		"token_id": row["id"],
+		"token_label": dict_get_or(row, "label", "")
+	}
+}
+
+func bootstrap_entropy_class_count(token_text) {
+	class_count := 0
+
+	lower_removed := regex_replace(token_text, "[a-z]", "")
+	if len(lower_removed) < len(token_text) {
+		class_count = class_count + 1
+	}
+
+	upper_removed := regex_replace(token_text, "[A-Z]", "")
+	if len(upper_removed) < len(token_text) {
+		class_count = class_count + 1
+	}
+
+	digit_removed := regex_replace(token_text, "[0-9]", "")
+	if len(digit_removed) < len(token_text) {
+		class_count = class_count + 1
+	}
+
+	special_chars := regex_replace(token_text, "[A-Za-z0-9]", "")
+	if len(special_chars) > 0 {
+		class_count = class_count + 1
+	}
+
+	return class_count
+}
+
+export authorize_request := func(req, ctx, get_header_func, require_write_auth) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+
+	token_result := extract_bearer_token(req, get_header_func)
+	if token_result["invalid"] == true {
+		return {"ok": false, "error": "Invalid bearer token format"}
+	}
+	token := token_result["token"]
+	method := to_upper(to_string(dict_get_or(req, "method", "GET")))
+	requires_write := require_write_auth == true || method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE"
+	required_permission := "cms.read"
+	if requires_write {
+		required_permission = "cms.write"
+	}
+
+	if token == "" {
+		if requires_write {
+			return {"ok": false, "error": "Missing bearer token"}
+		}
+		return {
+			"ok": true,
+			"actor": "anonymous",
+			"role_key": "anonymous",
+			"permissions": ["cms.read"]
+		}
+	}
+
+	bootstrap := trim(to_string(dict_get_or(cfg, "api_token", "")))
+	if bootstrap != "" && token == bootstrap {
+		if bool_or(dict_get_or(cfg, "allow_bootstrap_token", true), true) == false {
+			return {"ok": false, "error": "Bootstrap token is disabled"}
+		}
+
+		enforce_rotation := bool_or(dict_get_or(cfg, "enforce_bootstrap_token_rotation", false), false)
+		if enforce_rotation {
+			if bootstrap == "change-me-in-production" {
+				return {"ok": false, "error": "Bootstrap token must be rotated"}
+			}
+			min_length := parse_positive_int_text(dict_get_or(cfg, "bootstrap_token_min_length", 24), 24)
+			if min_length < 16 {
+				min_length = 24
+			}
+			if len(bootstrap) < min_length {
+				return {"ok": false, "error": "Bootstrap token must be at least " + to_string(min_length) + " characters"}
+			}
+
+			min_classes := parse_positive_int_text(dict_get_or(cfg, "bootstrap_token_min_entropy_classes", 3), 3)
+			if min_classes < 2 {
+				min_classes = 3
+			}
+			entropy_classes := bootstrap_entropy_class_count(bootstrap)
+			if entropy_classes < min_classes {
+				return {"ok": false, "error": "Bootstrap token must include at least " + to_string(min_classes) + " character classes"}
+			}
+		}
+
+		permissions := ["*"]
+		return {
+			"ok": true,
+			"actor": "bootstrap-token",
+			"role_key": "super_admin",
+			"permissions": permissions
+		}
+	}
+
+	token_auth := load_token_auth(db, token)
+	if token_auth["ok"] == false {
+		return token_auth
+	}
+
+	if permissions_allow(token_auth["permissions"], required_permission) == false {
+		return {"ok": false, "error": "Insufficient permissions"}
+	}
+
+	return token_auth
+}

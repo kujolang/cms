@@ -1,0 +1,529 @@
+test_setup {
+	from backend.core.utils import is_valid_slug_key, parse_positive_int_text
+	from backend.core.http import get_header, parse_bounded_int, req_actor
+	from backend.config.config import load_config, load_config_impl
+	from backend.modules.auth import authorize_request, permissions_allow
+	from backend.core.database import connect_database, db_execute_safe, db_query_safe
+	from backend.core.migrations import get_schema_version, TARGET_SCHEMA_VERSION
+	from backend.routes.delivery import build_llms_txt, build_robots_txt, build_rss_xml, build_security_txt, build_sitemap_xml
+	from backend.routes.plugins import list_webhook_event_schemas, validate_webhook_event_payload, webhook_schema_for
+}
+
+test "slug validation enforces lowercase-safe keys" {
+	assert_equal(is_valid_slug_key("article"), true)
+	assert_equal(is_valid_slug_key("content_type_01"), true)
+	assert_equal(is_valid_slug_key("Article"), false)
+	assert_equal(is_valid_slug_key("bad slug"), false)
+}
+
+test "slug fallback normalization can produce invalid short slug" {
+	fallback_slug := to_lower("!!!")
+	fallback_slug = regex_replace(fallback_slug, "[^a-z0-9_\\-]", "-")
+	fallback_slug = regex_replace(fallback_slug, "-{2,}", "-")
+	fallback_slug = trim(fallback_slug)
+	assert_true(to_bool(len(fallback_slug) < 2))
+}
+
+test "parse positive integer helper honors defaults" {
+	assert_equal(parse_positive_int_text("42", -1), 42)
+	assert_equal(parse_positive_int_text("0", 9), 9)
+	assert_equal(parse_positive_int_text("invalid", 9), 9)
+}
+
+test "config applies enterprise bootstrap defaults in production" {
+	production_cfg := load_config({
+		"environment": "production"
+	})
+	assert_equal(production_cfg["allow_bootstrap_token"], false)
+	assert_equal(production_cfg["enforce_bootstrap_token_rotation"], true)
+	assert_equal(production_cfg["rate_limit_mode"], "memory")
+	assert_equal(production_cfg["entry_lock_ttl_sec"], 900)
+
+	override_cfg := load_config({
+		"environment": "production",
+		"api_host": "127.0.0.1",
+		"api_token": "ProdTokenContract#123456",
+		"allow_bootstrap_token": true,
+		"enforce_bootstrap_token_rotation": false,
+		"rate_limit_mode": "external",
+		"entry_lock_ttl_sec": 60
+	})
+	assert_equal(override_cfg["allow_bootstrap_token"], true)
+	assert_equal(override_cfg["enforce_bootstrap_token_rotation"], false)
+	assert_equal(override_cfg["rate_limit_mode"], "external")
+	assert_equal(override_cfg["entry_lock_ttl_sec"], 60)
+
+	invalid_mode_cfg := load_config({
+		"rate_limit_mode": "unsupported"
+	})
+	assert_equal(invalid_mode_cfg["rate_limit_mode"], "memory")
+}
+
+test "config wrapper delegates to backend implementation without shape drift" {
+	overrides := {
+		"environment": "production",
+		"port": 4310,
+		"site_url": "https://cms.example.com",
+		"allow_bootstrap_token": true,
+		"enforce_bootstrap_token_rotation": false,
+		"rate_limit_mode": "external",
+		"entry_lock_ttl_sec": 60
+	}
+
+	wrapped_cfg := load_config(overrides)
+	impl_cfg := load_config_impl(overrides)
+
+	keys := [
+		"service_name",
+		"service_version",
+		"environment",
+		"api_host",
+		"port",
+		"site_url",
+		"db_path",
+		"cors_origin",
+		"api_token",
+		"allow_bootstrap_token",
+		"enforce_bootstrap_token_rotation",
+		"max_body_bytes",
+		"rate_limit_window_sec",
+		"rate_limit_max_requests",
+		"entry_lock_ttl_sec",
+		"rate_limit_mode",
+		"rate_limit_max_keys",
+		"audit_log",
+		"security_contact",
+		"security_policy_url",
+		"security_acknowledgments_url",
+		"security_preferred_languages",
+		"security_expires"
+	]
+
+	for key in keys {
+		assert_equal(has_key(wrapped_cfg, key) == 1, true)
+		assert_equal(has_key(impl_cfg, key) == 1, true)
+		assert_equal(wrapped_cfg[key], impl_cfg[key])
+	}
+}
+
+test "config defaults api host to localhost and honors override" {
+	default_cfg := load_config({})
+	assert_equal(default_cfg["api_host"], "127.0.0.1")
+
+	override_cfg := load_config({
+		"api_host": "0.0.0.0"
+	})
+	assert_equal(override_cfg["api_host"], "0.0.0.0")
+}
+
+test "bounded int parser supports zero offset" {
+	offset_ok := parse_bounded_int("0", "offset", 0, 100)
+	assert_equal(offset_ok["ok"], true)
+	assert_equal(offset_ok["value"], 0)
+
+	offset_low := parse_bounded_int("-1", "offset", 0, 100)
+	assert_equal(offset_low["ok"], false)
+}
+
+test "permission matcher supports exact and wildcard scopes" {
+	assert_equal(permissions_allow(["cms.read"], "cms.read"), true)
+	assert_equal(permissions_allow(["entries.*"], "entries.write"), true)
+	assert_equal(permissions_allow(["*"], "themes.activate"), true)
+	assert_equal(permissions_allow(["cms.read"], "cms.write"), false)
+}
+
+test "typed webhook schemas are published for supported events" {
+	schemas := list_webhook_event_schemas()
+	assert_true(to_bool(len(schemas) >= 7))
+
+	published_schema := webhook_schema_for("entry.published")
+	assert_equal(type(published_schema), "dict")
+	assert_equal(published_schema["event_type"], "entry.published")
+	assert_true(to_bool(contains(to_json(published_schema["required_data"]), "published_at") >= 0))
+
+	unknown_schema := webhook_schema_for("entry.unknown")
+	assert_equal(type(unknown_schema), "null")
+}
+
+test "webhook payload validator enforces required schema fields" {
+	valid_payload := {
+		"event_id": "evt_123",
+		"event_type": "entry.created",
+		"occurred_at": "2026-05-20T00:00:00Z",
+		"resource": "entry",
+		"action": "created",
+		"data": {
+			"entry_id": 42,
+			"content_type_key": "news",
+			"slug": "hello-world",
+			"status": "published"
+		}
+	}
+
+	valid_result := validate_webhook_event_payload("entry.created", valid_payload)
+	assert_equal(valid_result["ok"], true)
+
+	invalid_payload := {
+		"event_id": "evt_456",
+		"event_type": "entry.created",
+		"occurred_at": "2026-05-20T00:00:00Z",
+		"resource": "entry",
+		"action": "created",
+		"data": {
+			"entry_id": 7,
+			"content_type_key": "news"
+		}
+	}
+
+	invalid_result := validate_webhook_event_payload("entry.created", invalid_payload)
+	assert_equal(invalid_result["ok"], false)
+	assert_true(to_bool(contains(to_json(invalid_result["details"]["missing_data_fields"]), "slug") >= 0))
+}
+
+test "delivery helpers generate machine-readable documents" {
+	cfg := load_config({
+		"service_name": "Test CMS",
+		"service_version": "0.1.0",
+		"site_url": "https://cms.example.com/"
+	})
+
+	rows := [
+		{
+			"id": 10,
+			"content_type_key": "article",
+			"slug": "hello-world",
+			"title": "Hello World",
+			"excerpt": "Seed excerpt",
+			"published_at": "2026-05-18T00:00:00Z",
+			"updated_at": "2026-05-18T01:00:00Z"
+		}
+	]
+
+	robots := build_robots_txt(cfg)
+	assert_true(to_bool(contains(robots, "Sitemap: https://cms.example.com/sitemap.xml") >= 0))
+
+	sitemap := build_sitemap_xml(cfg, rows)
+	assert_true(to_bool(contains(sitemap, "<loc>https://cms.example.com/article/hello-world</loc>") >= 0))
+
+	rss := build_rss_xml(cfg, rows)
+	assert_true(to_bool(contains(rss, "<title>Hello World</title>") >= 0))
+	assert_true(to_bool(contains(rss, "<link>https://cms.example.com/article/hello-world</link>") >= 0))
+
+	llms := build_llms_txt(cfg)
+	assert_true(to_bool(contains(llms, "https://cms.example.com/v1") >= 0))
+	assert_true(to_bool(contains(llms, "Entry by slug") >= 0))
+
+	security := build_security_txt(cfg)
+	assert_true(to_bool(contains(security, "Contact: mailto:security@example.com") >= 0))
+	assert_true(to_bool(contains(security, "Canonical: https://cms.example.com/.well-known/security.txt") >= 0))
+}
+
+test "database bootstrap applies schema version and auth seeds" {
+	if path_exists("results") == false {
+		create_dir("results")
+	}
+
+	db_path := "./results/test_cms_contract.db"
+	cfg := load_config({
+		"db_path": db_path,
+		"api_token": "contract-token-123456789",
+		"audit_log": false
+	})
+
+	connection := connect_database(cfg)
+	assert_equal(connection["ok"], true)
+
+	db := connection["db"]
+	roles_result := db_query_safe(db, "SELECT COUNT(*) AS total FROM roles", [])
+	assert_equal(roles_result["ok"], true)
+	assert_true(to_bool(roles_result["rows"][0]["total"] >= 3))
+
+	tokens_result := db_query_safe(db, "SELECT COUNT(*) AS total FROM api_tokens", [])
+	assert_equal(tokens_result["ok"], true)
+	assert_true(to_bool(tokens_result["rows"][0]["total"] >= 1))
+
+	version_result := get_schema_version(db)
+	assert_equal(version_result["ok"], true)
+	assert_true(to_bool(version_result["version"] >= TARGET_SCHEMA_VERSION))
+
+	if file_exists(db_path) {
+		delete_file(db_path)
+	}
+	if file_exists(db_path + "-wal") {
+		delete_file(db_path + "-wal")
+	}
+	if file_exists(db_path + "-shm") {
+		delete_file(db_path + "-shm")
+	}
+}
+
+test "auth contract keeps read-open and write-guarded behavior" {
+	if path_exists("results") == false {
+		create_dir("results")
+	}
+
+	db_path := "./results/test_auth_contract.db"
+	cfg := load_config({
+		"db_path": db_path,
+		"api_token": "contract-bootstrap-token-1234567890",
+		"allow_bootstrap_token": true,
+		"audit_log": false
+	})
+
+	connection := connect_database(cfg)
+	assert_equal(connection["ok"], true)
+
+	ctx := {
+		"cfg": cfg,
+		"db": connection["db"],
+		"state": {
+			"rate": {},
+			"entry_locks": {}
+		}
+	}
+
+	read_auth := authorize_request({
+		"method": "GET",
+		"headers": {}
+	}, ctx, get_header, false)
+	assert_equal(read_auth["ok"], true)
+	assert_equal(read_auth["role_key"], "anonymous")
+
+	write_missing_auth := authorize_request({
+		"method": "POST",
+		"headers": {}
+	}, ctx, get_header, false)
+	assert_equal(write_missing_auth["ok"], false)
+	assert_equal(write_missing_auth["error"], "Missing bearer token")
+
+	write_bootstrap_auth := authorize_request({
+		"method": "POST",
+		"headers": {
+			"Authorization": "Bearer contract-bootstrap-token-1234567890"
+		}
+	}, ctx, get_header, false)
+	assert_equal(write_bootstrap_auth["ok"], true)
+	assert_equal(write_bootstrap_auth["role_key"], "super_admin")
+
+	if file_exists(db_path) {
+		delete_file(db_path)
+	}
+	if file_exists(db_path + "-wal") {
+		delete_file(db_path + "-wal")
+	}
+	if file_exists(db_path + "-shm") {
+		delete_file(db_path + "-shm")
+	}
+}
+
+test "auth token expiry parsing supports epoch and ISO and rejects invalid format" {
+	if path_exists("results") == false {
+		create_dir("results")
+	}
+
+	db_path := "./results/test_auth_expiry_contract.db"
+	cfg := load_config({
+		"db_path": db_path,
+		"api_token": "contract-bootstrap-token-1234567890",
+		"allow_bootstrap_token": true,
+		"audit_log": false
+	})
+
+	connection := connect_database(cfg)
+	assert_equal(connection["ok"], true)
+	db := connection["db"]
+
+	_ := db_execute_safe(
+		db,
+		"INSERT INTO entries (id, content_type_key, title, slug, status, excerpt, body, meta_json, author_id, published_at, unpublish_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[101, "article", "Lock 101", "lock-101", "draft", "", "", "{}", "tester", null, null, now(), now()]
+	)
+	_ := db_execute_safe(
+		db,
+		"INSERT INTO entries (id, content_type_key, title, slug, status, excerpt, body, meta_json, author_id, published_at, unpublish_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[102, "article", "Lock 102", "lock-102", "draft", "", "", "{}", "tester", null, null, now(), now()]
+	)
+	_ := db_execute_safe(
+		db,
+		"INSERT INTO entries (id, content_type_key, title, slug, status, excerpt, body, meta_json, author_id, published_at, unpublish_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[103, "article", "Lock 103", "lock-103", "draft", "", "", "{}", "tester", null, null, now(), now()]
+	)
+
+	now_ms := to_int(now())
+	valid_epoch_ms := now_ms + 60000
+
+	_ := db_execute_safe(
+		db,
+		"INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		[sha256("contract-epoch-token-123"), "Epoch Token", "super_admin", 1, now(), now(), valid_epoch_ms, null]
+	)
+
+	_ := db_execute_safe(
+		db,
+		"INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		[sha256("contract-iso-token-123"), "ISO Token", "super_admin", 1, now(), now(), "2030-01-01T00:00:00Z", null]
+	)
+
+	_ := db_execute_safe(
+		db,
+		"INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		[sha256("contract-expired-token-123"), "Expired Token", "super_admin", 1, now(), now(), 1, null]
+	)
+
+	_ := db_execute_safe(
+		db,
+		"INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		[sha256("contract-bad-expiry-token-123"), "Bad Expiry Token", "super_admin", 1, now(), now(), "not-a-timestamp", null]
+	)
+
+	ctx := {
+		"cfg": cfg,
+		"db": db,
+		"state": {
+			"rate": {},
+			"entry_locks": {}
+		}
+	}
+
+	epoch_auth := authorize_request({
+		"method": "POST",
+		"headers": {
+			"Authorization": "Bearer contract-epoch-token-123"
+		}
+	}, ctx, get_header, false)
+	assert_equal(epoch_auth["ok"], true)
+
+	iso_auth := authorize_request({
+		"method": "POST",
+		"headers": {
+			"Authorization": "Bearer contract-iso-token-123"
+		}
+	}, ctx, get_header, false)
+	assert_equal(iso_auth["ok"], true)
+
+	expired_auth := authorize_request({
+		"method": "POST",
+		"headers": {
+			"Authorization": "Bearer contract-expired-token-123"
+		}
+	}, ctx, get_header, false)
+	assert_equal(expired_auth["ok"], false)
+	assert_equal(expired_auth["error"], "Token expired")
+
+	bad_expiry_auth := authorize_request({
+		"method": "POST",
+		"headers": {
+			"Authorization": "Bearer contract-bad-expiry-token-123"
+		}
+	}, ctx, get_header, false)
+	assert_equal(bad_expiry_auth["ok"], false)
+	assert_equal(bad_expiry_auth["error"], "Token expiry format invalid")
+
+	if file_exists(db_path) {
+		delete_file(db_path)
+	}
+	if file_exists(db_path + "-wal") {
+		delete_file(db_path + "-wal")
+	}
+	if file_exists(db_path + "-shm") {
+		delete_file(db_path + "-shm")
+	}
+}
+
+test "entry lock expiry cleanup removes expired epoch locks" {
+	if path_exists("results") == false {
+		create_dir("results")
+	}
+
+	db_path := "./results/test_entry_lock_expiry_contract.db"
+	if file_exists(db_path) {
+		delete_file(db_path)
+	}
+	if file_exists(db_path + "-wal") {
+		delete_file(db_path + "-wal")
+	}
+	if file_exists(db_path + "-shm") {
+		delete_file(db_path + "-shm")
+	}
+
+	cfg := load_config({
+		"db_path": db_path,
+		"api_token": "contract-lock-token-1234567890",
+		"audit_log": false
+	})
+
+	connection := connect_database(cfg)
+	assert_equal(connection["ok"], true)
+	db := connection["db"]
+
+	now_ts := now()
+	expired_epoch := now_ts - 5000
+	future_epoch := now_ts + 60000
+
+	entry_101_result := db_execute_safe(
+		db,
+		"INSERT INTO entries (content_type_key, title, slug, status, excerpt, body, meta_json, author_id, published_at, unpublish_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		["article", "Lock 101", "lock-101", "draft", "", "", "{}", "tester", null, null, now(), now()]
+	)
+	assert_equal(entry_101_result["ok"], true)
+	entry_101_rows := db_query_safe(db, "SELECT id FROM entries WHERE slug = ? LIMIT 1", ["lock-101"])
+	assert_equal(entry_101_rows["ok"], true)
+	assert_equal(len(entry_101_rows["rows"]), 1)
+	entry_101_id := entry_101_rows["rows"][0]["id"]
+
+	entry_102_result := db_execute_safe(
+		db,
+		"INSERT INTO entries (content_type_key, title, slug, status, excerpt, body, meta_json, author_id, published_at, unpublish_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		["article", "Lock 102", "lock-102", "draft", "", "", "{}", "tester", null, null, now(), now()]
+	)
+	assert_equal(entry_102_result["ok"], true)
+	entry_102_rows := db_query_safe(db, "SELECT id FROM entries WHERE slug = ? LIMIT 1", ["lock-102"])
+	assert_equal(entry_102_rows["ok"], true)
+	assert_equal(len(entry_102_rows["rows"]), 1)
+	entry_102_id := entry_102_rows["rows"][0]["id"]
+
+	_ := db_execute_safe(
+		db,
+		"INSERT INTO entry_locks (entry_id, lock_token, locked_by, lock_note, locked_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+		[entry_101_id, "lock-expired-epoch", "tester", "epoch expired", to_string(now_ts), to_string(expired_epoch)]
+	)
+	_ := db_execute_safe(
+		db,
+		"INSERT INTO entry_locks (entry_id, lock_token, locked_by, lock_note, locked_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+		[entry_102_id, "lock-active-epoch", "tester", "epoch active", to_string(now_ts), to_string(future_epoch)]
+	)
+
+	_ := db_execute_safe(
+		db,
+		"DELETE FROM entry_locks WHERE CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END <= ?",
+		[now_ts]
+	)
+
+	remaining := db_query_safe(db, "SELECT entry_id FROM entry_locks ORDER BY entry_id ASC", [])
+	assert_equal(remaining["ok"], true)
+	assert_equal(len(remaining["rows"]), 1)
+	assert_equal(remaining["rows"][0]["entry_id"], entry_102_id)
+
+	if file_exists(db_path) {
+		delete_file(db_path)
+	}
+	if file_exists(db_path + "-wal") {
+		delete_file(db_path + "-wal")
+	}
+	if file_exists(db_path + "-shm") {
+		delete_file(db_path + "-shm")
+	}
+}
+
+test "request actor hashing does not disclose bearer secrets" {
+	raw_token := "super-secret-token-value"
+	actor := req_actor({
+		"headers": {
+			"Authorization": "Bearer " + raw_token
+		}
+	})
+	expected_actor := "token:" + substring(sha256(raw_token), 0, 12)
+
+	assert_equal(actor, expected_actor)
+	assert_equal(req_actor({"headers": {}}), "anonymous")
+}

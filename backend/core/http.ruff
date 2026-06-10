@@ -1,0 +1,1050 @@
+from backend.core.utils import dict_get_or, parse_positive_int_text
+from backend.core.database import db_execute_safe, db_query_safe, write_audit_event
+from backend.modules.auth import authorize_request
+
+func with_headers(response, cfg) {
+	cors_origin := dict_get_or(cfg, "cors_origin", "*")
+	request_id_header := trim(to_string(dict_get_or(cfg, "request_id_header", "X-Request-ID")))
+	if request_id_header == "" {
+		request_id_header = "X-Request-ID"
+	}
+	request_id := trim(to_string(dict_get_or(cfg, "last_request_id", "")))
+	if request_id == "" {
+		request_id = substring(sha256(to_string(current_timestamp()) + ":" + to_string(now())), 0, 24)
+	}
+
+	response = set_header(response, "Access-Control-Allow-Origin", cors_origin)
+	response = set_header(response, "Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
+	response = set_header(response, "Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Lock-Session, X-Requested-With, Idempotency-Key")
+	response = set_header(response, "Access-Control-Max-Age", "86400")
+	response = set_header(response, "Vary", "Origin")
+	response = set_header(response, "X-Content-Type-Options", "nosniff")
+	response = set_header(response, "X-Frame-Options", "DENY")
+	response = set_header(response, "X-Permitted-Cross-Domain-Policies", "none")
+	response = set_header(response, "Referrer-Policy", "same-origin")
+	response = set_header(response, "Cross-Origin-Resource-Policy", "same-origin")
+	response = set_header(response, "Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+	response = set_header(response, "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+	response = set_header(response, "Cache-Control", "no-store")
+	response = set_header(response, request_id_header, request_id)
+
+	if cors_origin != "*" {
+		response = set_header(response, "Access-Control-Allow-Credentials", "true")
+	}
+
+	return response
+}
+
+export api_json := func(status, payload, cfg) {
+	return with_headers(json_response(status, payload), cfg)
+}
+
+export api_text := func(status, body, cfg) {
+	return with_headers(http_response(status, body), cfg)
+}
+
+export ok := func(cfg, data) {
+	return api_json(200, {"ok": true, "data": data}, cfg)
+}
+
+export created := func(cfg, data) {
+	return api_json(201, {"ok": true, "data": data}, cfg)
+}
+
+export fail := func(cfg, status, code, message, details) {
+	payload := {
+		"ok": false,
+		"error": {
+			"code": code,
+			"message": message
+		}
+	}
+	if type(details) == "dict" {
+		err_obj := payload["error"]
+		err_obj["details"] := details
+		payload["error"] := err_obj
+	}
+	return api_json(status, payload, cfg)
+}
+
+export req_method := func(req) {
+	return to_upper(to_string(dict_get_or(req, "method", "UNKNOWN")))
+}
+
+export req_path := func(req) {
+	return to_string(dict_get_or(req, "path", ""))
+}
+
+export req_ip := func(req) {
+	ip := to_string(dict_get_or(req, "remote_addr", "unknown"))
+	if trim(ip) == "" {
+		return "unknown"
+	}
+	return ip
+}
+
+export req_actor := func(req) {
+	headers := dict_get_or(req, "headers", {})
+	authorization := ""
+	if type(headers) == "dict" {
+		if has_key(headers, "Authorization") == 1 {
+			authorization = to_string(headers["Authorization"])
+		}
+		if authorization == "" && has_key(headers, "authorization") == 1 {
+			authorization = to_string(headers["authorization"])
+		}
+	}
+	if starts_with(authorization, "Bearer ") {
+		token := trim(substring(authorization, 7, len(authorization)))
+		if token != "" {
+			return "token:" + substring(sha256(token), 0, 12)
+		}
+	}
+	return "anonymous"
+}
+
+export get_header := func(req, header_name) {
+	headers := dict_get_or(req, "headers", {})
+	if has_key(headers, header_name) == 1 {
+		return to_string(headers[header_name])
+	}
+	return ""
+}
+
+export get_query := func(req, key, default_value) {
+	query := dict_get_or(req, "query", {})
+	if has_key(query, key) == 1 {
+		return to_string(query[key])
+	}
+	return default_value
+}
+
+export parse_bounded_int := func(raw_text, field_name, min_value, max_value) {
+	err := null
+	value := -1
+	try {
+		value = parse_int(trim(to_string(raw_text)))
+	} except e {
+		err = e
+	}
+
+	if type(err) != "null" {
+		return {"ok": false, "error": field_name + " must be a valid integer"}
+	}
+	if value < min_value {
+		return {"ok": false, "error": field_name + " must be >= " + to_string(min_value)}
+	}
+	if value > max_value {
+		return {"ok": false, "error": field_name + " must be <= " + to_string(max_value)}
+	}
+	return {"ok": true, "value": value}
+}
+
+export parse_id_param := func(req, key_name) {
+	params := dict_get_or(req, "params", {})
+	if has_key(params, key_name) == 0 {
+		return {"ok": false, "error": "Missing required route parameter: " + key_name}
+	}
+	id_text := to_string(params[key_name])
+	id_value := parse_positive_int_text(id_text, -1)
+	if id_value <= 0 {
+		return {"ok": false, "error": key_name + " must be a positive integer"}
+	}
+	return {"ok": true, "value": id_value}
+}
+
+export parse_json_body := func(req, cfg) {
+	body := to_string(dict_get_or(req, "body", ""))
+	if trim(body) == "" {
+		return {"ok": false, "error": "Request body is required"}
+	}
+
+	max_bytes := dict_get_or(cfg, "max_body_bytes", 1048576)
+	if len(body) > max_bytes {
+		return {"ok": false, "error": "Request body exceeds max size"}
+	}
+
+	content_type := to_lower(get_header(req, "Content-Type"))
+	if content_type == "" {
+		content_type = to_lower(get_header(req, "content-type"))
+	}
+
+	if content_type != "" {
+		json_ok := starts_with(content_type, "application/json")
+		patch_ok := starts_with(content_type, "application/merge-patch+json")
+		if json_ok == false && patch_ok == false {
+			return {"ok": false, "error": "Content-Type must be application/json"}
+		}
+	}
+
+	err := null
+	data := null
+	try {
+		data = parse_json(body)
+	} except e {
+		err = e
+	}
+	if type(err) != "null" {
+		return {"ok": false, "error": "Invalid JSON body"}
+	}
+	if type(data) != "dict" {
+		return {"ok": false, "error": "JSON body must be an object"}
+	}
+
+	return {"ok": true, "data": data}
+}
+
+func is_write_method(method) {
+	return method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE"
+}
+
+func idempotency_enabled(cfg) {
+	enabled := dict_get_or(cfg, "idempotency_enabled", true)
+	if enabled == false || enabled == 0 {
+		return false
+	}
+	return true
+}
+
+func idempotency_request_hash(req, method, path) {
+	body_text := to_string(dict_get_or(req, "body", ""))
+	return sha256(method + ":" + path + ":" + body_text)
+}
+
+func idempotency_parse_request_body(req) {
+	body_err := null
+	body_obj := null
+	try {
+		body_obj = parse_json(to_string(dict_get_or(req, "body", "")))
+	} except e {
+		body_err = e
+	}
+	if type(body_err) != "null" || type(body_obj) != "dict" {
+		return null
+	}
+	return body_obj
+}
+
+func idempotency_resolve_create_by_unique_key(db, req, body_obj, body_key, table_name, table_key, action_name, target_type_name) {
+	if type(body_obj) != "dict" {
+		return {"ok": false}
+	}
+
+	lookup_value := trim(to_string(dict_get_or(body_obj, body_key, "")))
+	if lookup_value == "" {
+		return {"ok": false}
+	}
+
+	lookup_rows := db_query_safe(
+		db,
+		"SELECT id FROM " + table_name + " WHERE " + table_key + " = ? ORDER BY id DESC LIMIT 1",
+		[lookup_value]
+	)
+	if lookup_rows["ok"] == false || len(lookup_rows["rows"]) == 0 {
+		return {"ok": false}
+	}
+
+	target_id := to_string(dict_get_or(lookup_rows["rows"][0], "id", ""))
+	if target_id == "" {
+		return {"ok": false}
+	}
+
+	return {
+		"ok": true,
+		"status_code": 201,
+		"payload": {
+			"ok": true,
+			"data": {
+				"idempotency": {
+					"replayed": true,
+					"action": action_name,
+					"target_type": target_type_name,
+					"target_id": target_id,
+					"request_id": to_string(dict_get_or(req, "request_id", "")),
+					"status_code": 201
+				}
+			}
+		}
+	}
+}
+
+func idempotency_supported_request(method, path) {
+	if method == "POST" && path == "/v1/entries" {
+		return true
+	}
+	if method == "POST" && path == "/v1/content-types" {
+		return true
+	}
+	if method == "POST" && path == "/v1/taxonomies" {
+		return true
+	}
+	if method == "POST" && path == "/v1/plugins" {
+		return true
+	}
+	if method == "POST" && path == "/v1/tenants" {
+		return true
+	}
+	if method == "POST" && path == "/v1/workspaces" {
+		return true
+	}
+
+	if method == "DELETE" && starts_with(path, "/v1/entries/") {
+		entry_id_text := trim(substring(path, len("/v1/entries/"), len(path)))
+		if index_of(entry_id_text, "/") < 0 {
+			entry_id := parse_positive_int_text(entry_id_text, -1)
+			if entry_id > 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
+	if idempotency_enabled(cfg) == false {
+		return {"ok": true, "enabled": false}
+	}
+
+	if is_write_method(method) == false {
+		return {"ok": true, "enabled": false}
+	}
+
+	if idempotency_key == "" {
+		return {"ok": true, "enabled": false}
+	}
+
+	if len(idempotency_key) > 255 {
+		return {
+			"ok": false,
+			"replay": false,
+			"status_code": 400,
+			"response": fail(cfg, 400, "invalid_idempotency_key", "Idempotency-Key must be 255 characters or fewer", {})
+		}
+	}
+
+	if idempotency_supported_request(method, path) == false {
+		return {"ok": true, "enabled": false}
+	}
+
+	db := dict_get_or(ctx, "db", null)
+	if type(db) == "null" {
+		return {
+			"ok": false,
+			"replay": false,
+			"status_code": 500,
+			"response": fail(cfg, 500, "idempotency_unavailable", "Idempotency lookup is unavailable", {})
+		}
+	}
+
+	request_hash := idempotency_request_hash(req, method, path)
+	lookup_result := db_query_safe(
+		db,
+		"SELECT idempotency_key, request_method, request_path, request_hash, status, response_status, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1",
+		[idempotency_key]
+	)
+	if lookup_result["ok"] == false {
+		return {
+			"ok": false,
+			"replay": false,
+			"status_code": 500,
+			"response": fail(cfg, 500, "idempotency_lookup_failed", "Failed to check idempotency key", {})
+		}
+	}
+
+	if len(lookup_result["rows"]) == 0 {
+		_ = db_execute_safe(
+			db,
+			"INSERT INTO idempotency_keys (idempotency_key, request_method, request_path, request_hash, status, response_status, response_json, request_id, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			[
+				idempotency_key,
+				method,
+				path,
+				request_hash,
+				"pending",
+				0,
+				"",
+				to_string(dict_get_or(req, "request_id", "")),
+				now(),
+				now(),
+				null
+			]
+		)
+		return {"ok": true, "enabled": true}
+	}
+
+	existing := lookup_result["rows"][0]
+	existing_method := to_upper(trim(to_string(dict_get_or(existing, "request_method", ""))))
+	existing_path := to_string(dict_get_or(existing, "request_path", ""))
+	existing_hash := to_string(dict_get_or(existing, "request_hash", ""))
+
+	if existing_method != method || existing_path != path || existing_hash != request_hash {
+		return {
+			"ok": false,
+			"replay": false,
+			"status_code": 409,
+			"response": fail(cfg, 409, "idempotency_conflict", "Idempotency-Key has already been used with a different request payload", {})
+		}
+	}
+
+	status := to_lower(trim(to_string(dict_get_or(existing, "status", ""))))
+	if status == "completed" {
+		replay_payload := {
+			"ok": true,
+			"data": {
+				"idempotency": {
+					"replayed": true,
+					"status": "completed"
+				}
+			}
+		}
+
+		raw_payload := to_string(dict_get_or(existing, "response_json", ""))
+		if trim(raw_payload) != "" {
+			parse_err := null
+			parsed_payload := null
+			try {
+				parsed_payload = parse_json(raw_payload)
+			} except e {
+				parse_err = e
+			}
+			if type(parse_err) == "null" && type(parsed_payload) == "dict" {
+				replay_payload = parsed_payload
+			}
+		}
+
+		replay_status := parse_positive_int_text(to_string(dict_get_or(existing, "response_status", "200")), 200)
+		if replay_status < 100 {
+			replay_status = 200
+		}
+		if replay_status > 599 {
+			replay_status = 200
+		}
+
+		replay_response := api_json(replay_status, replay_payload, cfg)
+		replay_response = set_header(replay_response, "Idempotency-Replayed", "true")
+		return {
+			"ok": false,
+			"replay": true,
+			"status_code": replay_status,
+			"response": replay_response
+		}
+	}
+
+	resolved_status := -1
+	resolved_payload := null
+	parsed_body := null
+	if method == "POST" {
+		parsed_body = idempotency_parse_request_body(req)
+	}
+
+	if method == "POST" && path == "/v1/entries" {
+		if type(parsed_body) == "dict" {
+			body_obj := parsed_body
+			content_type_key := trim(to_string(dict_get_or(body_obj, "content_type_key", "")))
+			slug := trim(to_string(dict_get_or(body_obj, "slug", "")))
+			if content_type_key != "" && slug != "" {
+				entry_rows := db_query_safe(
+					db,
+					"SELECT id FROM entries WHERE content_type_key = ? AND slug = ? ORDER BY id DESC LIMIT 1",
+					[content_type_key, slug]
+				)
+				if entry_rows["ok"] == true && len(entry_rows["rows"]) > 0 {
+					entry_id := to_string(dict_get_or(entry_rows["rows"][0], "id", ""))
+					resolved_status = 201
+					resolved_payload = {
+						"ok": true,
+						"data": {
+							"idempotency": {
+								"replayed": true,
+								"action": "entry.create",
+								"target_type": "entry",
+								"target_id": entry_id,
+								"request_id": to_string(dict_get_or(req, "request_id", "")),
+								"status_code": 201
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if resolved_status < 0 && method == "POST" && path == "/v1/content-types" {
+		resolved := idempotency_resolve_create_by_unique_key(db, req, parsed_body, "type_key", "content_types", "type_key", "content_type.create", "content_type")
+		if resolved["ok"] == true {
+			resolved_status = resolved["status_code"]
+			resolved_payload = resolved["payload"]
+		}
+	}
+
+	if resolved_status < 0 && method == "POST" && path == "/v1/taxonomies" {
+		resolved := idempotency_resolve_create_by_unique_key(db, req, parsed_body, "taxonomy_key", "taxonomies", "taxonomy_key", "taxonomy.create", "taxonomy")
+		if resolved["ok"] == true {
+			resolved_status = resolved["status_code"]
+			resolved_payload = resolved["payload"]
+		}
+	}
+
+	if resolved_status < 0 && method == "POST" && path == "/v1/plugins" {
+		resolved := idempotency_resolve_create_by_unique_key(db, req, parsed_body, "plugin_key", "plugins", "plugin_key", "plugin.create", "plugin")
+		if resolved["ok"] == true {
+			resolved_status = resolved["status_code"]
+			resolved_payload = resolved["payload"]
+		}
+	}
+
+	if resolved_status < 0 && method == "POST" && path == "/v1/tenants" {
+		resolved := idempotency_resolve_create_by_unique_key(db, req, parsed_body, "tenant_key", "tenants", "tenant_key", "tenant.create", "tenant")
+		if resolved["ok"] == true {
+			resolved_status = resolved["status_code"]
+			resolved_payload = resolved["payload"]
+		}
+	}
+
+	if resolved_status < 0 && method == "POST" && path == "/v1/workspaces" {
+		resolved := idempotency_resolve_create_by_unique_key(db, req, parsed_body, "workspace_key", "workspaces", "workspace_key", "workspace.create", "workspace")
+		if resolved["ok"] == true {
+			resolved_status = resolved["status_code"]
+			resolved_payload = resolved["payload"]
+		}
+	}
+
+	if resolved_status < 0 && method == "DELETE" && starts_with(path, "/v1/entries/") {
+		entry_id_text := trim(substring(path, len("/v1/entries/"), len(path)))
+		if index_of(entry_id_text, "/") < 0 {
+			entry_id := parse_positive_int_text(entry_id_text, -1)
+			if entry_id > 0 {
+				entry_rows := db_query_safe(db, "SELECT id FROM entries WHERE id = ? LIMIT 1", [entry_id])
+				if entry_rows["ok"] == true && len(entry_rows["rows"]) == 0 {
+					resolved_status = 200
+					resolved_payload = {
+						"ok": true,
+						"data": {
+							"idempotency": {
+								"replayed": true,
+								"action": "entry.delete",
+								"target_type": "entry",
+								"target_id": to_string(entry_id),
+								"request_id": to_string(dict_get_or(req, "request_id", "")),
+								"status_code": 200
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if resolved_status > 0 && type(resolved_payload) == "dict" {
+		_ = db_execute_safe(
+			db,
+			"UPDATE idempotency_keys SET status = ?, response_status = ?, response_json = ?, request_id = ?, updated_at = ? WHERE idempotency_key = ? AND request_hash = ?",
+			[
+				"completed",
+				resolved_status,
+				to_json(resolved_payload),
+				to_string(dict_get_or(req, "request_id", "")),
+				now(),
+				idempotency_key,
+				request_hash
+			]
+		)
+
+		replay_response := api_json(resolved_status, resolved_payload, cfg)
+		replay_response = set_header(replay_response, "Idempotency-Replayed", "true")
+		return {
+			"ok": false,
+			"replay": true,
+			"status_code": resolved_status,
+			"response": replay_response
+		}
+	}
+
+	return {
+		"ok": false,
+		"replay": false,
+		"status_code": 409,
+		"response": fail(cfg, 409, "idempotency_in_progress", "Idempotent request is still being processed", {})
+	}
+}
+
+func metric_increment(state, metric_name) {
+	metrics := dict_get_or(state, "metrics", {})
+	current_value := dict_get_or(metrics, metric_name, 0)
+	metrics[metric_name] := current_value + 1
+	state["metrics"] := metrics
+	return null
+}
+
+func metric_observe_latency(state, latency_ms) {
+	metrics := dict_get_or(state, "metrics", {})
+	latency_total := dict_get_or(metrics, "latency_total_ms", 0) + latency_ms
+	latency_samples := dict_get_or(metrics, "latency_samples", 0) + 1
+	latency_max := dict_get_or(metrics, "latency_max_ms", 0)
+
+	if latency_ms > latency_max {
+		latency_max = latency_ms
+	}
+
+	metrics["latency_last_ms"] := latency_ms
+	metrics["latency_total_ms"] := latency_total
+	metrics["latency_samples"] := latency_samples
+	metrics["latency_max_ms"] := latency_max
+	metrics["latency_avg_ms"] := latency_total / latency_samples
+	state["metrics"] := metrics
+	return null
+}
+
+func structured_log(cfg, payload) {
+	structured_logs_enabled := dict_get_or(cfg, "structured_logs", true)
+	if structured_logs_enabled == false || structured_logs_enabled == 0 {
+		return null
+	}
+	print(to_json(payload))
+	return null
+}
+
+func rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key) {
+	rate_map := dict_get_or(state, "rate", {})
+
+	if max_rate_keys < 100 {
+		max_rate_keys = 100
+	}
+	if has_key(rate_map, key) == 0 && len(rate_map) >= max_rate_keys {
+		return {
+			"ok": false,
+			"limit": max_requests,
+			"window_sec": window_sec,
+			"capacity": true
+		}
+	}
+
+	bucket := dict_get_or(rate_map, key, {
+		"window_start": now_ts,
+		"count": 0
+	})
+
+	window_start := dict_get_or(bucket, "window_start", now_ts)
+	if (now_ts - window_start) >= (window_sec * 1000) {
+		bucket["window_start"] := now_ts
+		bucket["count"] := 0
+	}
+
+	bucket["count"] := dict_get_or(bucket, "count", 0) + 1
+	rate_map[key] := bucket
+	state["rate"] := rate_map
+
+	if bucket["count"] > max_requests {
+		return {
+			"ok": false,
+			"limit": max_requests,
+			"window_sec": window_sec
+		}
+	}
+
+	return {"ok": true}
+}
+
+func rate_check_sqlite(ctx, state, window_sec, max_requests, max_rate_keys, now_ts, key) {
+	db := dict_get_or(ctx, "db", null)
+	if type(db) == "null" {
+		return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
+	}
+
+	prune_result := db_execute_safe(
+		db,
+		"DELETE FROM rate_limit_buckets WHERE (window_start_ms + (? * 1000)) <= ?",
+		[window_sec, now_ts]
+	)
+	if prune_result["ok"] == false {
+		return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
+	}
+
+	bucket_rows := db_query_safe(
+		db,
+		"SELECT window_start_ms, count FROM rate_limit_buckets WHERE rate_key = ? LIMIT 1",
+		[key]
+	)
+	if bucket_rows["ok"] == false {
+		return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
+	}
+
+	bucket_count := 0
+	window_start := now_ts
+	if len(bucket_rows["rows"]) == 0 {
+		keys_rows := db_query_safe(db, "SELECT COUNT(*) AS total FROM rate_limit_buckets", [])
+		if keys_rows["ok"] == false {
+			return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
+		}
+		keys_total := 0
+		if len(keys_rows["rows"]) > 0 {
+			keys_total = parse_positive_int_text(dict_get_or(keys_rows["rows"][0], "total", 0), 0)
+		}
+		if keys_total >= max_rate_keys {
+			return {
+				"ok": false,
+				"limit": max_requests,
+				"window_sec": window_sec,
+				"capacity": true
+			}
+		}
+	} else {
+		row := bucket_rows["rows"][0]
+		window_start = parse_positive_int_text(dict_get_or(row, "window_start_ms", now_ts), now_ts)
+		bucket_count = parse_positive_int_text(dict_get_or(row, "count", 0), 0)
+		if (now_ts - window_start) >= (window_sec * 1000) {
+			window_start = now_ts
+			bucket_count = 0
+		}
+	}
+
+	bucket_count = bucket_count + 1
+	upsert_result := db_execute_safe(
+		db,
+		"INSERT OR REPLACE INTO rate_limit_buckets (rate_key, window_start_ms, count, updated_at) VALUES (?, ?, ?, ?)",
+		[key, window_start, bucket_count, now()]
+	)
+	if upsert_result["ok"] == false {
+		return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
+	}
+
+	if bucket_count > max_requests {
+		return {
+			"ok": false,
+			"limit": max_requests,
+			"window_sec": window_sec
+		}
+	}
+
+	return {"ok": true}
+}
+
+func rate_check(ctx, cfg, req) {
+	state := dict_get_or(ctx, "state", {})
+	rate_limit_mode := to_lower(trim(to_string(dict_get_or(cfg, "rate_limit_mode", "memory"))))
+	if rate_limit_mode == "off" || rate_limit_mode == "external" {
+		return {"ok": true, "mode": rate_limit_mode}
+	}
+	if rate_limit_mode != "memory" && rate_limit_mode != "sqlite" {
+		rate_limit_mode = "memory"
+	}
+
+	window_sec := dict_get_or(cfg, "rate_limit_window_sec", 60)
+	max_requests := dict_get_or(cfg, "rate_limit_max_requests", 180)
+	max_rate_keys := dict_get_or(cfg, "rate_limit_max_keys", 10000)
+	now_ts := current_timestamp()
+	key := req_ip(req)
+
+	if max_rate_keys < 100 {
+		max_rate_keys = 100
+	}
+
+	if rate_limit_mode == "sqlite" {
+		return rate_check_sqlite(ctx, state, window_sec, max_requests, max_rate_keys, now_ts, key)
+	}
+
+	return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
+}
+
+export guard_request := func(req, ctx, require_write_auth) {
+	cfg := ctx["cfg"]
+	state := ctx["state"]
+	request_id_header := trim(to_string(dict_get_or(cfg, "request_id_header", "X-Request-ID")))
+	if request_id_header == "" {
+		request_id_header = "X-Request-ID"
+	}
+
+	request_id := trim(to_string(get_header(req, request_id_header)))
+	if request_id == "" {
+		request_id = trim(to_string(get_header(req, to_lower(request_id_header))))
+	}
+	if request_id == "" || len(request_id) > 128 {
+		request_id = substring(sha256(req_method(req) + ":" + req_path(req) + ":" + req_ip(req) + ":" + to_string(current_timestamp())), 0, 24)
+	}
+
+	req["request_id"] := request_id
+	cfg["last_request_id"] := request_id
+	started_at_ms := current_timestamp()
+	req["started_at_ms"] := started_at_ms
+
+	_ := metric_increment(state, "requests_total")
+	_ := structured_log(cfg, {
+		"event": "request.guard.start",
+		"timestamp": now(),
+		"request_id": request_id,
+		"method": req_method(req),
+		"path": req_path(req),
+		"ip": req_ip(req)
+	})
+
+	rate_result := rate_check(ctx, cfg, req)
+	if rate_result["ok"] == false {
+		latency_ms := current_timestamp() - started_at_ms
+		_ := metric_increment(state, "rate_limited_total")
+		_ := metric_increment(state, "responses_429_total")
+		_ := metric_observe_latency(state, latency_ms)
+		_ := structured_log(cfg, {
+			"event": "request.guard.deny",
+			"timestamp": now(),
+			"request_id": request_id,
+			"method": req_method(req),
+			"path": req_path(req),
+			"status_code": 429,
+			"reason": "rate_limited",
+			"latency_ms": latency_ms
+		})
+		return {
+			"ok": false,
+			"response": fail(cfg, 429, "rate_limited", "Rate limit exceeded", {
+				"limit": dict_get_or(rate_result, "limit", 0),
+				"window_sec": dict_get_or(rate_result, "window_sec", 0)
+			})
+		}
+	}
+
+	method := req_method(req)
+	if require_write_auth == true || is_write_method(method) {
+		idempotency_key := trim(to_string(get_header(req, "Idempotency-Key")))
+		if idempotency_key == "" {
+			idempotency_key = trim(to_string(get_header(req, "idempotency-key")))
+		}
+		auth_result := authorize_request(req, ctx, get_header, true)
+		if auth_result["ok"] == false {
+			latency_ms := current_timestamp() - started_at_ms
+			_ := metric_increment(state, "unauthorized_total")
+			_ := metric_increment(state, "responses_401_total")
+			_ := metric_observe_latency(state, latency_ms)
+			_ := structured_log(cfg, {
+				"event": "request.guard.deny",
+				"timestamp": now(),
+				"request_id": request_id,
+				"method": method,
+				"path": req_path(req),
+				"status_code": 401,
+				"reason": dict_get_or(auth_result, "error", "unauthorized"),
+				"latency_ms": latency_ms
+			})
+			return {
+				"ok": false,
+				"response": fail(cfg, 401, "unauthorized", dict_get_or(auth_result, "error", "Missing or invalid bearer token"), {})
+			}
+		}
+
+		req["auth_context"] := auth_result
+		idem_result := idempotency_prepare(req, ctx, cfg, method, req_path(req), idempotency_key)
+		if idem_result["ok"] == false {
+			latency_ms := current_timestamp() - started_at_ms
+			replay_mode := dict_get_or(idem_result, "replay", false)
+			if replay_mode == true {
+				_ := metric_increment(state, "authorized_total")
+			} else {
+				_ := metric_increment(state, "responses_401_total")
+			}
+			_ := metric_observe_latency(state, latency_ms)
+			log_event := "request.guard.deny"
+			if replay_mode == true {
+				log_event = "request.guard.replay"
+			}
+			_ := structured_log(cfg, {
+				"event": log_event,
+				"timestamp": now(),
+				"request_id": request_id,
+				"method": method,
+				"path": req_path(req),
+				"status_code": dict_get_or(idem_result, "status_code", 409),
+				"reason": "idempotency_key",
+				"latency_ms": latency_ms
+			})
+			return {
+				"ok": false,
+				"response": idem_result["response"]
+			}
+		}
+
+		latency_ms := current_timestamp() - started_at_ms
+		_ := metric_increment(state, "authorized_total")
+		_ := metric_observe_latency(state, latency_ms)
+		_ := structured_log(cfg, {
+			"event": "request.guard.pass",
+			"timestamp": now(),
+			"request_id": request_id,
+			"method": method,
+			"path": req_path(req),
+			"role_key": dict_get_or(auth_result, "role_key", "unknown"),
+			"latency_ms": latency_ms
+		})
+
+		return {
+			"ok": true,
+			"auth": auth_result
+		}
+	}
+
+	read_auth := authorize_request(req, ctx, get_header, false)
+	if read_auth["ok"] == false {
+		latency_ms := current_timestamp() - started_at_ms
+		_ := metric_increment(state, "unauthorized_total")
+		_ := metric_increment(state, "responses_401_total")
+		_ := metric_observe_latency(state, latency_ms)
+		_ := structured_log(cfg, {
+			"event": "request.guard.deny",
+			"timestamp": now(),
+			"request_id": request_id,
+			"method": method,
+			"path": req_path(req),
+			"status_code": 401,
+			"reason": dict_get_or(read_auth, "error", "unauthorized"),
+			"latency_ms": latency_ms
+		})
+		return {
+			"ok": false,
+			"response": fail(cfg, 401, "unauthorized", dict_get_or(read_auth, "error", "Unauthorized"), {})
+		}
+	}
+
+	req["auth_context"] := read_auth
+	latency_ms := current_timestamp() - started_at_ms
+	_ := metric_increment(state, "authorized_total")
+	_ := metric_observe_latency(state, latency_ms)
+	_ := structured_log(cfg, {
+		"event": "request.guard.pass",
+		"timestamp": now(),
+		"request_id": request_id,
+		"method": method,
+		"path": req_path(req),
+		"role_key": dict_get_or(read_auth, "role_key", "unknown"),
+		"latency_ms": latency_ms
+	})
+
+	return {
+		"ok": true,
+		"auth": read_auth
+	}
+}
+
+export write_audit := func(ctx, req, action, status_code, target_type, target_id, details) {
+	cfg := ctx["cfg"]
+	audit_enabled := dict_get_or(cfg, "audit_log", true)
+	if audit_enabled == false {
+		return null
+	}
+	enriched_details := {}
+	if type(details) == "dict" {
+		enriched_details = details
+	}
+	enriched_details["request_id"] := to_string(dict_get_or(req, "request_id", ""))
+	auth_context := dict_get_or(req, "auth_context", null)
+	if type(auth_context) == "dict" {
+		enriched_details["role_key"] := to_string(dict_get_or(auth_context, "role_key", ""))
+		enriched_details["token_id"] := to_string(dict_get_or(auth_context, "token_id", ""))
+		enriched_details["token_label"] := to_string(dict_get_or(auth_context, "token_label", ""))
+	}
+	db := ctx["db"]
+	audit_err := null
+	try {
+		_ = write_audit_event(db, {
+			"created_at": now(),
+			"ip": req_ip(req),
+			"method": req_method(req),
+			"path": req_path(req),
+			"actor": req_actor(req),
+			"action": action,
+			"status_code": status_code,
+			"target_type": target_type,
+			"target_id": to_string(target_id),
+			"details": enriched_details
+		})
+	} except e {
+		audit_err = e
+	}
+	if type(audit_err) != "null" {
+		fallback_result := db_execute_safe(
+			db,
+			"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			[
+				now(),
+				req_ip(req),
+				req_method(req),
+				req_path(req),
+				req_actor(req),
+				action,
+				status_code,
+				target_type,
+				to_string(target_id),
+				to_json(enriched_details)
+			]
+		)
+		if fallback_result["ok"] == false {
+			return null
+		}
+	}
+	_ := structured_log(cfg, {
+		"event": "audit.write",
+		"timestamp": now(),
+		"request_id": to_string(dict_get_or(req, "request_id", "")),
+		"action": action,
+		"status_code": status_code,
+		"target_type": target_type,
+		"target_id": to_string(target_id)
+	})
+	return null
+}
+
+export write_audit_safe := func(ctx, req, action, status_code, target_type, target_id, details) {
+	audit_err := null
+	try {
+		_ = write_audit(ctx, req, action, status_code, target_type, target_id, details)
+	} except e {
+		audit_err = e
+	}
+	if type(audit_err) == "null" {
+		return null
+	}
+
+	cfg := dict_get_or(ctx, "cfg", {})
+	audit_enabled := dict_get_or(cfg, "audit_log", true)
+	if audit_enabled == false {
+		return null
+	}
+
+	enriched_details := {}
+	if type(details) == "dict" {
+		enriched_details = details
+	}
+	enriched_details["request_id"] := to_string(dict_get_or(req, "request_id", ""))
+	auth_context := dict_get_or(req, "auth_context", null)
+	if type(auth_context) == "dict" {
+		enriched_details["role_key"] := to_string(dict_get_or(auth_context, "role_key", ""))
+		enriched_details["token_id"] := to_string(dict_get_or(auth_context, "token_id", ""))
+		enriched_details["token_label"] := to_string(dict_get_or(auth_context, "token_label", ""))
+	}
+
+	_ = db_execute_safe(
+		dict_get_or(ctx, "db", null),
+		"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[
+			now(),
+			req_ip(req),
+			req_method(req),
+			req_path(req),
+			req_actor(req),
+			action,
+			status_code,
+			target_type,
+			to_string(target_id),
+			to_json(enriched_details)
+		]
+	)
+	_ := structured_log(cfg, {
+		"event": "audit.write.fallback",
+		"timestamp": now(),
+		"request_id": to_string(dict_get_or(req, "request_id", "")),
+		"action": action,
+		"status_code": status_code,
+		"target_type": target_type,
+		"target_id": to_string(target_id)
+	})
+
+	return null
+}

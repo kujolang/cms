@@ -1,0 +1,2216 @@
+from backend.core.utils import dict_get_or, ensure_json_text
+from backend.core.http import fail, get_header, guard_request, ok, write_audit
+
+export register_entry_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/entries", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		content_type_filter := trim(to_string(dict_get_or(query, "content_type", "")))
+		status_filter := trim(to_string(dict_get_or(query, "status", "")))
+		author_filter := trim(to_string(dict_get_or(query, "author_id", "")))
+		search_filter := trim(to_string(dict_get_or(query, "q", "")))
+		published_after := trim(to_string(dict_get_or(query, "published_after", "")))
+		published_before := trim(to_string(dict_get_or(query, "published_before", "")))
+		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
+		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "desc"))))
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+
+		if sort_by != "id" && sort_by != "created_at" && sort_by != "updated_at" && sort_by != "published_at" && sort_by != "title" && sort_by != "status" {
+			sort_by = "id"
+		}
+		if sort_dir != "asc" && sort_dir != "desc" {
+			sort_dir = "desc"
+		}
+
+		pagination_mode := to_lower(trim(to_string(dict_get_or(query, "pagination", "offset"))))
+		cursor_text := trim(to_string(dict_get_or(query, "cursor", "")))
+		use_cursor := pagination_mode == "cursor" || cursor_text != ""
+		fields_text := trim(to_string(dict_get_or(query, "fields", "")))
+		include_text := to_lower(trim(to_string(dict_get_or(query, "include", ""))))
+		include_terms := false
+		if include_text != "" {
+			include_tokens := split(include_text, ",")
+			for include_token_raw in include_tokens {
+				include_token := to_lower(trim(to_string(include_token_raw)))
+				if include_token == "terms" {
+					include_terms = true
+				}
+			}
+		}
+
+		selected_fields := []
+		if fields_text != "" {
+			field_tokens := split(fields_text, ",")
+			for field_token_raw in field_tokens {
+				field_token := trim(to_string(field_token_raw))
+				if field_token == "id" || field_token == "content_type_key" || field_token == "title" || field_token == "slug" || field_token == "status" || field_token == "excerpt" || field_token == "body" || field_token == "meta_json" || field_token == "author_id" || field_token == "published_at" || field_token == "unpublish_at" || field_token == "created_at" || field_token == "updated_at" {
+					selected_fields = push(selected_fields, field_token)
+				} else if field_token != "" {
+					return fail(cfg, 400, "invalid_fields", "fields contains unsupported field: " + field_token, {})
+				}
+			}
+			if len(selected_fields) == 0 {
+				return fail(cfg, 400, "invalid_fields", "fields must include at least one supported field", {})
+			}
+		}
+		cursor_id := 0
+		if use_cursor && cursor_text != "" {
+			cursor_err := null
+			try {
+				cursor_id = parse_int(cursor_text)
+			} except e {
+				cursor_err = e
+			}
+			if type(cursor_err) != "null" || cursor_id <= 0 {
+				return fail(cfg, 400, "invalid_cursor", "cursor must be a positive integer", {})
+			}
+		}
+		if use_cursor && sort_by != "id" {
+			return fail(cfg, 400, "unsupported_cursor_sort", "cursor pagination currently requires sort_by=id", {})
+		}
+		if use_cursor {
+			offset = 0
+		}
+
+		base_where_sql := " WHERE 1=1"
+		base_params := []
+		if content_type_filter != "" {
+			base_where_sql = base_where_sql + " AND content_type_key = ?"
+			base_params = push(base_params, content_type_filter)
+		}
+		if status_filter != "" {
+			base_where_sql = base_where_sql + " AND status = ?"
+			base_params = push(base_params, status_filter)
+		}
+		if author_filter != "" {
+			base_where_sql = base_where_sql + " AND author_id = ?"
+			base_params = push(base_params, author_filter)
+		}
+		if search_filter != "" {
+			base_where_sql = base_where_sql + " AND (title LIKE ? OR body LIKE ? OR excerpt LIKE ?)"
+			search_like := "%" + search_filter + "%"
+			base_params = push(base_params, search_like)
+			base_params = push(base_params, search_like)
+			base_params = push(base_params, search_like)
+		}
+		if published_after != "" {
+			base_where_sql = base_where_sql + " AND published_at IS NOT NULL AND published_at >= ?"
+			base_params = push(base_params, published_after)
+		}
+		if published_before != "" {
+			base_where_sql = base_where_sql + " AND published_at IS NOT NULL AND published_at <= ?"
+			base_params = push(base_params, published_before)
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM entries" + base_where_sql, base_params)
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count entries", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = to_int(count_rows[0]["total"])
+		}
+
+		row_where_sql := base_where_sql
+		row_params := []
+		for param in base_params {
+			row_params = push(row_params, param)
+		}
+		if use_cursor && cursor_id > 0 {
+			if sort_dir == "asc" {
+				row_where_sql = row_where_sql + " AND id > ?"
+			} else {
+				row_where_sql = row_where_sql + " AND id < ?"
+			}
+			row_params = push(row_params, cursor_id)
+		}
+
+		order_sql := " ORDER BY " + sort_by + " " + to_upper(sort_dir) + ", id DESC"
+		query_sql := "SELECT * FROM entries" + row_where_sql + order_sql + " LIMIT ? OFFSET ?"
+		fetch_limit := limit
+		if use_cursor {
+			order_sql = " ORDER BY id " + to_upper(sort_dir)
+			query_sql = "SELECT * FROM entries" + row_where_sql + order_sql + " LIMIT ?"
+			fetch_limit = limit + 1
+		}
+		row_params = push(row_params, fetch_limit)
+		if use_cursor == false {
+			row_params = push(row_params, offset)
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, query_sql, row_params)
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entries", {})
+		}
+
+		has_more_cursor := false
+		if use_cursor && len(rows) > limit {
+			has_more_cursor = true
+			trimmed_rows := []
+			trimmed_index := 0
+			while trimmed_index < len(rows) && trimmed_index < limit {
+				trimmed_rows = push(trimmed_rows, rows[trimmed_index])
+				trimmed_index = trimmed_index + 1
+			}
+			rows = trimmed_rows
+		}
+
+		items := rows
+		if include_terms {
+			entry_ids := []
+			for row in items {
+				entry_id := to_int(dict_get_or(row, "id", 0))
+				if entry_id > 0 {
+					entry_ids = push(entry_ids, entry_id)
+				}
+			}
+
+			terms_by_entry := {}
+			if len(entry_ids) > 0 {
+				placeholders := ""
+				term_params := []
+				entry_index := 0
+				while entry_index < len(entry_ids) {
+					if entry_index > 0 {
+						placeholders = placeholders + ", "
+					}
+					placeholders = placeholders + "?"
+					term_params = push(term_params, entry_ids[entry_index])
+					entry_index = entry_index + 1
+				}
+
+				term_rows := []
+				term_err := null
+				try {
+					term_rows = db_query(
+						db,
+						"SELECT et.entry_id, t.id, t.name, t.slug FROM entry_terms et INNER JOIN taxonomy_terms t ON t.id = et.term_id WHERE et.entry_id IN (" + placeholders + ") ORDER BY et.entry_id ASC, t.name ASC",
+						term_params
+					)
+				} except e {
+					term_err = e
+				}
+				if type(term_err) != "null" {
+					return fail(cfg, 500, "db_query_failed", "Failed to load related entry terms", {})
+				}
+
+				for term_row in term_rows {
+					term_entry_id := to_string(dict_get_or(term_row, "entry_id", ""))
+					if term_entry_id == "" {
+						continue
+					}
+					entry_terms := dict_get_or(terms_by_entry, term_entry_id, [])
+					entry_terms = push(entry_terms, {
+						"id": dict_get_or(term_row, "id", 0),
+						"name": dict_get_or(term_row, "name", ""),
+						"slug": dict_get_or(term_row, "slug", "")
+					})
+					terms_by_entry[term_entry_id] = entry_terms
+				}
+			}
+
+			enriched_items := []
+			for row in items {
+				entry_id := to_int(dict_get_or(row, "id", 0))
+				entry_item := row
+				if entry_id > 0 {
+					entry_item["terms"] = dict_get_or(terms_by_entry, to_string(entry_id), [])
+				} else {
+					entry_item["terms"] = []
+				}
+				enriched_items = push(enriched_items, entry_item)
+			}
+			items = enriched_items
+		}
+
+		if len(selected_fields) > 0 {
+			projected_items := []
+			for row in items {
+				projected := {}
+				for field_name in selected_fields {
+					projected[field_name] = dict_get_or(row, field_name, null)
+				}
+				if include_terms {
+					projected["terms"] = dict_get_or(row, "terms", [])
+				}
+				projected_items = push(projected_items, projected)
+			}
+			items = projected_items
+		}
+
+		next_cursor := null
+		if use_cursor && has_more_cursor && len(rows) > 0 {
+			last_row := rows[len(rows) - 1]
+			last_id := to_int(dict_get_or(last_row, "id", 0))
+			if last_id <= 0 {
+				next_cursor = null
+			} else {
+				next_cursor = last_id
+			}
+		}
+
+		pagination_mode_value := "offset"
+		cursor_echo := null
+		if use_cursor {
+			pagination_mode_value = "cursor"
+			cursor_echo = cursor_text
+		}
+
+		return json_response(200, {"ok": true, "data": {
+			"items": items,
+			"count": len(items),
+			"total": total,
+			"limit": limit,
+			"offset": offset,
+			"filters": {
+				"content_type": content_type_filter,
+				"status": status_filter,
+				"author_id": author_filter,
+				"q": search_filter,
+				"published_after": published_after,
+				"published_before": published_before
+			},
+			"sort": {
+				"by": sort_by,
+				"dir": sort_dir
+			},
+			"pagination": {
+				"mode": pagination_mode_value,
+				"cursor": cursor_echo,
+				"next_cursor": next_cursor
+			},
+			"projection": {
+				"fields": selected_fields,
+				"include_terms": include_terms
+			}
+		}})
+	})
+
+	server = server.route("POST", "/v1/entries", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		max_body_bytes := dict_get_or(cfg, "max_body_bytes", 1048576)
+		if len(body_text) > max_body_bytes {
+			return fail(cfg, 400, "invalid_body", "Request body exceeds max size", {})
+		}
+		headers := dict_get_or(req, "headers", {})
+		content_type := ""
+		if type(headers) == "dict" && has_key(headers, "Content-Type") == 1 {
+			content_type = to_lower(to_string(headers["Content-Type"]))
+		}
+		if content_type == "" && type(headers) == "dict" && has_key(headers, "content-type") == 1 {
+			content_type = to_lower(to_string(headers["content-type"]))
+		}
+		if content_type != "" && starts_with(content_type, "application/json") == false {
+			return fail(cfg, 400, "invalid_body", "Content-Type must be application/json", {})
+		}
+
+		parse_err := null
+		body := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		content_type_key := trim(to_string(dict_get_or(body, "content_type_key", "")))
+		title := trim(to_string(dict_get_or(body, "title", "")))
+		slug := trim(to_string(dict_get_or(body, "slug", "")))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", "draft"))))
+		excerpt := trim(to_string(dict_get_or(body, "excerpt", "")))
+		entry_body := to_string(dict_get_or(body, "body", ""))
+		author_id := trim(to_string(dict_get_or(body, "author_id", "system")))
+
+		if len(content_type_key) < 2 {
+			return fail(cfg, 400, "invalid_content_type", "content_type_key is required", {})
+		}
+		if len(title) < 2 {
+			return fail(cfg, 400, "invalid_title", "title must be at least 2 characters", {})
+		}
+		if len(slug) < 2 {
+			slug = to_lower(title)
+			slug = regex_replace(slug, "[^a-z0-9_\\-]", "-")
+			slug = regex_replace(slug, "-{2,}", "-")
+			slug = trim(slug)
+		}
+		if len(slug) < 2 || len(slug) > 64 {
+			return fail(cfg, 400, "invalid_slug", "slug must be lowercase slug text", {})
+		}
+		normalized_slug := to_lower(slug)
+		normalized_slug = regex_replace(normalized_slug, "[^a-z0-9_\\-]", "")
+		normalized_slug = regex_replace(normalized_slug, "-{2,}", "-")
+		normalized_slug = regex_replace(normalized_slug, "_{2,}", "_")
+		normalized_slug = trim(normalized_slug)
+		if normalized_slug != slug || starts_with(slug, "-") || starts_with(slug, "_") {
+			return fail(cfg, 400, "invalid_slug", "slug must be lowercase slug text", {})
+		}
+		valid_status := status == "draft" || status == "published" || status == "scheduled" || status == "archived"
+		if valid_status == false {
+			return fail(cfg, 400, "invalid_status", "status must be one of draft, published, scheduled, archived", {})
+		}
+		if author_id == "" {
+			author_id = "system"
+		}
+
+		meta_payload := {}
+		if has_key(body, "meta") == 1 && type(body["meta"]) == "dict" {
+			meta_payload = body["meta"]
+		}
+		seo_payload := {}
+		if has_key(body, "seo") == 1 && type(body["seo"]) == "dict" {
+			seo_input := body["seo"]
+			seo_title := trim(to_string(dict_get_or(seo_input, "title", "")))
+			seo_description := trim(to_string(dict_get_or(seo_input, "description", "")))
+			canonical_url := trim(to_string(dict_get_or(seo_input, "canonical_url", "")))
+			og_image_url := trim(to_string(dict_get_or(seo_input, "og_image_url", "")))
+			schema_type := trim(to_string(dict_get_or(seo_input, "schema_type", "")))
+			if seo_title != "" {
+				seo_payload["title"] = seo_title
+			}
+			if seo_description != "" {
+				seo_payload["description"] = seo_description
+			}
+			if canonical_url != "" {
+				seo_payload["canonical_url"] = canonical_url
+			}
+			if og_image_url != "" {
+				seo_payload["og_image_url"] = og_image_url
+			}
+			if schema_type != "" {
+				seo_payload["schema_type"] = schema_type
+			}
+		}
+		if len(seo_payload) > 0 {
+			meta_payload["seo"] = seo_payload
+		}
+		meta_json := to_json(meta_payload)
+
+		type_rows := []
+		type_err := null
+		try {
+			type_rows = db_query(db, "SELECT id FROM content_types WHERE type_key = ?", [content_type_key])
+		} except e {
+			type_err = e
+		}
+		if type(type_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load content type", {})
+		}
+		if len(type_rows) == 0 {
+			return fail(cfg, 404, "content_type_not_found", "Content type not found", {})
+		}
+
+		now_ts := now()
+		published_at := dict_get_or(body, "published_at", null)
+		unpublish_at := dict_get_or(body, "unpublish_at", null)
+		if status == "published" && type(published_at) == "null" {
+			published_at = now_ts
+		}
+
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO entries (content_type_key, title, slug, status, excerpt, body, meta_json, author_id, published_at, unpublish_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				[content_type_key, title, slug, status, excerpt, entry_body, meta_json, author_id, published_at, unpublish_at, now_ts, now_ts]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create entry (possibly duplicate slug)", {})
+		}
+
+		rows := []
+		query_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM entries WHERE content_type_key = ? AND slug = ? ORDER BY id DESC LIMIT 1", [content_type_key, slug])
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created entry but failed to load it", {})
+		}
+		audit_details := {
+			"content_type_key": content_type_key,
+			"status": status,
+			"slug": slug
+		}
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "entry.create", 201, "entry", dict_get_or(rows[0], "id", 0), audit_details)
+		} except e {
+			audit_err = e
+		}
+		if type(audit_err) != "null" {
+			fallback_details := audit_details
+			fallback_details["request_id"] = to_string(dict_get_or(req, "request_id", ""))
+			auth_context := dict_get_or(req, "auth_context", null)
+			if type(auth_context) == "dict" {
+				fallback_details["role_key"] = to_string(dict_get_or(auth_context, "role_key", ""))
+				fallback_details["token_id"] = to_string(dict_get_or(auth_context, "token_id", ""))
+				fallback_details["token_label"] = to_string(dict_get_or(auth_context, "token_label", ""))
+			}
+			fallback_insert_err := null
+			try {
+				db_execute(
+					db,
+					"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+					[
+						now(),
+						to_string(dict_get_or(req, "remote_addr", "unknown")),
+						to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
+						to_string(dict_get_or(req, "path", "")),
+						"token",
+						"entry.create",
+						201,
+						"entry",
+						to_string(dict_get_or(rows[0], "id", 0)),
+						to_json(fallback_details)
+					]
+				)
+			} except e {
+				fallback_insert_err = e
+			}
+		}
+		return json_response(201, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("POST", "/v1/entries/scheduler/run", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		now_ts := now()
+
+		publish_rows := []
+		publish_err := null
+		try {
+			publish_rows = db_query(
+				db,
+				"SELECT id FROM entries WHERE status = 'scheduled' AND published_at IS NOT NULL AND CASE WHEN instr(CAST(published_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', published_at) AS INTEGER) * 1000 ELSE CAST(published_at AS INTEGER) END <= ? ORDER BY id ASC LIMIT 500",
+				[now_ts]
+			)
+		} except e {
+			publish_err = e
+		}
+		if type(publish_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load scheduled publish queue", {})
+		}
+
+		published_ids := []
+		for row in publish_rows {
+			entry_id := to_int(dict_get_or(row, "id", 0))
+			if entry_id <= 0 {
+				continue
+			}
+			update_err := null
+			try {
+				db_execute(
+					db,
+					"UPDATE entries SET status = 'published', updated_at = ? WHERE id = ?",
+					[now_ts, entry_id]
+				)
+			} except e {
+				update_err = e
+			}
+			if type(update_err) != "null" {
+				return fail(cfg, 500, "scheduler_failed", "Failed to publish scheduled entry", {
+					"entry_id": entry_id
+				})
+			}
+			published_ids = push(published_ids, entry_id)
+		}
+
+		unpublish_rows := []
+		unpublish_err := null
+		try {
+			unpublish_rows = db_query(
+				db,
+				"SELECT id FROM entries WHERE status = 'published' AND unpublish_at IS NOT NULL AND CASE WHEN instr(CAST(unpublish_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', unpublish_at) AS INTEGER) * 1000 ELSE CAST(unpublish_at AS INTEGER) END <= ? ORDER BY id ASC LIMIT 500",
+				[now_ts]
+			)
+		} except e {
+			unpublish_err = e
+		}
+		if type(unpublish_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load scheduled unpublish queue", {})
+		}
+
+		unpublished_ids := []
+		for row in unpublish_rows {
+			entry_id := to_int(dict_get_or(row, "id", 0))
+			if entry_id <= 0 {
+				continue
+			}
+			update_err := null
+			try {
+				db_execute(
+					db,
+					"UPDATE entries SET status = 'archived', unpublish_at = NULL, updated_at = ? WHERE id = ?",
+					[now_ts, entry_id]
+				)
+			} except e {
+				update_err = e
+			}
+			if type(update_err) != "null" {
+				return fail(cfg, 500, "scheduler_failed", "Failed to unpublish scheduled entry", {
+					"entry_id": entry_id
+				})
+			}
+			unpublished_ids = push(unpublished_ids, entry_id)
+		}
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "entry.scheduler.run", 200, "entry_scheduler", "batch", {
+				"published_count": len(published_ids),
+				"unpublished_count": len(unpublished_ids)
+			})
+		} except e {
+			audit_err = e
+		}
+
+		return json_response(200, {"ok": true, "data": {
+			"processed_at": now_ts,
+			"published_count": len(published_ids),
+			"unpublished_count": len(unpublished_ids),
+			"published_ids": published_ids,
+			"unpublished_ids": unpublished_ids
+		}})
+	})
+
+	server = server.route("GET", "/v1/entry-locks/state", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		entry_id_text := ""
+		if type(query) == "dict" && has_key(query, "entry_id") == 1 {
+			entry_id_text = trim(to_string(query["entry_id"]))
+		}
+
+		entry_id := -1
+		entry_id_err := null
+		try {
+			entry_id = parse_int(entry_id_text)
+		} except e {
+			entry_id_err = e
+		}
+		if type(entry_id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_entry_id", "entry_id must be a positive integer", {})
+		}
+
+		now_ts := now()
+		cleanup_err := null
+		try {
+			db_execute(
+				db,
+				"DELETE FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END <= ?",
+				[entry_id, now_ts]
+			)
+		} except e {
+			cleanup_err = e
+		}
+		if type(cleanup_err) != "null" {
+			return fail(cfg, 500, "db_write_failed", "Failed to prune expired entry lock state", {})
+		}
+
+		rows := []
+		query_err := null
+		try {
+			rows = db_query(
+				db,
+				"SELECT entry_id, lock_token, locked_by, lock_note, locked_at, expires_at FROM entry_locks WHERE entry_id = ? LIMIT 1",
+				[entry_id]
+			)
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" || type(rows) == "error" {
+			return fail(cfg, 500, "db_query_failed", "Failed to resolve entry lock state", {})
+		}
+
+		lock_payload := null
+		if len(rows) > 0 {
+			raw_lock := rows[0]
+			lock_payload = {
+				"entry_id": entry_id,
+				"lock_token": to_string(raw_lock["lock_token"]),
+				"locked_by": to_string(raw_lock["locked_by"]),
+				"lock_note": to_string(raw_lock["lock_note"]),
+				"locked_at": to_string(raw_lock["locked_at"]),
+				"expires_at": to_string(raw_lock["expires_at"])
+			}
+		}
+
+		return ok(cfg, {
+			"entry_id": entry_id,
+			"locked": len(rows) > 0,
+			"lock": lock_payload
+		})
+	})
+
+	server = server.route("POST", "/v1/entry-locks/acquire", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		max_body_bytes := dict_get_or(cfg, "max_body_bytes", 1048576)
+		if len(body_text) > max_body_bytes {
+			return fail(cfg, 400, "invalid_body", "Request body exceeds max size", {})
+		}
+		headers := dict_get_or(req, "headers", {})
+		content_type := ""
+		if type(headers) == "dict" && has_key(headers, "Content-Type") == 1 {
+			content_type = to_lower(to_string(headers["Content-Type"]))
+		}
+		if content_type == "" && type(headers) == "dict" && has_key(headers, "content-type") == 1 {
+			content_type = to_lower(to_string(headers["content-type"]))
+		}
+		if content_type != "" && starts_with(content_type, "application/json") == false {
+			return fail(cfg, 400, "invalid_body", "Content-Type must be application/json", {})
+		}
+
+		body := null
+		body_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			body_err = e
+		}
+		if type(body_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		entry_id := -1
+		entry_id_err := null
+		try {
+			entry_id = parse_int(trim(to_string(dict_get_or(body, "entry_id", ""))))
+		} except e {
+			entry_id_err = e
+		}
+		if type(entry_id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_entry_id", "entry_id must be a positive integer", {})
+		}
+
+		lock_note := trim(to_string(dict_get_or(body, "note", "")))
+		if len(lock_note) > 512 {
+			return fail(cfg, 400, "invalid_note", "note must be 512 characters or fewer", {})
+		}
+
+		session_id := trim(to_string(dict_get_or(body, "session_id", "default")))
+		if session_id == "" {
+			session_id = "default"
+		}
+		if len(session_id) > 128 {
+			session_id = substring(session_id, 0, 128)
+		}
+		actor := "session:" + substring(sha256(session_id), 0, 12)
+		now_ts := now()
+
+		cleanup_err := null
+		try {
+			db_execute(
+				db,
+				"DELETE FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END <= ?",
+				[entry_id, now_ts]
+			)
+		} except e {
+			cleanup_err = e
+		}
+		if type(cleanup_err) != "null" {
+			return fail(cfg, 500, "db_write_failed", "Failed to prune expired entry lock", {})
+		}
+
+		rows := []
+		query_err := null
+		try {
+			rows = db_query(
+				db,
+				"SELECT entry_id, lock_token, locked_by, lock_note, locked_at, expires_at FROM entry_locks WHERE entry_id = ? LIMIT 1",
+				[entry_id]
+			)
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" || type(rows) == "error" {
+			return fail(cfg, 500, "db_query_failed", "Failed to resolve entry lock state", {})
+		}
+
+		has_lock := len(rows) > 0
+		active_lock := null
+		locked_by := ""
+		if has_lock {
+			raw_lock := rows[0]
+			locked_by = to_string(raw_lock["locked_by"])
+			active_lock = {
+				"entry_id": entry_id,
+				"lock_token": to_string(raw_lock["lock_token"]),
+				"locked_by": locked_by,
+				"lock_note": to_string(raw_lock["lock_note"]),
+				"locked_at": to_string(raw_lock["locked_at"]),
+				"expires_at": to_string(raw_lock["expires_at"])
+			}
+		}
+
+		if has_lock {
+			if locked_by != "" && locked_by != actor {
+				return fail(cfg, 409, "entry_locked", "Entry is currently locked by another actor", {
+					"entry_id": entry_id,
+					"lock": active_lock
+				})
+			}
+		}
+
+		lock_ttl_sec := to_int(dict_get_or(cfg, "entry_lock_ttl_sec", 900))
+		if lock_ttl_sec < 1 {
+			lock_ttl_sec = 900
+		}
+		lock_token := substring(sha256(to_string(entry_id) + ":" + actor + ":" + to_string(now_ts) + ":" + lock_note), 0, 32)
+		locked_at := to_string(now_ts)
+		expires_at := to_string(now_ts + (lock_ttl_sec * 1000))
+		updated_lock := {
+			"entry_id": entry_id,
+			"lock_token": lock_token,
+			"locked_by": actor,
+			"lock_note": lock_note,
+			"locked_at": locked_at,
+			"expires_at": expires_at
+		}
+
+		renewed := has_lock
+		exec_result := null
+		exec_err := null
+		if renewed {
+			try {
+				exec_result = db_execute(
+					db,
+					"UPDATE entry_locks SET lock_token = ?, locked_by = ?, lock_note = ?, locked_at = ?, expires_at = ? WHERE entry_id = ?",
+					[lock_token, actor, lock_note, locked_at, expires_at, entry_id]
+				)
+			} except e {
+				exec_err = e
+			}
+		} else {
+			try {
+				exec_result = db_execute(
+					db,
+					"INSERT INTO entry_locks (entry_id, lock_token, locked_by, lock_note, locked_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
+					[entry_id, lock_token, actor, lock_note, locked_at, expires_at]
+				)
+			} except e {
+				exec_err = e
+			}
+		}
+		if type(exec_err) != "null" || type(exec_result) == "error" {
+			return fail(cfg, 500, "db_write_failed", "Failed to persist entry lock", {})
+		}
+
+		if renewed {
+			return ok(cfg, {
+				"entry_id": entry_id,
+				"renewed": true,
+				"lock": updated_lock
+			})
+		}
+
+		return ok(cfg, {
+			"entry_id": entry_id,
+			"renewed": false,
+			"lock": updated_lock
+		})
+	})
+
+	server = server.route("POST", "/v1/entry-locks/release", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		max_body_bytes := dict_get_or(cfg, "max_body_bytes", 1048576)
+		if len(body_text) > max_body_bytes {
+			return fail(cfg, 400, "invalid_body", "Request body exceeds max size", {})
+		}
+		headers := dict_get_or(req, "headers", {})
+		content_type := ""
+		if type(headers) == "dict" && has_key(headers, "Content-Type") == 1 {
+			content_type = to_lower(to_string(headers["Content-Type"]))
+		}
+		if content_type == "" && type(headers) == "dict" && has_key(headers, "content-type") == 1 {
+			content_type = to_lower(to_string(headers["content-type"]))
+		}
+		if content_type != "" && starts_with(content_type, "application/json") == false {
+			return fail(cfg, 400, "invalid_body", "Content-Type must be application/json", {})
+		}
+
+		body := null
+		body_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			body_err = e
+		}
+		if type(body_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		entry_id := -1
+		entry_id_err := null
+		try {
+			entry_id = parse_int(trim(to_string(dict_get_or(body, "entry_id", ""))))
+		} except e {
+			entry_id_err = e
+		}
+		if type(entry_id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_entry_id", "entry_id must be a positive integer", {})
+		}
+
+		force_release := false
+		force_value := dict_get_or(body, "force", false)
+		if force_value == true || force_value == 1 || to_lower(trim(to_string(force_value))) == "true" {
+			force_release = true
+		}
+		requested_lock_token := trim(to_string(dict_get_or(body, "lock_token", "")))
+		if force_release == false {
+			query := dict_get_or(req, "query", {})
+			if type(query) == "dict" && has_key(query, "force") == 1 {
+				force_release = to_lower(trim(to_string(query["force"]))) == "true"
+			}
+		}
+		if force_release == false && requested_lock_token == "" {
+			return fail(cfg, 400, "invalid_lock_token", "lock_token is required to release a lock", {})
+		}
+
+		now_ts := now()
+		cleanup_err := null
+		try {
+			db_execute(
+				db,
+				"DELETE FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END <= ?",
+				[entry_id, now_ts]
+			)
+		} except e {
+			cleanup_err = e
+		}
+		if type(cleanup_err) != "null" {
+			return fail(cfg, 500, "db_write_failed", "Failed to prune expired entry lock", {})
+		}
+
+		rows := []
+		query_err := null
+		try {
+			rows = db_query(
+				db,
+				"SELECT entry_id, lock_token, locked_by, lock_note, locked_at, expires_at FROM entry_locks WHERE entry_id = ? LIMIT 1",
+				[entry_id]
+			)
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" || type(rows) == "error" {
+			return fail(cfg, 500, "db_query_failed", "Failed to resolve entry lock state", {})
+		}
+
+		has_lock := len(rows) > 0
+		active_lock := null
+		locked_by := ""
+		if has_lock {
+			raw_lock := rows[0]
+			locked_by = to_string(raw_lock["locked_by"])
+			active_lock = {
+				"entry_id": entry_id,
+				"lock_token": to_string(raw_lock["lock_token"]),
+				"locked_by": locked_by,
+				"lock_note": to_string(raw_lock["lock_note"]),
+				"locked_at": to_string(raw_lock["locked_at"]),
+				"expires_at": to_string(raw_lock["expires_at"])
+			}
+		}
+
+		if has_lock == false {
+			return ok(cfg, {
+				"entry_id": entry_id,
+				"released": false,
+				"lock": null
+			})
+		}
+
+		session_id := trim(to_string(dict_get_or(body, "session_id", "default")))
+		if session_id == "" {
+			session_id = "default"
+		}
+		if len(session_id) > 128 {
+			session_id = substring(session_id, 0, 128)
+		}
+		actor := "session:" + substring(sha256(session_id), 0, 12)
+		if force_release == false && locked_by != "" && locked_by != actor {
+			return fail(cfg, 409, "entry_locked", "Entry lock is owned by another actor", {
+				"entry_id": entry_id,
+				"lock": active_lock
+			})
+		}
+		if force_release == false {
+			active_lock_token := ""
+			if type(active_lock) == "dict" {
+				active_lock_token = to_string(dict_get_or(active_lock, "lock_token", ""))
+			}
+			if active_lock_token == "" || requested_lock_token != active_lock_token {
+				return fail(cfg, 409, "invalid_lock_token", "lock_token does not match active lock", {
+					"entry_id": entry_id,
+					"lock": active_lock
+				})
+			}
+		}
+
+		exec_result := null
+		exec_err := null
+		try {
+			exec_result = db_execute(db, "DELETE FROM entry_locks WHERE entry_id = ?", [entry_id])
+		} except e {
+			exec_err = e
+		}
+		if type(exec_err) != "null" || type(exec_result) == "error" {
+			return fail(cfg, 500, "db_write_failed", "Failed to release entry lock", {})
+		}
+
+		return ok(cfg, {
+			"entry_id": entry_id,
+			"released": true,
+			"forced": force_release,
+			"lock": active_lock
+		})
+	})
+
+	server = server.route("GET", "/v1/entries/:id/seo", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		entry_id := -1
+		id_err := null
+		try {
+			entry_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		rows := []
+		query_err := null
+		try {
+			rows = db_query(db, "SELECT id, content_type_key, slug, title, excerpt, published_at, updated_at, meta_json FROM entries WHERE id = ? LIMIT 1", [entry_id])
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entry SEO data", {})
+		}
+		if len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+
+		entry := rows[0]
+		site_url := trim(to_string(dict_get_or(cfg, "site_url", "http://127.0.0.1:4200")))
+		if ends_with(site_url, "/") {
+			site_url = substring(site_url, 0, len(site_url) - 1)
+		}
+		canonical_url := site_url + "/" + to_string(entry["content_type_key"]) + "/" + to_string(entry["slug"])
+
+		seo_title := trim(to_string(entry["title"]))
+		seo_description := trim(to_string(entry["excerpt"]))
+		og_image_url := ""
+		schema_type := "Article"
+
+		meta_text := trim(to_string(dict_get_or(entry, "meta_json", "")))
+		if meta_text != "" {
+			meta_err := null
+			meta_obj := null
+			try {
+				meta_obj = parse_json(meta_text)
+			} except e {
+				meta_err = e
+			}
+			if type(meta_err) == "null" && type(meta_obj) == "dict" && has_key(meta_obj, "seo") == 1 && type(meta_obj["seo"]) == "dict" {
+				seo_obj := meta_obj["seo"]
+				if trim(to_string(dict_get_or(seo_obj, "title", ""))) != "" {
+					seo_title = trim(to_string(seo_obj["title"]))
+				}
+				if trim(to_string(dict_get_or(seo_obj, "description", ""))) != "" {
+					seo_description = trim(to_string(seo_obj["description"]))
+				}
+				if trim(to_string(dict_get_or(seo_obj, "canonical_url", ""))) != "" {
+					canonical_url = trim(to_string(seo_obj["canonical_url"]))
+				}
+				if trim(to_string(dict_get_or(seo_obj, "og_image_url", ""))) != "" {
+					og_image_url = trim(to_string(seo_obj["og_image_url"]))
+				}
+				if trim(to_string(dict_get_or(seo_obj, "schema_type", ""))) != "" {
+					schema_type = trim(to_string(seo_obj["schema_type"]))
+				}
+			}
+		}
+
+		seo_data := {
+			"title": seo_title,
+			"description": seo_description,
+			"canonical_url": canonical_url,
+			"og_image_url": og_image_url,
+			"schema_type": schema_type
+		}
+
+		json_ld := {
+			"@context": "https://schema.org",
+			"@type": schema_type,
+			"headline": seo_title,
+			"description": seo_description,
+			"url": canonical_url,
+			"datePublished": dict_get_or(entry, "published_at", null),
+			"dateModified": dict_get_or(entry, "updated_at", null)
+		}
+		if og_image_url != "" {
+			json_ld["image"] = og_image_url
+		}
+
+		return json_response(200, {"ok": true, "data": {"entry_id": entry_id, "seo": seo_data, "json_ld": json_ld}})
+	})
+
+	server = server.route("GET", "/v1/entries/:id/revisions", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		entry_id := -1
+		id_err := null
+		try {
+			entry_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(
+				db,
+				"SELECT id, entry_id, title, slug, status, excerpt, body, meta_json, author_id, published_at, revision_note, created_at FROM entry_revisions WHERE entry_id = ? ORDER BY id DESC LIMIT ?",
+				[entry_id, limit]
+			)
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entry revisions", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {
+			"entry_id": entry_id,
+			"items": rows,
+			"count": len(rows),
+			"limit": limit
+		}})
+	})
+
+	server = server.route("POST", "/v1/entries/:id/revisions", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		entry_id := -1
+		id_err := null
+		try {
+			entry_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		revision_note := ""
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) != "" {
+			max_body_bytes := dict_get_or(cfg, "max_body_bytes", 1048576)
+			if len(body_text) > max_body_bytes {
+				return fail(cfg, 400, "invalid_body", "Request body exceeds max size", {})
+			}
+			headers := dict_get_or(req, "headers", {})
+			content_type := ""
+			if type(headers) == "dict" && has_key(headers, "Content-Type") == 1 {
+				content_type = to_lower(to_string(headers["Content-Type"]))
+			}
+			if content_type == "" && type(headers) == "dict" && has_key(headers, "content-type") == 1 {
+				content_type = to_lower(to_string(headers["content-type"]))
+			}
+			if content_type != "" && starts_with(content_type, "application/json") == false {
+				return fail(cfg, 400, "invalid_body", "Content-Type must be application/json", {})
+			}
+		}
+		if trim(body_text) != "" {
+			body := null
+			parse_err := null
+			try {
+				body = parse_json(body_text)
+			} except e {
+				parse_err = e
+			}
+			if type(parse_err) != "null" || type(body) != "dict" {
+				return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+			}
+			revision_note = trim(to_string(dict_get_or(body, "note", "")))
+		}
+
+		entry_rows := []
+		entry_err := null
+		try {
+			entry_rows = db_query(
+				db,
+				"SELECT id, title, slug, status, excerpt, body, meta_json, author_id, published_at FROM entries WHERE id = ? LIMIT 1",
+				[entry_id]
+			)
+		} except e {
+			entry_err = e
+		}
+		if type(entry_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entry for revision snapshot", {})
+		}
+		if len(entry_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+
+		entry_row := entry_rows[0]
+		insert_err := null
+		now_ts := now()
+		try {
+			db_execute(
+				db,
+				"INSERT INTO entry_revisions (entry_id, title, slug, status, excerpt, body, meta_json, author_id, published_at, revision_note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				[
+					entry_id,
+					to_string(dict_get_or(entry_row, "title", "")),
+					to_string(dict_get_or(entry_row, "slug", "")),
+					to_string(dict_get_or(entry_row, "status", "draft")),
+					to_string(dict_get_or(entry_row, "excerpt", "")),
+					to_string(dict_get_or(entry_row, "body", "")),
+					to_string(dict_get_or(entry_row, "meta_json", "{}")),
+					to_string(dict_get_or(entry_row, "author_id", "system")),
+					dict_get_or(entry_row, "published_at", null),
+					revision_note,
+					now_ts
+				]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 500, "create_failed", "Failed to create entry revision snapshot", {})
+		}
+
+		rev_rows := []
+		rev_err := null
+		try {
+			rev_rows = db_query(
+				db,
+				"SELECT id, entry_id, title, slug, status, excerpt, body, meta_json, author_id, published_at, revision_note, created_at FROM entry_revisions WHERE entry_id = ? ORDER BY id DESC LIMIT 1",
+				[entry_id]
+			)
+		} except e {
+			rev_err = e
+		}
+		if type(rev_err) != "null" || len(rev_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created revision but failed to load it", {})
+		}
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "entry.revision.create", 201, "entry_revision", dict_get_or(rev_rows[0], "id", 0), {
+				"entry_id": entry_id
+			})
+		} except e {
+			audit_err = e
+		}
+
+		return json_response(201, {"ok": true, "data": rev_rows[0]})
+	})
+
+	server = server.route("POST", "/v1/entries/:id/revisions/:revision_id/restore", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 || has_key(params, "revision_id") == 0 {
+			return fail(cfg, 400, "invalid_id", "id and revision_id route parameters are required", {})
+		}
+
+		entry_id := -1
+		revision_id := -1
+		id_err := null
+		revision_id_err := null
+		try {
+			entry_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		try {
+			revision_id = parse_int(to_string(params["revision_id"]))
+		} except e {
+			revision_id_err = e
+		}
+		if type(id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+		if type(revision_id_err) != "null" || revision_id <= 0 {
+			return fail(cfg, 400, "invalid_revision_id", "revision_id must be a positive integer", {})
+		}
+
+		lock_rows := []
+		lock_err := null
+		now_ts := now()
+		try {
+			lock_rows = db_query(
+				db,
+				"SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1",
+				[entry_id, now_ts]
+			)
+		} except e {
+			lock_err = e
+		}
+		if type(lock_err) != "null" || type(lock_rows) == "error" {
+			return fail(cfg, 500, "db_query_failed", "Failed to resolve entry lock state", {})
+		}
+		if len(lock_rows) > 0 {
+			return fail(cfg, 409, "entry_locked", "Entry is currently locked", {})
+		}
+
+		current_rows := []
+		current_err := null
+		try {
+			current_rows = db_query(
+				db,
+				"SELECT id, content_type_key, title, slug, status, excerpt, body, meta_json, author_id, published_at FROM entries WHERE id = ? LIMIT 1",
+				[entry_id]
+			)
+		} except e {
+			current_err = e
+		}
+		if type(current_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entry for rollback", {})
+		}
+		if len(current_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+		current_entry := current_rows[0]
+
+		revision_rows := []
+		revision_err := null
+		try {
+			revision_rows = db_query(
+				db,
+				"SELECT id, entry_id, title, slug, status, excerpt, body, meta_json, author_id, published_at FROM entry_revisions WHERE id = ? AND entry_id = ? LIMIT 1",
+				[revision_id, entry_id]
+			)
+		} except e {
+			revision_err = e
+		}
+		if type(revision_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load revision for rollback", {})
+		}
+		if len(revision_rows) == 0 {
+			return fail(cfg, 404, "revision_not_found", "Revision not found for entry", {})
+		}
+		revision_entry := revision_rows[0]
+
+		now_ts := now()
+		pre_restore_note := "pre_restore_backup_from_revision_" + to_string(revision_id)
+		backup_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO entry_revisions (entry_id, title, slug, status, excerpt, body, meta_json, author_id, published_at, revision_note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				[
+					entry_id,
+					to_string(dict_get_or(current_entry, "title", "")),
+					to_string(dict_get_or(current_entry, "slug", "")),
+					to_string(dict_get_or(current_entry, "status", "draft")),
+					to_string(dict_get_or(current_entry, "excerpt", "")),
+					to_string(dict_get_or(current_entry, "body", "")),
+					to_string(dict_get_or(current_entry, "meta_json", "{}")),
+					to_string(dict_get_or(current_entry, "author_id", "system")),
+					dict_get_or(current_entry, "published_at", null),
+					pre_restore_note,
+					now_ts
+				]
+			)
+		} except e {
+			backup_err = e
+		}
+		if type(backup_err) != "null" {
+			return fail(cfg, 500, "create_failed", "Failed to snapshot pre-restore state", {})
+		}
+
+		restore_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE entries SET title = ?, slug = ?, status = ?, excerpt = ?, body = ?, meta_json = ?, author_id = ?, published_at = ?, updated_at = ? WHERE id = ?",
+				[
+					to_string(dict_get_or(revision_entry, "title", "")),
+					to_string(dict_get_or(revision_entry, "slug", "")),
+					to_string(dict_get_or(revision_entry, "status", "draft")),
+					to_string(dict_get_or(revision_entry, "excerpt", "")),
+					to_string(dict_get_or(revision_entry, "body", "")),
+					to_string(dict_get_or(revision_entry, "meta_json", "{}")),
+					to_string(dict_get_or(revision_entry, "author_id", "system")),
+					dict_get_or(revision_entry, "published_at", null),
+					now_ts,
+					entry_id
+				]
+			)
+		} except e {
+			restore_err = e
+		}
+		if type(restore_err) != "null" {
+			return fail(cfg, 500, "restore_failed", "Failed to restore entry from revision", {})
+		}
+
+		restored_rows := []
+		restored_err := null
+		try {
+			restored_rows = db_query(db, "SELECT * FROM entries WHERE id = ? LIMIT 1", [entry_id])
+		} except e {
+			restored_err = e
+		}
+		if type(restored_err) != "null" || len(restored_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Entry restored but failed to reload it", {})
+		}
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "entry.revision.restore", 200, "entry", entry_id, {
+				"revision_id": revision_id
+			})
+		} except e {
+			audit_err = e
+		}
+
+		return json_response(200, {"ok": true, "data": {
+			"entry": restored_rows[0],
+			"restored_from_revision_id": revision_id
+		}})
+	})
+
+	server = server.route("GET", "/v1/entries/:id", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if type(params) != "dict" {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+		entry_id := -1
+		entry_id_err := null
+		try {
+			entry_id = parse_int(to_string(params["id"]))
+		} except e {
+			entry_id_err = e
+		}
+		if type(entry_id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		entry_rows := []
+		entry_err := null
+		try {
+			entry_rows = db_query(db, "SELECT * FROM entries WHERE id = ?", [entry_id])
+		} except e {
+			entry_err = e
+		}
+		if type(entry_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entry", {})
+		}
+		if len(entry_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+
+		term_rows := []
+		term_err := null
+		try {
+			term_rows = db_query(
+				db,
+				"SELECT t.id, t.name, t.slug FROM taxonomy_terms t INNER JOIN entry_terms et ON et.term_id = t.id WHERE et.entry_id = ? ORDER BY t.name ASC",
+				[entry_id]
+			)
+		} except e {
+			term_err = e
+		}
+		if type(term_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entry terms", {})
+		}
+
+		entry_payload := entry_rows[0]
+		entry_payload["terms"] := term_rows
+		return json_response(200, {"ok": true, "data": entry_payload})
+	})
+
+	server = server.route("GET", "/v1/entries/by-slug/:content_type/:slug", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		content_type_key := trim(to_string(dict_get_or(params, "content_type", "")))
+		slug := trim(to_string(dict_get_or(params, "slug", "")))
+		if content_type_key == "" || slug == "" {
+			return fail(cfg, 400, "invalid_slug_params", "content_type and slug are required", {})
+		}
+
+		rows := []
+		query_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM entries WHERE content_type_key = ? AND slug = ? LIMIT 1", [content_type_key, slug])
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to query entry by slug", {})
+		}
+		if len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+
+		return json_response(200, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("PUT", "/v1/entries/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if type(params) != "dict" || has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		entry_id := -1
+		entry_id_err := null
+		try {
+			entry_id = parse_int(to_string(params["id"]))
+		} except e {
+			entry_id_err = e
+		}
+		if type(entry_id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM entries WHERE id = ?", [entry_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entry", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+		existing := existing_rows[0]
+		existing_obj := null
+		existing_parse_err := null
+		try {
+			existing_obj = parse_json(to_json(existing))
+		} except e {
+			existing_parse_err = e
+		}
+		if type(existing_parse_err) != "null" || type(existing_obj) != "dict" {
+			return fail(cfg, 500, "load_failed", "Failed to normalize entry state for update", {})
+		}
+
+		lock_rows := []
+		lock_err := null
+		now_ts := now()
+		try {
+			lock_rows = db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, now_ts])
+		} except e {
+			lock_err = e
+		}
+		if type(lock_err) != "null" || type(lock_rows) == "error" {
+			return fail(cfg, 500, "db_query_failed", "Failed to resolve entry lock state", {})
+		}
+		if len(lock_rows) > 0 {
+			return fail(cfg, 409, "entry_locked", "Entry is currently locked", {})
+		}
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		max_body_bytes := dict_get_or(cfg, "max_body_bytes", 1048576)
+		if len(body_text) > max_body_bytes {
+			return fail(cfg, 400, "invalid_body", "Request body exceeds max size", {})
+		}
+		headers := dict_get_or(req, "headers", {})
+		content_type := ""
+		if type(headers) == "dict" && has_key(headers, "Content-Type") == 1 {
+			content_type = to_lower(to_string(headers["Content-Type"]))
+		}
+		if content_type == "" && type(headers) == "dict" && has_key(headers, "content-type") == 1 {
+			content_type = to_lower(to_string(headers["content-type"]))
+		}
+		if content_type != "" {
+			json_ok := starts_with(content_type, "application/json")
+			patch_ok := starts_with(content_type, "application/merge-patch+json")
+			if json_ok == false && patch_ok == false {
+				return fail(cfg, 400, "invalid_body", "Content-Type must be application/json", {})
+			}
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+		if has_key(body, "title") == 0 || has_key(body, "body") == 0 {
+			return fail(cfg, 400, "missing_fields", "PUT requires title and body", {})
+		}
+		title := trim(to_string(dict_get_or(body, "title", dict_get_or(existing_obj, "title", ""))))
+		body_value := trim(to_string(dict_get_or(body, "body", dict_get_or(existing_obj, "body", ""))))
+		excerpt := trim(to_string(dict_get_or(body, "excerpt", dict_get_or(existing_obj, "excerpt", ""))))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", dict_get_or(existing_obj, "status", "draft")))))
+		slug := trim(to_string(dict_get_or(body, "slug", dict_get_or(existing_obj, "slug", ""))))
+		meta_json := to_string(dict_get_or(existing_obj, "meta_json", "{}"))
+		if has_key(body, "meta") == 1 {
+			meta_json = ensure_json_text(body["meta"], {})
+		}
+		published_at := dict_get_or(body, "published_at", dict_get_or(existing_obj, "published_at", null))
+		unpublish_at := dict_get_or(body, "unpublish_at", dict_get_or(existing_obj, "unpublish_at", null))
+		if len(title) < 2 {
+			return fail(cfg, 400, "invalid_title", "title must be at least 2 characters", {})
+		}
+		if len(body_value) < 1 {
+			return fail(cfg, 400, "invalid_body", "body is required", {})
+		}
+		valid_status := status == "draft" || status == "published" || status == "scheduled" || status == "archived"
+		if valid_status == false {
+			return fail(cfg, 400, "invalid_status", "status must be draft, published, scheduled, or archived", {})
+		}
+		if slug == "" {
+			slug = to_lower(title)
+			slug = regex_replace(slug, "[^a-z0-9\\s\\-]", "")
+			slug = regex_replace(slug, "\\s+", "-")
+			slug = regex_replace(slug, "-{2,}", "-")
+			slug = trim(slug)
+			if starts_with(slug, "-") {
+				slug = substring(slug, 1, len(slug))
+			}
+			if ends_with(slug, "-") {
+				slug = substring(slug, 0, len(slug) - 1)
+			}
+		}
+		if len(slug) < 2 || len(slug) > 64 {
+			return fail(cfg, 400, "invalid_slug", "slug must be lowercase slug text", {})
+		}
+		normalized_slug := to_lower(slug)
+		normalized_slug = regex_replace(normalized_slug, "[^a-z0-9_\\-]", "")
+		normalized_slug = regex_replace(normalized_slug, "-{2,}", "-")
+		normalized_slug = regex_replace(normalized_slug, "_{2,}", "_")
+		normalized_slug = trim(normalized_slug)
+		if normalized_slug != slug || starts_with(slug, "-") || starts_with(slug, "_") {
+			return fail(cfg, 400, "invalid_slug", "slug must be lowercase slug text", {})
+		}
+
+		slug_rows := []
+		slug_err := null
+		try {
+			slug_rows = db_query(
+				db,
+				"SELECT id FROM entries WHERE content_type_key = ? AND slug = ? AND id != ? LIMIT 1",
+				[to_string(dict_get_or(existing_obj, "content_type_key", "")), slug, entry_id]
+			)
+		} except e {
+			slug_err = e
+		}
+		if type(slug_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate slug", {})
+		}
+		if len(slug_rows) > 0 {
+			return fail(cfg, 409, "duplicate_slug", "slug must be unique per content type", {})
+		}
+
+		if status == "published" && type(published_at) == "null" {
+			published_at = now()
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE entries SET title = ?, slug = ?, status = ?, excerpt = ?, body = ?, meta_json = ?, published_at = ?, unpublish_at = ?, updated_at = ? WHERE id = ?",
+				[title, slug, status, excerpt, body_value, meta_json, published_at, unpublish_at, now(), entry_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update entry", {})
+		}
+
+		updated_rows := []
+		updated_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM entries WHERE id = ?", [entry_id])
+		} except e {
+			updated_err = e
+		}
+		if type(updated_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated entry but failed to load it", {})
+		}
+		_ = write_audit(ctx, req, "entry.update", 200, "entry", entry_id, {
+			"status": status,
+			"slug": slug
+		})
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/entries/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if type(params) != "dict" || has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		entry_id := -1
+		entry_id_err := null
+		try {
+			entry_id = parse_int(to_string(params["id"]))
+		} except e {
+			entry_id_err = e
+		}
+		if type(entry_id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM entries WHERE id = ?", [entry_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entry", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+		existing := existing_rows[0]
+		existing_obj := null
+		existing_parse_err := null
+		try {
+			existing_obj = parse_json(to_json(existing))
+		} except e {
+			existing_parse_err = e
+		}
+		if type(existing_parse_err) != "null" || type(existing_obj) != "dict" {
+			return fail(cfg, 500, "load_failed", "Failed to normalize entry state for update", {})
+		}
+
+		lock_rows := []
+		lock_err := null
+		now_ts := now()
+		try {
+			lock_rows = db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, now_ts])
+		} except e {
+			lock_err = e
+		}
+		if type(lock_err) != "null" || type(lock_rows) == "error" {
+			return fail(cfg, 500, "db_query_failed", "Failed to resolve entry lock state", {})
+		}
+		if len(lock_rows) > 0 {
+			return fail(cfg, 409, "entry_locked", "Entry is currently locked", {})
+		}
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		max_body_bytes := dict_get_or(cfg, "max_body_bytes", 1048576)
+		if len(body_text) > max_body_bytes {
+			return fail(cfg, 400, "invalid_body", "Request body exceeds max size", {})
+		}
+		headers := dict_get_or(req, "headers", {})
+		content_type := ""
+		if type(headers) == "dict" && has_key(headers, "Content-Type") == 1 {
+			content_type = to_lower(to_string(headers["Content-Type"]))
+		}
+		if content_type == "" && type(headers) == "dict" && has_key(headers, "content-type") == 1 {
+			content_type = to_lower(to_string(headers["content-type"]))
+		}
+		if content_type != "" {
+			json_ok := starts_with(content_type, "application/json")
+			patch_ok := starts_with(content_type, "application/merge-patch+json")
+			if json_ok == false && patch_ok == false {
+				return fail(cfg, 400, "invalid_body", "Content-Type must be application/json", {})
+			}
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		has_change := has_key(body, "title") == 1 || has_key(body, "body") == 1 || has_key(body, "excerpt") == 1 || has_key(body, "status") == 1 || has_key(body, "slug") == 1 || has_key(body, "meta") == 1 || has_key(body, "published_at") == 1 || has_key(body, "unpublish_at") == 1
+		if has_change == false {
+			return fail(cfg, 400, "no_changes", "PATCH requires at least one mutable field", {})
+		}
+
+		title := trim(to_string(dict_get_or(body, "title", dict_get_or(existing_obj, "title", ""))))
+		body_value := trim(to_string(dict_get_or(body, "body", dict_get_or(existing_obj, "body", ""))))
+		excerpt := trim(to_string(dict_get_or(body, "excerpt", dict_get_or(existing_obj, "excerpt", ""))))
+		status := to_lower(trim(to_string(dict_get_or(body, "status", dict_get_or(existing_obj, "status", "draft")))))
+		slug := trim(to_string(dict_get_or(body, "slug", dict_get_or(existing_obj, "slug", ""))))
+		meta_json := to_string(dict_get_or(existing_obj, "meta_json", "{}"))
+		if has_key(body, "meta") == 1 {
+			meta_json = ensure_json_text(body["meta"], {})
+		}
+		published_at := dict_get_or(body, "published_at", dict_get_or(existing_obj, "published_at", null))
+		unpublish_at := dict_get_or(body, "unpublish_at", dict_get_or(existing_obj, "unpublish_at", null))
+
+		if len(title) < 2 {
+			return fail(cfg, 400, "invalid_title", "title must be at least 2 characters", {})
+		}
+		if len(body_value) < 1 {
+			return fail(cfg, 400, "invalid_body", "body is required", {})
+		}
+		valid_status := status == "draft" || status == "published" || status == "scheduled" || status == "archived"
+		if valid_status == false {
+			return fail(cfg, 400, "invalid_status", "status must be draft, published, scheduled, or archived", {})
+		}
+		if slug == "" {
+			slug = to_lower(title)
+			slug = regex_replace(slug, "[^a-z0-9\\s\\-]", "")
+			slug = regex_replace(slug, "\\s+", "-")
+			slug = regex_replace(slug, "-{2,}", "-")
+			slug = trim(slug)
+			if starts_with(slug, "-") {
+				slug = substring(slug, 1, len(slug))
+			}
+			if ends_with(slug, "-") {
+				slug = substring(slug, 0, len(slug) - 1)
+			}
+		}
+		if len(slug) < 2 || len(slug) > 64 {
+			return fail(cfg, 400, "invalid_slug", "slug must be lowercase slug text", {})
+		}
+		normalized_slug := to_lower(slug)
+		normalized_slug = regex_replace(normalized_slug, "[^a-z0-9_\\-]", "")
+		normalized_slug = regex_replace(normalized_slug, "-{2,}", "-")
+		normalized_slug = regex_replace(normalized_slug, "_{2,}", "_")
+		normalized_slug = trim(normalized_slug)
+		if normalized_slug != slug || starts_with(slug, "-") || starts_with(slug, "_") {
+			return fail(cfg, 400, "invalid_slug", "slug must be lowercase slug text", {})
+		}
+
+		slug_rows := []
+		slug_err := null
+		try {
+			slug_rows = db_query(
+				db,
+				"SELECT id FROM entries WHERE content_type_key = ? AND slug = ? AND id != ? LIMIT 1",
+				[to_string(dict_get_or(existing_obj, "content_type_key", "")), slug, entry_id]
+			)
+		} except e {
+			slug_err = e
+		}
+		if type(slug_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate slug", {})
+		}
+		if len(slug_rows) > 0 {
+			return fail(cfg, 409, "duplicate_slug", "slug must be unique per content type", {})
+		}
+
+		if status == "published" && type(published_at) == "null" {
+			published_at = now()
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE entries SET title = ?, slug = ?, status = ?, excerpt = ?, body = ?, meta_json = ?, published_at = ?, unpublish_at = ?, updated_at = ? WHERE id = ?",
+				[title, slug, status, excerpt, body_value, meta_json, published_at, unpublish_at, now(), entry_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update entry", {})
+		}
+
+		updated_rows := []
+		updated_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM entries WHERE id = ?", [entry_id])
+		} except e {
+			updated_err = e
+		}
+		if type(updated_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated entry but failed to load it", {})
+		}
+		_ = write_audit(ctx, req, "entry.patch", 200, "entry", entry_id, {
+			"status": status,
+			"slug": slug
+		})
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("DELETE", "/v1/entries/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if type(params) != "dict" || has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		entry_id := -1
+		entry_id_err := null
+		try {
+			entry_id = parse_int(to_string(params["id"]))
+		} except e {
+			entry_id_err = e
+		}
+		if type(entry_id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		lock_rows := []
+		lock_err := null
+		now_ts := now()
+		try {
+			lock_rows = db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, now_ts])
+		} except e {
+			lock_err = e
+		}
+		if type(lock_err) != "null" || type(lock_rows) == "error" {
+			return fail(cfg, 500, "db_query_failed", "Failed to resolve entry lock state", {})
+		}
+		if len(lock_rows) > 0 {
+			return fail(cfg, 409, "entry_locked", "Entry is currently locked", {})
+		}
+
+		delete_err := null
+		try {
+			db_execute(db, "DELETE FROM entries WHERE id = ?", [entry_id])
+		} except e {
+			delete_err = e
+		}
+		if type(delete_err) != "null" {
+			return fail(cfg, 500, "delete_failed", "Failed to delete entry", {})
+		}
+		audit_err := null
+		try {
+			_ = write_audit(ctx, req, "entry.delete", 200, "entry", entry_id, {
+				"deleted": true
+			})
+		} except e {
+			audit_err = e
+		}
+		return json_response(200, {"ok": true, "data": {"deleted": true, "id": entry_id}})
+	})
+
+	server = server.route("POST", "/v1/entries/:id/terms", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		entry_id := -1
+		id_err := null
+		try {
+			entry_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || entry_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		entry_rows := []
+		entry_err := null
+		try {
+			entry_rows = db_query(db, "SELECT id FROM entries WHERE id = ?", [entry_id])
+		} except e {
+			entry_err = e
+		}
+		if type(entry_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load entry", {})
+		}
+		if len(entry_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		max_body_bytes := dict_get_or(cfg, "max_body_bytes", 1048576)
+		if len(body_text) > max_body_bytes {
+			return fail(cfg, 400, "invalid_body", "Request body exceeds max size", {})
+		}
+		headers := dict_get_or(req, "headers", {})
+		content_type := ""
+		if type(headers) == "dict" && has_key(headers, "Content-Type") == 1 {
+			content_type = to_lower(to_string(headers["Content-Type"]))
+		}
+		if content_type == "" && type(headers) == "dict" && has_key(headers, "content-type") == 1 {
+			content_type = to_lower(to_string(headers["content-type"]))
+		}
+		if content_type != "" && starts_with(content_type, "application/json") == false {
+			return fail(cfg, 400, "invalid_body", "Content-Type must be application/json", {})
+		}
+		parse_err := null
+		body := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+		if has_key(body, "term_ids") == 0 || type(body["term_ids"]) != "array" {
+			return fail(cfg, 400, "invalid_term_ids", "term_ids must be an array", {})
+		}
+
+		term_ids := body["term_ids"]
+		valid_ids := []
+		invalid_ids := []
+		for term_id_raw in term_ids {
+			term_id := to_int(term_id_raw)
+			if term_id <= 0 {
+				invalid_ids = push(invalid_ids, term_id)
+				continue
+			}
+			term_rows := []
+			term_err := null
+			try {
+				term_rows = db_query(db, "SELECT id FROM taxonomy_terms WHERE id = ?", [term_id])
+			} except e {
+				term_err = e
+			}
+			if type(term_err) != "null" || len(term_rows) == 0 {
+				invalid_ids = push(invalid_ids, term_id)
+				continue
+			}
+			valid_ids = push(valid_ids, term_id)
+		}
+
+		if len(invalid_ids) > 0 {
+			return fail(cfg, 400, "invalid_term_ids", "One or more term IDs are invalid", {
+				"invalid_term_ids": invalid_ids
+			})
+		}
+
+		delete_err := null
+		try {
+			db_execute(db, "DELETE FROM entry_terms WHERE entry_id = ?", [entry_id])
+		} except e {
+			delete_err = e
+		}
+		if type(delete_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update entry terms", {})
+		}
+
+		for term_id in valid_ids {
+			insert_err := null
+			try {
+				db_execute(
+					db,
+					"INSERT OR IGNORE INTO entry_terms (entry_id, term_id, created_at) VALUES (?, ?, ?)",
+					[entry_id, term_id, now()]
+				)
+			} except e {
+				insert_err = e
+			}
+			if type(insert_err) != "null" {
+				return fail(cfg, 500, "update_failed", "Failed to assign one or more terms", {})
+			}
+		}
+
+		assigned := []
+		assigned_err := null
+		try {
+			assigned = db_query(
+				db,
+				"SELECT t.id, t.name, t.slug FROM taxonomy_terms t INNER JOIN entry_terms et ON et.term_id = t.id WHERE et.entry_id = ? ORDER BY t.name ASC",
+				[entry_id]
+			)
+		} except e {
+			assigned_err = e
+		}
+		if type(assigned_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load assigned terms", {})
+		}
+		terms_audit_err := null
+		try {
+			_ = write_audit(ctx, req, "entry.terms.update", 200, "entry", entry_id, {
+				"term_count": len(assigned)
+			})
+		} except e {
+			terms_audit_err = e
+		}
+
+		return json_response(200, {"ok": true, "data": {"entry_id": entry_id, "terms": assigned}})
+	})
+
+	return server
+}

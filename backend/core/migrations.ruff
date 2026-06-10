@@ -1,0 +1,253 @@
+export TARGET_SCHEMA_VERSION := 6
+
+func db_query_safe(sql_db, sql_text, sql_params) {
+	rows := db_query(sql_db, sql_text, sql_params)
+	if type(rows) == "error" {
+		return {"ok": false, "error": to_string(rows), "rows": []}
+	}
+	return {"ok": true, "rows": rows}
+}
+
+func db_execute_safe(sql_db, sql_text, sql_params) {
+	result := db_execute(sql_db, sql_text, sql_params)
+	if type(result) == "error" {
+		return {"ok": false, "error": to_string(result)}
+	}
+	return {"ok": true, "result": result}
+}
+
+func ensure_schema_version_table(db) {
+	create_result := db_execute_safe(
+		db,
+		"CREATE TABLE IF NOT EXISTS schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL, updated_at TEXT NOT NULL)",
+		[]
+	)
+	if create_result["ok"] == false {
+		return create_result
+	}
+
+	seed_result := db_execute_safe(
+		db,
+		"INSERT OR IGNORE INTO schema_version (id, version, updated_at) VALUES (1, 0, ?)",
+		[now()]
+	)
+	if seed_result["ok"] == false {
+		return seed_result
+	}
+
+	return {"ok": true}
+}
+
+export get_schema_version := func(db) {
+	table_result := ensure_schema_version_table(db)
+	if table_result["ok"] == false {
+		return table_result
+	}
+
+	version_result := db_query_safe(db, "SELECT version FROM schema_version WHERE id = 1", [])
+	if version_result["ok"] == false {
+		return version_result
+	}
+
+	version := 0
+	if len(version_result["rows"]) > 0 {
+		version := version_result["rows"][0]["version"]
+	}
+
+	return {"ok": true, "version": version}
+}
+
+export set_schema_version := func(db, version_value) {
+	return db_execute_safe(
+		db,
+		"UPDATE schema_version SET version = ?, updated_at = ? WHERE id = 1",
+		[version_value, now()]
+	)
+}
+
+export run_post_bootstrap_migrations := func(db) {
+	current_result := get_schema_version(db)
+	if current_result["ok"] == false {
+		return current_result
+	}
+
+	current_version := current_result["version"]
+	applied := []
+
+	if current_version < 1 {
+		# Baseline migration marker for initial schema bootstrap.
+		mark_v1 := set_schema_version(db, 1)
+		if mark_v1["ok"] == false {
+			return mark_v1
+		}
+		current_version := 1
+		applied = push(applied, "v1_baseline")
+	}
+
+	if current_version < 2 {
+		# Authentication/authorization indexes and metadata for role-token model.
+		idx_a := db_execute_safe(db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash)", [])
+		if idx_a["ok"] == false {
+			return idx_a
+		}
+		idx_b := db_execute_safe(db, "CREATE INDEX IF NOT EXISTS idx_api_tokens_role ON api_tokens(role_key)", [])
+		if idx_b["ok"] == false {
+			return idx_b
+		}
+		idx_c := db_execute_safe(db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_roles_role_key ON roles(role_key)", [])
+		if idx_c["ok"] == false {
+			return idx_c
+		}
+
+		mark_v2 := set_schema_version(db, 2)
+		if mark_v2["ok"] == false {
+			return mark_v2
+		}
+		current_version := 2
+		applied = push(applied, "v2_auth_roles")
+	}
+
+	if current_version < 3 {
+		rev_table := db_execute_safe(
+			db,
+			"CREATE TABLE IF NOT EXISTS entry_revisions (id INTEGER PRIMARY KEY AUTOINCREMENT, entry_id INTEGER NOT NULL, title TEXT NOT NULL, slug TEXT NOT NULL, status TEXT NOT NULL, excerpt TEXT NOT NULL, body TEXT NOT NULL, meta_json TEXT NOT NULL, author_id TEXT NOT NULL, published_at TEXT, revision_note TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(entry_id) REFERENCES entries(id) ON DELETE CASCADE)",
+			[]
+		)
+		if rev_table["ok"] == false {
+			return rev_table
+		}
+
+		rev_index := db_execute_safe(
+			db,
+			"CREATE INDEX IF NOT EXISTS idx_entry_revisions_entry_created ON entry_revisions(entry_id, created_at DESC)",
+			[]
+		)
+		if rev_index["ok"] == false {
+			return rev_index
+		}
+
+		mark_v3 := set_schema_version(db, 3)
+		if mark_v3["ok"] == false {
+			return mark_v3
+		}
+		current_version := 3
+		applied = push(applied, "v3_entry_revisions")
+	}
+
+	if current_version < 4 {
+		columns_result := db_query_safe(db, "PRAGMA table_info(entries)", [])
+		if columns_result["ok"] == false {
+			return columns_result
+		}
+
+		has_unpublish_at := false
+		for column_row in columns_result["rows"] {
+			column_name := to_string(column_row["name"])
+			if column_name == "unpublish_at" {
+				has_unpublish_at = true
+			}
+		}
+
+		if has_unpublish_at == false {
+			add_column := db_execute_safe(db, "ALTER TABLE entries ADD COLUMN unpublish_at TEXT", [])
+			if add_column["ok"] == false {
+				return add_column
+			}
+		}
+
+		mark_v4 := set_schema_version(db, 4)
+		if mark_v4["ok"] == false {
+			return mark_v4
+		}
+		current_version = 4
+		applied = push(applied, "v4_entry_unpublish_column")
+	}
+
+	if current_version < 5 {
+		lock_table := db_execute_safe(
+			db,
+			"CREATE TABLE IF NOT EXISTS entry_locks (entry_id INTEGER PRIMARY KEY, lock_token TEXT NOT NULL, locked_by TEXT NOT NULL, lock_note TEXT NOT NULL, locked_at TEXT NOT NULL, expires_at TEXT NOT NULL, FOREIGN KEY(entry_id) REFERENCES entries(id) ON DELETE CASCADE)",
+			[]
+		)
+		if lock_table["ok"] == false {
+			return lock_table
+		}
+
+		lock_index := db_execute_safe(
+			db,
+			"CREATE INDEX IF NOT EXISTS idx_entry_locks_expires_at ON entry_locks(expires_at)",
+			[]
+		)
+		if lock_index["ok"] == false {
+			return lock_index
+		}
+
+		mark_v5 := set_schema_version(db, 5)
+		if mark_v5["ok"] == false {
+			return mark_v5
+		}
+		current_version = 5
+		applied = push(applied, "v5_entry_locks")
+	}
+
+	if current_version < 6 {
+		jobs_table := db_execute_safe(
+			db,
+			"CREATE TABLE IF NOT EXISTS background_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, job_type TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 5, run_after TEXT NOT NULL, last_error TEXT, result_json TEXT, started_at TEXT, completed_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+			[]
+		)
+		if jobs_table["ok"] == false {
+			return jobs_table
+		}
+
+		jobs_idx_a := db_execute_safe(
+			db,
+			"CREATE INDEX IF NOT EXISTS idx_background_jobs_status_run_after ON background_jobs(status, run_after)",
+			[]
+		)
+		if jobs_idx_a["ok"] == false {
+			return jobs_idx_a
+		}
+
+		jobs_idx_b := db_execute_safe(
+			db,
+			"CREATE INDEX IF NOT EXISTS idx_background_jobs_job_type_status ON background_jobs(job_type, status)",
+			[]
+		)
+		if jobs_idx_b["ok"] == false {
+			return jobs_idx_b
+		}
+
+		jobs_dead_table := db_execute_safe(
+			db,
+			"CREATE TABLE IF NOT EXISTS background_job_dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER NOT NULL, job_type TEXT NOT NULL, payload_json TEXT NOT NULL, attempt_count INTEGER NOT NULL, max_attempts INTEGER NOT NULL, last_error TEXT, failed_at TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(job_id) REFERENCES background_jobs(id) ON DELETE CASCADE)",
+			[]
+		)
+		if jobs_dead_table["ok"] == false {
+			return jobs_dead_table
+		}
+
+		jobs_dead_idx := db_execute_safe(
+			db,
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_background_job_dead_letters_job_id ON background_job_dead_letters(job_id)",
+			[]
+		)
+		if jobs_dead_idx["ok"] == false {
+			return jobs_dead_idx
+		}
+
+		mark_v6 := set_schema_version(db, 6)
+		if mark_v6["ok"] == false {
+			return mark_v6
+		}
+		current_version = 6
+		applied = push(applied, "v6_background_jobs")
+	}
+
+	return {
+		"ok": true,
+		"version": current_version,
+		"target_version": TARGET_SCHEMA_VERSION,
+		"applied": applied
+	}
+}

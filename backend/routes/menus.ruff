@@ -1,0 +1,673 @@
+from backend.core.utils import dict_get_or
+from backend.core.http import fail, guard_request
+
+export register_menu_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/menus", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		limit := 50
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
+		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		sort_field := "id"
+		if sort_by == "menu_key" {
+			sort_field = "menu_key"
+		} else if sort_by == "name" {
+			sort_field = "name"
+		} else if sort_by == "location" {
+			sort_field = "location"
+		} else if sort_by == "created_at" {
+			sort_field = "created_at"
+		} else if sort_by == "updated_at" {
+			sort_field = "updated_at"
+		}
+		sort_dir_sql := "ASC"
+		if sort_dir == "desc" {
+			sort_dir_sql = "DESC"
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT * FROM menus ORDER BY " + sort_field + " " + sort_dir_sql + " LIMIT ? OFFSET ?", [limit, offset])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load menus", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM menus", [])
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count menus", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = count_rows[0]["total"]
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "total": total, "limit": limit, "offset": offset, "sort_by": sort_field, "sort_dir": to_lower(sort_dir_sql)}})
+	})
+
+	server = server.route("POST", "/v1/menus", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		menu_key := trim(to_string(dict_get_or(body, "menu_key", "")))
+		name := trim(to_string(dict_get_or(body, "name", "")))
+		location := trim(to_string(dict_get_or(body, "location", "")))
+		invalid_chars := regex_replace(menu_key, "[a-z0-9_\\-]", "")
+		if len(menu_key) < 2 || len(menu_key) > 64 || menu_key != to_lower(menu_key) || invalid_chars != "" {
+			return fail(cfg, 400, "invalid_menu_key", "menu_key must be lowercase slug text", {})
+		}
+		if len(name) < 2 {
+			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
+		}
+		if len(location) < 2 {
+			return fail(cfg, 400, "invalid_location", "location must be at least 2 characters", {})
+		}
+
+		insert_err := null
+		try {
+			db_execute(db, "INSERT INTO menus (menu_key, name, location, created_at, updated_at) VALUES (?, ?, ?, ?, ?)", [menu_key, name, location, now(), now()])
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create menu (possibly duplicate menu_key)", {})
+		}
+
+		menu_id := db_last_insert_id(db)
+		rows := []
+		load_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM menus WHERE id = ?", [menu_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created menu but failed to load it", {})
+		}
+
+		return json_response(201, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/menus/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_menu_id", "Missing required route parameter: id", {})
+		}
+		menu_id := -1
+		id_err := null
+		try {
+			menu_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || menu_id <= 0 {
+			return fail(cfg, 400, "invalid_menu_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM menus WHERE id = ?", [menu_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load menu", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Menu not found", {})
+		}
+		existing := existing_rows[0]
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		name := trim(to_string(dict_get_or(body, "name", existing["name"])))
+		location := trim(to_string(dict_get_or(body, "location", existing["location"])))
+		if len(name) < 2 || len(location) < 2 {
+			return fail(cfg, 400, "invalid_menu", "name and location must be at least 2 characters", {})
+		}
+
+		update_err := null
+		try {
+			db_execute(db, "UPDATE menus SET name = ?, location = ?, updated_at = ? WHERE id = ?", [name, location, now(), menu_id])
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update menu", {})
+		}
+
+		updated_rows := []
+		load_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM menus WHERE id = ?", [menu_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated menu but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("DELETE", "/v1/menus/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_menu_id", "Missing required route parameter: id", {})
+		}
+		menu_id := -1
+		id_err := null
+		try {
+			menu_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || menu_id <= 0 {
+			return fail(cfg, 400, "invalid_menu_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT id FROM menus WHERE id = ? LIMIT 1", [menu_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load menu", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Menu not found", {})
+		}
+
+		delete_err := null
+		try {
+			db_execute(db, "DELETE FROM menus WHERE id = ?", [menu_id])
+		} except e {
+			delete_err = e
+		}
+		if type(delete_err) != "null" {
+			return fail(cfg, 500, "delete_failed", "Failed to delete menu", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"deleted": true, "id": menu_id}})
+	})
+
+	server = server.route("GET", "/v1/menus/:id/items", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_menu_id", "Missing required route parameter: id", {})
+		}
+		menu_id := -1
+		id_err := null
+		try {
+			menu_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || menu_id <= 0 {
+			return fail(cfg, 400, "invalid_menu_id", "id must be a positive integer", {})
+		}
+
+		menu_rows := []
+		menu_err := null
+		try {
+			menu_rows = db_query(db, "SELECT id FROM menus WHERE id = ? LIMIT 1", [menu_id])
+		} except e {
+			menu_err = e
+		}
+		if type(menu_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate menu", {})
+		}
+		if len(menu_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Menu not found", {})
+		}
+
+		query := dict_get_or(req, "query", {})
+		limit := 100
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 500 {
+			limit = 500
+		}
+		if offset < 0 {
+			offset = 0
+		}
+
+		rows := []
+		rows_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM menu_items WHERE menu_id = ? ORDER BY position ASC, id ASC LIMIT ? OFFSET ?", [menu_id, limit, offset])
+		} except e {
+			rows_err = e
+		}
+		if type(rows_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load menu items", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM menu_items WHERE menu_id = ?", [menu_id])
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count menu items", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = count_rows[0]["total"]
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "total": total, "limit": limit, "offset": offset}})
+	})
+
+	server = server.route("POST", "/v1/menus/:id/items", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_menu_id", "Missing required route parameter: id", {})
+		}
+		menu_id := -1
+		id_err := null
+		try {
+			menu_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || menu_id <= 0 {
+			return fail(cfg, 400, "invalid_menu_id", "id must be a positive integer", {})
+		}
+
+		menu_rows := []
+		menu_err := null
+		try {
+			menu_rows = db_query(db, "SELECT id FROM menus WHERE id = ? LIMIT 1", [menu_id])
+		} except e {
+			menu_err = e
+		}
+		if type(menu_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate menu", {})
+		}
+		if len(menu_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Menu not found", {})
+		}
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		label := trim(to_string(dict_get_or(body, "label", "")))
+		url := trim(to_string(dict_get_or(body, "url", "")))
+		parent_id := dict_get_or(body, "parent_id", null)
+		position := dict_get_or(body, "position", 0)
+		target := trim(to_string(dict_get_or(body, "target", "_self")))
+		meta_json := "{}"
+		if has_key(body, "meta") == 1 {
+			meta_value := body["meta"]
+			if type(meta_value) == "array" || type(meta_value) == "dict" {
+				meta_json = to_json(meta_value)
+			} else if type(meta_value) == "string" {
+				meta_json = to_string(meta_value)
+			}
+		}
+
+		if len(label) < 1 || len(url) < 1 {
+			return fail(cfg, 400, "invalid_menu_item", "label and url are required", {})
+		}
+		pos_value := to_int(to_string(position))
+		if pos_value < 0 {
+			return fail(cfg, 400, "invalid_position", "position must be >= 0", {})
+		}
+
+		parent_value := null
+		if type(parent_id) != "null" && to_string(parent_id) != "" && to_string(parent_id) != "0" {
+			parent_value = -1
+			parent_err := null
+			try {
+				parent_value = parse_int(trim(to_string(parent_id)))
+			} except e {
+				parent_err = e
+			}
+			if type(parent_err) != "null" || parent_value <= 0 {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id must be a positive integer or null", {})
+			}
+			parent_rows := []
+			parent_lookup_err := null
+			try {
+				parent_rows = db_query(db, "SELECT id FROM menu_items WHERE id = ? AND menu_id = ? LIMIT 1", [parent_value, menu_id])
+			} except e {
+				parent_lookup_err = e
+			}
+			if type(parent_lookup_err) != "null" {
+				return fail(cfg, 500, "db_query_failed", "Failed to validate parent_id", {})
+			}
+			if len(parent_rows) == 0 {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id must reference an item in the same menu", {})
+			}
+		}
+
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO menu_items (menu_id, label, url, parent_id, position, target, meta_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+				[menu_id, label, url, parent_value, pos_value, target, meta_json, now(), now()]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 500, "create_failed", "Failed to create menu item", {})
+		}
+
+		item_id := db_last_insert_id(db)
+		rows := []
+		load_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM menu_items WHERE id = ?", [item_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created menu item but failed to load it", {})
+		}
+
+		return json_response(201, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/menu-items/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_item_id", "Missing required route parameter: id", {})
+		}
+		item_id := -1
+		id_err := null
+		try {
+			item_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || item_id <= 0 {
+			return fail(cfg, 400, "invalid_item_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM menu_items WHERE id = ?", [item_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load menu item", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Menu item not found", {})
+		}
+		existing := existing_rows[0]
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		label := trim(to_string(dict_get_or(body, "label", existing["label"])))
+		url := trim(to_string(dict_get_or(body, "url", existing["url"])))
+		parent_id := dict_get_or(body, "parent_id", existing["parent_id"])
+		position := dict_get_or(body, "position", existing["position"])
+		target := trim(to_string(dict_get_or(body, "target", existing["target"])))
+		meta_json := to_string(dict_get_or(existing, "meta_json", "{}"))
+		if has_key(body, "meta") == 1 {
+			meta_value := body["meta"]
+			if type(meta_value) == "array" || type(meta_value) == "dict" {
+				meta_json = to_json(meta_value)
+			} else if type(meta_value) == "string" {
+				meta_json = to_string(meta_value)
+			}
+		}
+
+		menu_id := existing["menu_id"]
+		pos_value := to_int(to_string(position))
+		if pos_value < 0 {
+			return fail(cfg, 400, "invalid_position", "position must be >= 0", {})
+		}
+
+		parent_value := null
+		if type(parent_id) != "null" && to_string(parent_id) != "" && to_string(parent_id) != "0" {
+			parent_value = -1
+			parent_err := null
+			try {
+				parent_value = parse_int(trim(to_string(parent_id)))
+			} except e {
+				parent_err = e
+			}
+			if type(parent_err) != "null" || parent_value <= 0 {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id must be a positive integer or null", {})
+			}
+			if parent_value == item_id {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id cannot reference the same menu item", {})
+			}
+			parent_rows := []
+			parent_lookup_err := null
+			try {
+				parent_rows = db_query(db, "SELECT id FROM menu_items WHERE id = ? AND menu_id = ? LIMIT 1", [parent_value, menu_id])
+			} except e {
+				parent_lookup_err = e
+			}
+			if type(parent_lookup_err) != "null" {
+				return fail(cfg, 500, "db_query_failed", "Failed to validate parent_id", {})
+			}
+			if len(parent_rows) == 0 {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id must reference an item in the same menu", {})
+			}
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE menu_items SET label = ?, url = ?, parent_id = ?, position = ?, target = ?, meta_json = ?, updated_at = ? WHERE id = ?",
+				[label, url, parent_value, pos_value, target, meta_json, now(), item_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update menu item", {})
+		}
+
+		updated_rows := []
+		load_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM menu_items WHERE id = ?", [item_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated menu item but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("DELETE", "/v1/menu-items/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_item_id", "Missing required route parameter: id", {})
+		}
+		item_id := -1
+		id_err := null
+		try {
+			item_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || item_id <= 0 {
+			return fail(cfg, 400, "invalid_item_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT id FROM menu_items WHERE id = ? LIMIT 1", [item_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load menu item", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Menu item not found", {})
+		}
+
+		delete_err := null
+		try {
+			db_execute(db, "DELETE FROM menu_items WHERE id = ?", [item_id])
+		} except e {
+			delete_err = e
+		}
+		if type(delete_err) != "null" {
+			return fail(cfg, 500, "delete_failed", "Failed to delete menu item", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"deleted": true, "id": item_id}})
+	})
+
+	return server
+}

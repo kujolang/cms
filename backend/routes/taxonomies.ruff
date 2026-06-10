@@ -1,0 +1,756 @@
+from backend.core.utils import dict_get_or
+from backend.core.http import fail, guard_request
+
+export register_taxonomy_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/taxonomies", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		limit := 100
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
+		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		sort_field := "id"
+		if sort_by == "taxonomy_key" {
+			sort_field = "taxonomy_key"
+		} else if sort_by == "label" {
+			sort_field = "label"
+		} else if sort_by == "hierarchical" {
+			sort_field = "hierarchical"
+		} else if sort_by == "created_at" {
+			sort_field = "created_at"
+		} else if sort_by == "updated_at" {
+			sort_field = "updated_at"
+		}
+		sort_dir_sql := "ASC"
+		if sort_dir == "desc" {
+			sort_dir_sql = "DESC"
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT * FROM taxonomies ORDER BY " + sort_field + " " + sort_dir_sql + " LIMIT ? OFFSET ?", [limit, offset])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load taxonomies", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM taxonomies", [])
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count taxonomies", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = count_rows[0]["total"]
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "total": total, "limit": limit, "offset": offset, "sort_by": sort_field, "sort_dir": to_lower(sort_dir_sql)}})
+	})
+
+	server = server.route("POST", "/v1/taxonomies", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		parse_err := null
+		body := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		taxonomy_key := trim(to_string(dict_get_or(body, "taxonomy_key", "")))
+		label := trim(to_string(dict_get_or(body, "label", "")))
+		description := trim(to_string(dict_get_or(body, "description", "")))
+		hierarchical := false
+		if has_key(body, "hierarchical") == 1 {
+			hierarchical = to_bool(body["hierarchical"])
+		}
+
+		invalid_chars := regex_replace(taxonomy_key, "[a-z0-9_\\-]", "")
+		if len(taxonomy_key) < 2 || len(taxonomy_key) > 64 || taxonomy_key != to_lower(taxonomy_key) || invalid_chars != "" {
+			return fail(cfg, 400, "invalid_taxonomy_key", "taxonomy_key must be lowercase slug text", {})
+		}
+		if len(label) < 2 {
+			return fail(cfg, 400, "invalid_label", "label must be at least 2 characters", {})
+		}
+
+		now_ts := now()
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO taxonomies (taxonomy_key, label, description, hierarchical, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				[taxonomy_key, label, description, to_int(hierarchical), 0, now_ts, now_ts]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create taxonomy (possibly duplicate taxonomy_key)", {})
+		}
+
+		query_err := null
+		rows := []
+		try {
+			rows = db_query(db, "SELECT * FROM taxonomies WHERE taxonomy_key = ? ORDER BY id DESC LIMIT 1", [taxonomy_key])
+		} except e {
+			query_err = e
+		}
+		if type(query_err) != "null" || len(rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created taxonomy but failed to load it", {})
+		}
+
+		return json_response(201, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("GET", "/v1/taxonomies/:id", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		taxonomy_id := -1
+		id_err := null
+		try {
+			taxonomy_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || taxonomy_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		rows := []
+		err := null
+		try {
+			rows = db_query(db, "SELECT * FROM taxonomies WHERE id = ?", [taxonomy_id])
+		} except e {
+			err = e
+		}
+		if type(err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load taxonomy", {})
+		}
+		if len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "Taxonomy not found", {})
+		}
+
+		return json_response(200, {"ok": true, "data": rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/taxonomies/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		taxonomy_id := -1
+		id_err := null
+		try {
+			taxonomy_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || taxonomy_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM taxonomies WHERE id = ?", [taxonomy_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load taxonomy", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Taxonomy not found", {})
+		}
+		existing := existing_rows[0]
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		label := trim(to_string(dict_get_or(body, "label", existing["label"])))
+		description := trim(to_string(dict_get_or(body, "description", existing["description"])))
+		hierarchical_raw := dict_get_or(body, "hierarchical", existing["hierarchical"])
+		hierarchical_int := 0
+		if hierarchical_raw == true || hierarchical_raw == 1 {
+			hierarchical_int = 1
+		}
+		if len(label) < 2 {
+			return fail(cfg, 400, "invalid_label", "label must be at least 2 characters", {})
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE taxonomies SET label = ?, description = ?, hierarchical = ?, updated_at = ? WHERE id = ?",
+				[label, description, hierarchical_int, now(), taxonomy_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update taxonomy", {})
+		}
+
+		updated_rows := []
+		load_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM taxonomies WHERE id = ?", [taxonomy_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated taxonomy but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("DELETE", "/v1/taxonomies/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_id", "Missing required route parameter: id", {})
+		}
+
+		taxonomy_id := -1
+		id_err := null
+		try {
+			taxonomy_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || taxonomy_id <= 0 {
+			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM taxonomies WHERE id = ?", [taxonomy_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load taxonomy", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Taxonomy not found", {})
+		}
+		existing := existing_rows[0]
+		if dict_get_or(existing, "is_system", 0) == 1 {
+			return fail(cfg, 403, "system_taxonomy", "System taxonomies cannot be deleted", {})
+		}
+
+		delete_err := null
+		try {
+			db_execute(db, "DELETE FROM taxonomies WHERE id = ?", [taxonomy_id])
+		} except e {
+			delete_err = e
+		}
+		if type(delete_err) != "null" {
+			return fail(cfg, 500, "delete_failed", "Failed to delete taxonomy", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"deleted": true, "id": taxonomy_id}})
+	})
+
+	server = server.route("GET", "/v1/taxonomies/:id/terms", func(req) {
+		guard := guard_request(req, ctx, false)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_taxonomy_id", "Missing required route parameter: id", {})
+		}
+
+		taxonomy_id := -1
+		id_err := null
+		try {
+			taxonomy_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || taxonomy_id <= 0 {
+			return fail(cfg, 400, "invalid_taxonomy_id", "id must be a positive integer", {})
+		}
+
+		tax_rows := []
+		tax_err := null
+		try {
+			tax_rows = db_query(db, "SELECT id FROM taxonomies WHERE id = ?", [taxonomy_id])
+		} except e {
+			tax_err = e
+		}
+		if type(tax_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate taxonomy", {})
+		}
+		if len(tax_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Taxonomy not found", {})
+		}
+
+		query := dict_get_or(req, "query", {})
+		limit := 100
+		offset := 0
+		if has_key(query, "limit") == 1 {
+			limit = to_int(query["limit"])
+		}
+		if has_key(query, "offset") == 1 {
+			offset = to_int(query["offset"])
+		}
+		if limit < 1 {
+			limit = 1
+		}
+		if limit > 500 {
+			limit = 500
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "name"))))
+		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		sort_field := "name"
+		if sort_by == "id" {
+			sort_field = "id"
+		} else if sort_by == "slug" {
+			sort_field = "slug"
+		} else if sort_by == "parent_id" {
+			sort_field = "parent_id"
+		} else if sort_by == "created_at" {
+			sort_field = "created_at"
+		} else if sort_by == "updated_at" {
+			sort_field = "updated_at"
+		}
+		sort_dir_sql := "ASC"
+		if sort_dir == "desc" {
+			sort_dir_sql = "DESC"
+		}
+
+		rows := []
+		rows_err := null
+		try {
+			rows = db_query(db, "SELECT * FROM taxonomy_terms WHERE taxonomy_id = ? ORDER BY " + sort_field + " " + sort_dir_sql + ", id ASC LIMIT ? OFFSET ?", [taxonomy_id, limit, offset])
+		} except e {
+			rows_err = e
+		}
+		if type(rows_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load terms", {})
+		}
+
+		count_rows := []
+		count_err := null
+		try {
+			count_rows = db_query(db, "SELECT COUNT(*) AS total FROM taxonomy_terms WHERE taxonomy_id = ?", [taxonomy_id])
+		} except e {
+			count_err = e
+		}
+		if type(count_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to count terms", {})
+		}
+		total := 0
+		if len(count_rows) > 0 {
+			total = count_rows[0]["total"]
+		}
+
+		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "total": total, "limit": limit, "offset": offset, "sort_by": sort_field, "sort_dir": to_lower(sort_dir_sql)}})
+	})
+
+	server = server.route("POST", "/v1/taxonomies/:id/terms", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_taxonomy_id", "Missing required route parameter: id", {})
+		}
+
+		taxonomy_id := -1
+		id_err := null
+		try {
+			taxonomy_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || taxonomy_id <= 0 {
+			return fail(cfg, 400, "invalid_taxonomy_id", "id must be a positive integer", {})
+		}
+
+		tax_rows := []
+		tax_err := null
+		try {
+			tax_rows = db_query(db, "SELECT id FROM taxonomies WHERE id = ?", [taxonomy_id])
+		} except e {
+			tax_err = e
+		}
+		if type(tax_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load taxonomy", {})
+		}
+		if len(tax_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Taxonomy not found", {})
+		}
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+
+		parse_err := null
+		body := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		name := trim(to_string(dict_get_or(body, "name", "")))
+		slug := trim(to_string(dict_get_or(body, "slug", "")))
+		description := trim(to_string(dict_get_or(body, "description", "")))
+		parent_id := 0
+		if has_key(body, "parent_id") == 1 {
+			parent_id = to_int(body["parent_id"])
+		}
+		if slug == "" {
+			slug = to_lower(name)
+			slug = regex_replace(slug, "[^a-z0-9_\\-]", "-")
+			slug = regex_replace(slug, "-{2,}", "-")
+			slug = trim(slug)
+		}
+
+		if len(name) < 2 {
+			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
+		}
+		invalid_slug := regex_replace(slug, "[a-z0-9_\\-]", "")
+		if len(slug) < 2 || len(slug) > 120 || slug != to_lower(slug) || invalid_slug != "" {
+			return fail(cfg, 400, "invalid_slug", "slug must be lowercase slug text", {})
+		}
+
+		if parent_id > 0 {
+			parent_rows := []
+			parent_err := null
+			try {
+				parent_rows = db_query(db, "SELECT id FROM taxonomy_terms WHERE id = ? AND taxonomy_id = ?", [parent_id, taxonomy_id])
+			} except e {
+				parent_err = e
+			}
+			if type(parent_err) != "null" {
+				return fail(cfg, 500, "db_query_failed", "Failed to validate parent term", {})
+			}
+			if len(parent_rows) == 0 {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id must reference an existing term in this taxonomy", {})
+			}
+		}
+
+		now_ts := now()
+		insert_err := null
+		try {
+			db_execute(
+				db,
+				"INSERT INTO taxonomy_terms (taxonomy_id, name, slug, description, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+				[taxonomy_id, name, slug, description, parent_id, now_ts, now_ts]
+			)
+		} except e {
+			insert_err = e
+		}
+		if type(insert_err) != "null" {
+			return fail(cfg, 409, "create_failed", "Could not create term (possibly duplicate slug)", {})
+		}
+
+		term_rows := []
+		term_err := null
+		try {
+			term_rows = db_query(db, "SELECT * FROM taxonomy_terms WHERE taxonomy_id = ? AND slug = ? ORDER BY id DESC LIMIT 1", [taxonomy_id, slug])
+		} except e {
+			term_err = e
+		}
+		if type(term_err) != "null" || len(term_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Created term but failed to load it", {})
+		}
+
+		return json_response(201, {"ok": true, "data": term_rows[0]})
+	})
+
+	server = server.route("PATCH", "/v1/terms/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_term_id", "Missing required route parameter: id", {})
+		}
+
+		term_id := -1
+		id_err := null
+		try {
+			term_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || term_id <= 0 {
+			return fail(cfg, 400, "invalid_term_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT * FROM taxonomy_terms WHERE id = ?", [term_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load term", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Term not found", {})
+		}
+		existing := existing_rows[0]
+
+		body_text := to_string(dict_get_or(req, "body", ""))
+		if trim(body_text) == "" {
+			return fail(cfg, 400, "invalid_body", "Request body is required", {})
+		}
+		body := null
+		parse_err := null
+		try {
+			body = parse_json(body_text)
+		} except e {
+			parse_err = e
+		}
+		if type(parse_err) != "null" || type(body) != "dict" {
+			return fail(cfg, 400, "invalid_body", "Invalid JSON body", {})
+		}
+
+		name := trim(to_string(dict_get_or(body, "name", existing["name"])))
+		slug := trim(to_string(dict_get_or(body, "slug", existing["slug"])))
+		description := trim(to_string(dict_get_or(body, "description", existing["description"])))
+		parent_id := dict_get_or(body, "parent_id", existing["parent_id"])
+		if parent_id == 0 || to_string(parent_id) == "0" {
+			parent_id = null
+		}
+
+		if len(name) < 2 {
+			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
+		}
+		invalid_slug := regex_replace(slug, "[a-z0-9_\\-]", "")
+		if len(slug) < 2 || len(slug) > 120 || slug != to_lower(slug) || invalid_slug != "" {
+			return fail(cfg, 400, "invalid_slug", "slug must be lowercase slug text", {})
+		}
+
+		parent_value := null
+		if type(parent_id) != "null" {
+			parent_value = -1
+			parent_err := null
+			try {
+				parent_value = parse_int(trim(to_string(parent_id)))
+			} except e {
+				parent_err = e
+			}
+			if type(parent_err) != "null" || parent_value <= 0 {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id must be a positive integer or null", {})
+			}
+			if parent_value == term_id {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id cannot reference the same term", {})
+			}
+			parent_rows := []
+			parent_err := null
+			try {
+				parent_rows = db_query(db, "SELECT id FROM taxonomy_terms WHERE id = ? AND taxonomy_id = ? LIMIT 1", [parent_value, existing["taxonomy_id"]])
+			} except e {
+				parent_err = e
+			}
+			if type(parent_err) != "null" {
+				return fail(cfg, 500, "db_query_failed", "Failed to validate parent_id", {})
+			}
+			if len(parent_rows) == 0 {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id must reference a term in the same taxonomy", {})
+			}
+		}
+
+		update_err := null
+		try {
+			db_execute(
+				db,
+				"UPDATE taxonomy_terms SET name = ?, slug = ?, description = ?, parent_id = ?, updated_at = ? WHERE id = ?",
+				[name, slug, description, parent_value, now(), term_id]
+			)
+		} except e {
+			update_err = e
+		}
+		if type(update_err) != "null" {
+			return fail(cfg, 500, "update_failed", "Failed to update term", {})
+		}
+
+		updated_rows := []
+		load_err := null
+		try {
+			updated_rows = db_query(db, "SELECT * FROM taxonomy_terms WHERE id = ?", [term_id])
+		} except e {
+			load_err = e
+		}
+		if type(load_err) != "null" || len(updated_rows) == 0 {
+			return fail(cfg, 500, "load_failed", "Updated term but failed to load it", {})
+		}
+
+		return json_response(200, {"ok": true, "data": updated_rows[0]})
+	})
+
+	server = server.route("DELETE", "/v1/terms/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false {
+			return guard["response"]
+		}
+
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		params := dict_get_or(req, "params", {})
+		if has_key(params, "id") == 0 {
+			return fail(cfg, 400, "invalid_term_id", "Missing required route parameter: id", {})
+		}
+
+		term_id := -1
+		id_err := null
+		try {
+			term_id = parse_int(to_string(params["id"]))
+		} except e {
+			id_err = e
+		}
+		if type(id_err) != "null" || term_id <= 0 {
+			return fail(cfg, 400, "invalid_term_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT id, taxonomy_id FROM taxonomy_terms WHERE id = ? LIMIT 1", [term_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load term", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Term not found", {})
+		}
+
+		children_rows := []
+		children_err := null
+		try {
+			children_rows = db_query(db, "SELECT COUNT(*) AS total FROM taxonomy_terms WHERE parent_id = ?", [term_id])
+		} except e {
+			children_err = e
+		}
+		if type(children_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to validate term children", {})
+		}
+		if len(children_rows) > 0 && children_rows[0]["total"] > 0 {
+			return fail(cfg, 409, "term_has_children", "Cannot delete a term that still has child terms", {})
+		}
+
+		delete_err := null
+		try {
+			db_execute(db, "DELETE FROM taxonomy_terms WHERE id = ?", [term_id])
+		} except e {
+			delete_err = e
+		}
+		if type(delete_err) != "null" {
+			return fail(cfg, 500, "delete_failed", "Failed to delete term", {})
+		}
+
+		return json_response(200, {"ok": true, "data": {"deleted": true, "id": term_id}})
+	})
+
+	return server
+}

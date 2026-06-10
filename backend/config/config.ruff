@@ -1,0 +1,213 @@
+from backend.core.utils import bool_or, dict_get_or, parse_positive_int_env
+
+export load_config_backend_impl := func(overrides) {
+	allow_bootstrap_env_raw := env_or("CMS_ALLOW_BOOTSTRAP_TOKEN", "__unset__")
+	allow_bootstrap_env_set := allow_bootstrap_env_raw != "__unset__"
+	enforce_rotation_env_raw := env_or("CMS_ENFORCE_BOOTSTRAP_TOKEN_ROTATION", "__unset__")
+	enforce_rotation_env_set := enforce_rotation_env_raw != "__unset__"
+
+	cfg := {
+		"service_name": "Kujo CMS API",
+		"service_version": "0.1.0",
+		"environment": to_lower(env_or("CMS_ENV", "development")),
+		"api_host": env_or("CMS_API_HOST", "127.0.0.1"),
+		"port": parse_positive_int_env("CMS_API_PORT", 4200),
+		"site_url": env_or("CMS_SITE_URL", "http://127.0.0.1:4200"),
+		"db_path": env_or("CMS_DB_PATH", "kujo_cms.db"),
+		"cors_origin": env_or("CMS_CORS_ORIGIN", "*"),
+		"api_token": env_or("CMS_API_TOKEN", "change-me-in-production"),
+		"allow_bootstrap_token": bool_or(allow_bootstrap_env_raw, true),
+		"enforce_bootstrap_token_rotation": bool_or(enforce_rotation_env_raw, false),
+		"bootstrap_token_min_length": parse_positive_int_env("CMS_BOOTSTRAP_TOKEN_MIN_LENGTH", 24),
+		"bootstrap_token_min_entropy_classes": parse_positive_int_env("CMS_BOOTSTRAP_TOKEN_MIN_ENTROPY_CLASSES", 3),
+		"max_body_bytes": parse_positive_int_env("CMS_MAX_BODY_BYTES", 1048576),
+		"rate_limit_window_sec": parse_positive_int_env("CMS_RATE_WINDOW_SEC", 60),
+		"rate_limit_max_requests": parse_positive_int_env("CMS_RATE_MAX_REQUESTS", 180),
+		"entry_lock_ttl_sec": parse_positive_int_env("CMS_ENTRY_LOCK_TTL_SEC", 900),
+		"rate_limit_mode": to_lower(env_or("CMS_RATE_LIMIT_MODE", "memory")),
+		"rate_limit_max_keys": parse_positive_int_env("CMS_RATE_MAX_KEYS", 10000),
+		"tenant_max_count": parse_positive_int_env("CMS_TENANT_MAX_COUNT", 5000),
+		"tenant_workspace_max_count": parse_positive_int_env("CMS_TENANT_WORKSPACE_MAX_COUNT", 250),
+		"audit_log": bool_or(env_or("CMS_AUDIT_LOG", "true"), true),
+		"structured_logs": bool_or(env_or("CMS_STRUCTURED_LOGS", "true"), true),
+		"readiness_check_db": bool_or(env_or("CMS_READINESS_CHECK_DB", "true"), true),
+		"metrics_enabled": bool_or(env_or("CMS_METRICS_ENABLED", "true"), true),
+		"idempotency_enabled": bool_or(env_or("CMS_IDEMPOTENCY_ENABLED", "true"), true),
+		"request_id_header": env_or("CMS_REQUEST_ID_HEADER", "X-Request-ID"),
+		"plugin_hook_url_allowlist": env_or("CMS_PLUGIN_HOOK_URL_ALLOWLIST", ""),
+		"plugin_hook_url_denylist": env_or("CMS_PLUGIN_HOOK_URL_DENYLIST", "localhost,127.*,10.*,172.*,192.168.*,169.254.*,0.0.0.0,::1,*.local"),
+		"plugin_hook_allow_http": bool_or(env_or("CMS_PLUGIN_HOOK_ALLOW_HTTP", "false"), false),
+		"webhook_max_attempts": parse_positive_int_env("CMS_WEBHOOK_MAX_ATTEMPTS", 5),
+		"webhook_retry_base_sec": parse_positive_int_env("CMS_WEBHOOK_RETRY_BASE_SEC", 30),
+		"webhook_connect_timeout_sec": parse_positive_int_env("CMS_WEBHOOK_CONNECT_TIMEOUT_SEC", 3),
+		"webhook_max_time_sec": parse_positive_int_env("CMS_WEBHOOK_MAX_TIME_SEC", 10),
+		"background_job_max_attempts": parse_positive_int_env("CMS_BACKGROUND_JOB_MAX_ATTEMPTS", 5),
+		"background_job_retry_base_sec": parse_positive_int_env("CMS_BACKGROUND_JOB_RETRY_BASE_SEC", 20),
+		"background_job_process_limit": parse_positive_int_env("CMS_BACKGROUND_JOB_PROCESS_LIMIT", 50),
+		"security_contact": env_or("CMS_SECURITY_CONTACT", "mailto:security@example.com"),
+		"security_policy_url": env_or("CMS_SECURITY_POLICY_URL", ""),
+		"security_acknowledgments_url": env_or("CMS_SECURITY_ACKNOWLEDGMENTS_URL", ""),
+		"security_preferred_languages": env_or("CMS_SECURITY_PREFERRED_LANGUAGES", "en"),
+		"security_expires": env_or("CMS_SECURITY_EXPIRES", "2027-12-31T23:59:59Z")
+	}
+
+	allow_bootstrap_override := false
+	enforce_bootstrap_rotation_override := false
+
+	if type(overrides) == "dict" {
+		keys := [
+			"service_name",
+			"service_version",
+			"environment",
+			"api_host",
+			"port",
+			"site_url",
+			"db_path",
+			"cors_origin",
+			"api_token",
+			"allow_bootstrap_token",
+			"enforce_bootstrap_token_rotation",
+			"bootstrap_token_min_length",
+			"bootstrap_token_min_entropy_classes",
+			"max_body_bytes",
+			"rate_limit_window_sec",
+			"rate_limit_max_requests",
+			"entry_lock_ttl_sec",
+			"rate_limit_mode",
+			"rate_limit_max_keys",
+			"tenant_max_count",
+			"tenant_workspace_max_count",
+			"audit_log",
+			"structured_logs",
+			"readiness_check_db",
+			"metrics_enabled",
+			"idempotency_enabled",
+			"request_id_header",
+			"plugin_hook_url_allowlist",
+			"plugin_hook_url_denylist",
+			"plugin_hook_allow_http",
+			"webhook_max_attempts",
+			"webhook_retry_base_sec",
+			"webhook_connect_timeout_sec",
+			"webhook_max_time_sec",
+			"background_job_max_attempts",
+			"background_job_retry_base_sec",
+			"background_job_process_limit",
+			"security_contact",
+			"security_policy_url",
+			"security_acknowledgments_url",
+			"security_preferred_languages",
+			"security_expires"
+		]
+		for key in keys {
+			if has_key(overrides, key) == 1 {
+				cfg[key] := overrides[key]
+				if key == "allow_bootstrap_token" {
+					allow_bootstrap_override = true
+				}
+				if key == "enforce_bootstrap_token_rotation" {
+					enforce_bootstrap_rotation_override = true
+				}
+			}
+		}
+	}
+
+	if type(cfg["environment"]) != "string" {
+		cfg["environment"] := "development"
+	}
+	cfg["environment"] := to_lower(trim(to_string(cfg["environment"])))
+	if cfg["environment"] == "" {
+		cfg["environment"] := "development"
+	}
+
+	cfg["api_host"] := trim(to_string(dict_get_or(cfg, "api_host", "127.0.0.1")))
+	if cfg["api_host"] == "" {
+		cfg["api_host"] := "127.0.0.1"
+	}
+
+	if dict_get_or(cfg, "max_body_bytes", 0) < 1024 {
+		cfg["max_body_bytes"] := 1024
+	}
+
+	if type(cfg["rate_limit_mode"]) != "string" {
+		cfg["rate_limit_mode"] := "memory"
+	}
+	cfg["rate_limit_mode"] := to_lower(trim(to_string(cfg["rate_limit_mode"])))
+	if cfg["rate_limit_mode"] != "memory" && cfg["rate_limit_mode"] != "sqlite" && cfg["rate_limit_mode"] != "external" && cfg["rate_limit_mode"] != "off" {
+		cfg["rate_limit_mode"] := "memory"
+	}
+
+	if dict_get_or(cfg, "rate_limit_max_keys", 0) < 100 {
+		cfg["rate_limit_max_keys"] := 100
+	}
+
+	if dict_get_or(cfg, "entry_lock_ttl_sec", 0) < 1 {
+		cfg["entry_lock_ttl_sec"] := 900
+	}
+
+	if dict_get_or(cfg, "tenant_max_count", 0) < 1 {
+		cfg["tenant_max_count"] := 5000
+	}
+
+	if dict_get_or(cfg, "tenant_workspace_max_count", 0) < 1 {
+		cfg["tenant_workspace_max_count"] := 250
+	}
+
+	cfg["plugin_hook_url_allowlist"] := trim(to_string(dict_get_or(cfg, "plugin_hook_url_allowlist", "")))
+	cfg["plugin_hook_url_denylist"] := trim(to_string(dict_get_or(cfg, "plugin_hook_url_denylist", "")))
+	cfg["plugin_hook_allow_http"] := bool_or(dict_get_or(cfg, "plugin_hook_allow_http", false), false)
+
+	if dict_get_or(cfg, "webhook_max_attempts", 0) < 1 {
+		cfg["webhook_max_attempts"] := 5
+	}
+	if dict_get_or(cfg, "webhook_retry_base_sec", 0) < 1 {
+		cfg["webhook_retry_base_sec"] := 30
+	}
+	if dict_get_or(cfg, "webhook_connect_timeout_sec", 0) < 1 {
+		cfg["webhook_connect_timeout_sec"] := 3
+	}
+	if dict_get_or(cfg, "webhook_max_time_sec", 0) < 1 {
+		cfg["webhook_max_time_sec"] := 10
+	}
+	if dict_get_or(cfg, "background_job_max_attempts", 0) < 1 {
+		cfg["background_job_max_attempts"] := 5
+	}
+	if dict_get_or(cfg, "background_job_retry_base_sec", 0) < 1 {
+		cfg["background_job_retry_base_sec"] := 20
+	}
+	if dict_get_or(cfg, "background_job_process_limit", 0) < 1 {
+		cfg["background_job_process_limit"] := 50
+	}
+
+	cfg["allow_bootstrap_token"] := bool_or(dict_get_or(cfg, "allow_bootstrap_token", true), true)
+	cfg["enforce_bootstrap_token_rotation"] := bool_or(dict_get_or(cfg, "enforce_bootstrap_token_rotation", false), false)
+	if dict_get_or(cfg, "bootstrap_token_min_length", 0) < 16 {
+		cfg["bootstrap_token_min_length"] := 24
+	}
+	if dict_get_or(cfg, "bootstrap_token_min_entropy_classes", 0) < 2 {
+		cfg["bootstrap_token_min_entropy_classes"] := 3
+	}
+
+	if cfg["environment"] == "production" {
+		if allow_bootstrap_override == false && allow_bootstrap_env_set == false {
+			cfg["allow_bootstrap_token"] := false
+		}
+		if enforce_bootstrap_rotation_override == false && enforce_rotation_env_set == false {
+			cfg["enforce_bootstrap_token_rotation"] := true
+		}
+		if trim(to_string(dict_get_or(cfg, "api_token", ""))) == "change-me-in-production" {
+			cfg["allow_bootstrap_token"] := false
+			cfg["enforce_bootstrap_token_rotation"] := true
+		}
+	}
+
+	return cfg
+}
+
+export load_config := func(overrides) {
+	return load_config_backend_impl(overrides)
+}
+
+export load_config_impl := func(overrides) {
+	return load_config_backend_impl(overrides)
+}

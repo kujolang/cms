@@ -1,0 +1,582 @@
+from backend.config.config import load_config
+from backend.core.database import connect_database
+from backend.core.http import api_text, fail, guard_request, ok
+from backend.core.utils import dict_get_or
+from backend.routes.content_types import register_content_type_routes
+from backend.routes.taxonomies import register_taxonomy_routes
+from backend.routes.entries import register_entry_routes
+from backend.routes.media import register_media_routes
+from backend.routes.menus import register_menu_routes
+from backend.routes.plugins import register_plugin_routes
+from backend.routes.themes import register_theme_routes
+from backend.modules.authz import register_authz_routes
+from backend.routes.delivery import register_delivery_routes
+from backend.routes.tenancy import register_tenancy_routes
+
+cfg := load_config({})
+
+if trim(to_string(dict_get_or(cfg, "api_token", ""))) == "change-me-in-production" {
+	env_name := to_lower(trim(to_string(dict_get_or(cfg, "environment", "development"))))
+	if env_name == "production" {
+		print("[WARN] CMS_API_TOKEN is still using the default placeholder token in production; bootstrap token auth is forced off until rotated.")
+	} else {
+		print("[WARN] CMS_API_TOKEN is still using the default placeholder token; rotate before production deployment.")
+	}
+}
+
+connection := connect_database(cfg)
+if connection["ok"] == false {
+	print("Failed to initialize database: " + connection["error"])
+	exit(1)
+}
+
+db := connection["db"]
+schema_version := dict_get_or(connection, "schema_version", 0)
+migrations_applied := dict_get_or(connection, "migrations_applied", [])
+state := {
+	"rate": {},
+	"entry_locks": {},
+	"metrics": {
+		"requests_total": 0,
+		"authorized_total": 0,
+		"unauthorized_total": 0,
+		"rate_limited_total": 0,
+		"responses_401_total": 0,
+		"responses_429_total": 0,
+		"latency_last_ms": 0,
+		"latency_total_ms": 0,
+		"latency_samples": 0,
+		"latency_max_ms": 0,
+		"latency_avg_ms": 0
+	}
+}
+
+ctx := {
+	"cfg": cfg,
+	"db": db,
+	"state": state
+}
+
+func register_options(server, cfg) {
+	paths := [
+		"/",
+		"/health",
+		"/live",
+		"/ready",
+		"/metrics",
+		"/robots.txt",
+		"/llms.txt",
+		"/.well-known/llms.txt",
+		"/.well-known/security.txt",
+		"/sitemap.xml",
+		"/sitemap-index.xml",
+		"/sitemaps/content-types.xml",
+		"/sitemaps/content-type/:content_type_key",
+		"/sitemaps/dates.xml",
+		"/sitemaps/date/:bucket",
+		"/rss.xml",
+		"/rss/content-type/:content_type_key",
+		"/rss/taxonomy/:taxonomy_key/:term_slug",
+		"/v1",
+		"/v1/contract",
+		"/v1/openapi.json",
+		"/v1/content-types",
+		"/v1/content-types/:id",
+		"/v1/taxonomies",
+		"/v1/taxonomies/:id",
+		"/v1/taxonomies/:id/terms",
+		"/v1/terms/:id",
+		"/v1/entries",
+		"/v1/entries/scheduler/run",
+		"/v1/entry-locks/state",
+		"/v1/entry-locks/acquire",
+		"/v1/entry-locks/release",
+		"/v1/entries/:id",
+		"/v1/entries/:id/seo",
+		"/v1/entries/:id/revisions",
+		"/v1/entries/:id/revisions/:revision_id/restore",
+		"/v1/entries/by-slug/:content_type/:slug",
+		"/v1/entries/:id/terms",
+		"/v1/media",
+		"/v1/media/:id",
+		"/v1/menus",
+		"/v1/menus/:id",
+		"/v1/menus/:id/items",
+		"/v1/menu-items/:id",
+		"/v1/plugins",
+		"/v1/plugins/:id",
+		"/v1/plugins/:id/hooks",
+		"/v1/plugin-hooks/:id",
+		"/v1/themes",
+		"/v1/themes/:id",
+		"/v1/themes/:id/activate",
+		"/v1/themes/active",
+		"/v1/auth/roles",
+		"/v1/auth/roles/:id",
+		"/v1/auth/tokens",
+		"/v1/auth/tokens/:id",
+		"/v1/tenants",
+		"/v1/tenants/update",
+		"/v1/tenants/disable",
+		"/v1/tenants/archive",
+		"/v1/workspaces"
+	]
+
+	for path in paths {
+		server = server.route("OPTIONS", path, func(req) {
+			return api_text(200, "", cfg)
+		})
+	}
+
+	return server
+}
+
+func build_api_contract(cfg, schema_version) {
+	site_url := trim(to_string(dict_get_or(cfg, "site_url", "http://127.0.0.1:4200")))
+	if site_url == "" {
+		site_url = "http://127.0.0.1:4200"
+	}
+
+	return {
+		"openapi": "3.1.0",
+		"info": {
+			"title": to_string(dict_get_or(cfg, "service_name", "Kujo CMS API")),
+			"version": to_string(dict_get_or(cfg, "service_version", "0.1.0"))
+		},
+		"servers": [
+			{"url": site_url}
+		],
+		"x-kujo-cms": {
+			"schema_version": schema_version,
+			"capabilities_path": "/v1",
+			"generated_by": "backend/runtime/main.ruff"
+		},
+		"paths": {
+			"/health": {"get": {"summary": "Health check", "x-auth": "public"}},
+			"/live": {"get": {"summary": "Liveness check", "x-auth": "public"}},
+			"/ready": {"get": {"summary": "Readiness check", "x-auth": "public"}},
+			"/metrics": {"get": {"summary": "Metrics snapshot", "x-auth": "public"}},
+			"/v1": {"get": {"summary": "API capabilities", "x-auth": "public"}},
+			"/v1/contract": {"get": {"summary": "OpenAPI-like contract", "x-auth": "public"}},
+			"/v1/openapi.json": {"get": {"summary": "OpenAPI-like contract alias", "x-auth": "public"}},
+			"/v1/content-types": {"get": {"x-auth": "public"}, "post": {"x-auth": "bearer"}},
+			"/v1/content-types/:id": {"get": {"x-auth": "public"}, "patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/taxonomies": {"get": {"x-auth": "public", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}},
+			"/v1/taxonomies/:id": {"get": {"x-auth": "public"}, "patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/taxonomies/:id/terms": {"get": {"x-auth": "public", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}},
+			"/v1/terms/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/entries": {"get": {"x-auth": "public"}, "post": {"x-auth": "bearer"}},
+			"/v1/entries/:id": {"get": {"x-auth": "public"}, "patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/entries/by-slug/:content_type/:slug": {"get": {"x-auth": "public"}},
+			"/v1/entries/:id/terms": {"post": {"x-auth": "bearer"}},
+			"/v1/entries/:id/seo": {"get": {"x-auth": "public"}},
+			"/v1/entries/:id/revisions": {"get": {"x-auth": "public"}, "post": {"x-auth": "bearer"}},
+			"/v1/entries/:id/revisions/:revision_id/restore": {"post": {"x-auth": "bearer"}},
+			"/v1/entries/scheduler/run": {"post": {"x-auth": "bearer"}},
+			"/v1/entry-locks/state": {"get": {"x-auth": "public"}},
+			"/v1/entry-locks/acquire": {"post": {"x-auth": "bearer"}},
+			"/v1/entry-locks/release": {"post": {"x-auth": "bearer"}},
+			"/v1/media": {"get": {"x-auth": "public", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}},
+			"/v1/media/:id": {"get": {"x-auth": "public"}, "patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/menus": {"get": {"x-auth": "public", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}},
+			"/v1/menus/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/menus/:id/items": {"get": {"x-auth": "public", "x-query": ["limit", "offset"]}, "post": {"x-auth": "bearer"}},
+			"/v1/menu-items/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/plugins": {"get": {"x-auth": "public", "x-query": ["limit", "offset"]}, "post": {"x-auth": "bearer"}},
+			"/v1/plugins/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/plugins/:id/hooks": {"get": {"x-auth": "public", "x-query": ["limit", "offset"]}, "post": {"x-auth": "bearer"}},
+			"/v1/plugin-hooks/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/themes": {"get": {"x-auth": "public", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}},
+			"/v1/themes/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/themes/:id/activate": {"post": {"x-auth": "bearer"}},
+			"/v1/themes/active": {"get": {"x-auth": "public"}},
+			"/v1/auth/roles": {"get": {"x-auth": "public", "x-query": ["limit", "offset"]}, "post": {"x-auth": "bearer"}},
+			"/v1/auth/roles/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/auth/tokens": {"get": {"x-auth": "bearer", "x-query": ["limit", "offset"]}, "post": {"x-auth": "bearer"}},
+			"/v1/auth/tokens/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/tenants": {"get": {"x-auth": "bearer", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}},
+			"/v1/tenants/update": {"post": {"x-auth": "bearer"}},
+			"/v1/tenants/disable": {"post": {"x-auth": "bearer"}},
+			"/v1/tenants/archive": {"post": {"x-auth": "bearer"}},
+			"/v1/workspaces": {"get": {"x-auth": "bearer", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}}
+		}
+	}
+}
+
+func readiness_db_checks_enabled(cfg) {
+	readiness_check_db := true
+	if has_key(cfg, "readiness_check_db") == 1 {
+		readiness_check_db = cfg["readiness_check_db"]
+	}
+
+	if readiness_check_db == false || readiness_check_db == 0 {
+		return false
+	}
+
+	return true
+}
+
+func load_health_counts(db) {
+	err := null
+	content_types_rows := []
+	entries_rows := []
+	themes_rows := []
+	plugins_rows := []
+	background_jobs_rows := []
+	background_jobs_due_rows := []
+	background_jobs_dead_rows := []
+	background_jobs_dead_letters_rows := []
+	try {
+		content_types_rows = db_query(db, "SELECT COUNT(*) AS total FROM content_types", [])
+		entries_rows = db_query(db, "SELECT COUNT(*) AS total FROM entries", [])
+		themes_rows = db_query(db, "SELECT COUNT(*) AS total FROM themes", [])
+		plugins_rows = db_query(db, "SELECT COUNT(*) AS total FROM plugins", [])
+		background_jobs_rows = db_query(db, "SELECT COUNT(*) AS total FROM background_jobs", [])
+		background_jobs_due_rows = db_query(db, "SELECT COUNT(*) AS total FROM background_jobs WHERE status IN ('pending','retry') AND CAST(run_after AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)", [])
+		background_jobs_dead_rows = db_query(db, "SELECT COUNT(*) AS total FROM background_jobs WHERE status = 'dead_letter'", [])
+		background_jobs_dead_letters_rows = db_query(db, "SELECT COUNT(*) AS total FROM background_job_dead_letters", [])
+	} except e {
+		err = e
+	}
+
+	if type(err) != "null" {
+		return {
+			"ok": false,
+			"error": to_string(err)
+		}
+	}
+
+	return {
+		"ok": true,
+		"counts": {
+			"content_types": content_types_rows[0]["total"],
+			"entries": entries_rows[0]["total"],
+			"themes": themes_rows[0]["total"],
+			"plugins": plugins_rows[0]["total"],
+			"background_jobs_total": background_jobs_rows[0]["total"],
+			"background_jobs_due": background_jobs_due_rows[0]["total"],
+			"background_jobs_dead": background_jobs_dead_rows[0]["total"],
+			"background_jobs_dead_letters": background_jobs_dead_letters_rows[0]["total"]
+		}
+	}
+}
+
+api_host := trim(to_string(dict_get_or(cfg, "api_host", "127.0.0.1")))
+if api_host == "" {
+	api_host = "127.0.0.1"
+}
+
+server := http_listen(api_host, cfg["port"])
+server = register_options(server, cfg)
+
+server = server.route("GET", "/", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+
+	return ok(cfg, {
+		"service": cfg["service_name"],
+		"version": cfg["service_version"],
+		"schema_version": schema_version,
+		"migrations_applied": migrations_applied,
+		"database": "sqlite",
+		"site_url": cfg["site_url"],
+		"security": {
+			"bearer_auth_for_writes": trim(to_string(cfg["api_token"])) != "",
+			"rate_limit_window_sec": cfg["rate_limit_window_sec"],
+			"rate_limit_max_requests": cfg["rate_limit_max_requests"],
+			"max_body_bytes": cfg["max_body_bytes"],
+			"role_permissions": true
+		},
+		"modules": [
+			"delivery",
+			"content_types",
+			"taxonomies",
+			"entries",
+			"media",
+			"menus",
+			"plugins",
+			"themes",
+			"authz",
+			"tenancy"
+		],
+		"docs": {
+			"health": "GET /health",
+			"liveness": "GET /live",
+			"readiness": "GET /ready",
+			"metrics": "GET /metrics",
+			"capabilities": "GET /v1",
+			"api_contract": "GET /v1/contract",
+			"openapi_contract": "GET /v1/openapi.json",
+			"sitemap": "GET /sitemap.xml",
+			"sitemap_index": "GET /sitemap-index.xml",
+			"rss": "GET /rss.xml",
+			"rss_content_type": "GET /rss/content-type/:content_type_key",
+			"rss_taxonomy": "GET /rss/taxonomy/:taxonomy_key/:term_slug",
+			"llms": "GET /llms.txt",
+			"security_txt": "GET /.well-known/security.txt"
+		}
+	})
+})
+
+server = server.route("GET", "/live", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+
+	return json_response(200, {
+		"ok": true,
+		"data": {
+		"status": "ok",
+		"service": "live"
+		}
+	})
+})
+
+server = server.route("GET", "/ready", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+
+	if readiness_db_checks_enabled(cfg) == false {
+		return json_response(200, {
+			"ok": true,
+			"data": {
+			"status": "ok",
+			"db": "skipped",
+			"mode": "liveness-only"
+			}
+		})
+	}
+
+	health_counts := load_health_counts(db)
+	if health_counts["ok"] == false {
+		return json_response(500, {
+			"ok": false,
+			"error": {
+				"code": "health_failed",
+				"message": "Database health check failed"
+			}
+		})
+	}
+
+	return json_response(200, {
+		"ok": true,
+		"data": {
+		"status": "ok",
+		"db": "connected",
+		"counts": health_counts["counts"]
+		}
+	})
+})
+
+server = server.route("GET", "/health", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+
+	if readiness_db_checks_enabled(cfg) == false {
+		return json_response(200, {
+			"ok": true,
+			"data": {
+			"status": "ok",
+			"db": "skipped",
+			"mode": "liveness-only"
+			}
+		})
+	}
+
+	health_counts := load_health_counts(db)
+	if health_counts["ok"] == false {
+		return json_response(500, {
+			"ok": false,
+			"error": {
+				"code": "health_failed",
+				"message": "Database health check failed"
+			}
+		})
+	}
+
+	return json_response(200, {
+		"ok": true,
+		"data": {
+		"status": "ok",
+		"db": "connected",
+		"counts": health_counts["counts"]
+		}
+	})
+})
+
+server = server.route("HEAD", "/health", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+	cfg := ctx["cfg"]
+	return api_text(200, "", cfg)
+})
+
+server = server.route("GET", "/metrics", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+
+	metrics_enabled := true
+	if has_key(cfg, "metrics_enabled") == 1 {
+		metrics_enabled = cfg["metrics_enabled"]
+	}
+
+	if metrics_enabled == false || metrics_enabled == 0 {
+		return json_response(404, {
+			"ok": false,
+			"error": {
+				"code": "metrics_disabled",
+				"message": "Metrics endpoint is disabled"
+			}
+		})
+	}
+
+	return json_response(200, {
+		"ok": true,
+		"data": {
+		"metrics": dict_get_or(state, "metrics", {}),
+		"dimensions": {
+			"service": cfg["service_name"],
+			"environment": cfg["environment"]
+		}
+		}
+	})
+})
+
+server = server.route("GET", "/v1", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+
+	return ok(cfg, {
+		"resources": {
+			"delivery": {
+				"robots": "/robots.txt",
+				"security_txt": "/.well-known/security.txt",
+				"sitemap": "/sitemap.xml",
+				"sitemap_index": "/sitemap-index.xml",
+				"sitemap_content_types": "/sitemaps/content-types.xml",
+				"sitemap_dates": "/sitemaps/dates.xml",
+				"rss": "/rss.xml",
+				"rss_content_type": "/rss/content-type/:content_type_key",
+				"rss_taxonomy": "/rss/taxonomy/:taxonomy_key/:term_slug",
+				"llms": "/llms.txt"
+			},
+			"content_types": "/v1/content-types",
+			"taxonomies": "/v1/taxonomies",
+			"entries": "/v1/entries",
+			"entry_scheduler": "/v1/entries/scheduler/run",
+			"entry_lock_state": "/v1/entry-locks/state",
+			"entry_lock_acquire": "/v1/entry-locks/acquire",
+			"entry_lock_release": "/v1/entry-locks/release",
+			"entry_seo": "/v1/entries/:id/seo",
+			"entry_revisions": "/v1/entries/:id/revisions",
+			"entry_revision_restore": "/v1/entries/:id/revisions/:revision_id/restore",
+			"entry_by_slug": "/v1/entries/by-slug/:content_type/:slug",
+			"background_jobs_enqueue": "scripts/enqueue-background-job.sh",
+			"background_jobs_process": "scripts/process-background-jobs.sh",
+			"background_jobs_replay": "scripts/replay-background-job-dead-letters.sh",
+			"media": "/v1/media",
+			"menus": "/v1/menus",
+			"plugins": "/v1/plugins",
+			"themes": "/v1/themes",
+			"roles": "/v1/auth/roles",
+			"tokens": "/v1/auth/tokens",
+			"tenants": "/v1/tenants",
+			"tenant_update": "/v1/tenants/update",
+			"tenant_disable": "/v1/tenants/disable",
+			"tenant_archive": "/v1/tenants/archive",
+			"workspaces": "/v1/workspaces"
+		},
+		"contracts": {
+			"api_contract": "/v1/contract",
+			"openapi_contract": "/v1/openapi.json"
+		},
+		"extension_points": {
+			"plugin_hooks": "/v1/plugins/:id/hooks",
+			"theme_activation": "/v1/themes/:id/activate",
+			"entry_taxonomy_assignment": "/v1/entries/:id/terms"
+		}
+	})
+})
+
+server = server.route("HEAD", "/v1", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+	cfg := ctx["cfg"]
+	return api_text(200, "", cfg)
+})
+
+server = server.route("GET", "/v1/contract", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+
+	return ok(cfg, build_api_contract(cfg, schema_version))
+})
+
+server = server.route("HEAD", "/v1/contract", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+	cfg := ctx["cfg"]
+	return api_text(200, "", cfg)
+})
+
+server = server.route("GET", "/v1/openapi.json", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+
+	return ok(cfg, build_api_contract(cfg, schema_version))
+})
+
+server = server.route("HEAD", "/v1/openapi.json", func(req) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false {
+		return guard["response"]
+	}
+	cfg := ctx["cfg"]
+	return api_text(200, "", cfg)
+})
+
+server = register_content_type_routes(server, ctx)
+server = register_taxonomy_routes(server, ctx)
+server = register_entry_routes(server, ctx)
+server = register_delivery_routes(server, ctx)
+server = register_media_routes(server, ctx)
+server = register_menu_routes(server, ctx)
+server = register_plugin_routes(server, ctx)
+server = register_theme_routes(server, ctx)
+server = register_authz_routes(server, ctx)
+server = register_tenancy_routes(server, ctx)
+
+print("Kujo CMS API")
+print("Server: http://" + api_host + ":" + to_string(cfg["port"]))
+print("Database: " + cfg["db_path"])
+print("Site URL: " + cfg["site_url"])
+print("CORS origin: " + cfg["cors_origin"])
+print("Write token required: " + to_string(trim(to_string(cfg["api_token"])) != ""))
+print("Schema version: " + to_string(schema_version))
+print("Readiness DB checks: " + to_string(dict_get_or(cfg, "readiness_check_db", true)))
+print("Structured logs: " + to_string(dict_get_or(cfg, "structured_logs", true)))
+print("Modules: delivery, content_types, taxonomies, entries, media, menus, plugins, themes, authz, tenancy")
+print("Press Ctrl+C to stop")
+
+server.listen()

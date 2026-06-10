@@ -1,0 +1,201 @@
+export dict_get_or := func(obj, key, default_value) {
+	if type(obj) != "dict" {
+		return default_value
+	}
+	if has_key(obj, key) == 1 {
+		return obj[key]
+	}
+	return default_value
+}
+
+export str_or := func(value, default_value) {
+	if type(value) == "string" {
+		return value
+	}
+	return default_value
+}
+
+export int_or := func(value, default_value) {
+	if type(value) == "int" {
+		return value
+	}
+	if type(value) == "float" {
+		return to_int(value)
+	}
+	return default_value
+}
+
+export bool_or := func(value, default_value) {
+	if type(value) == "bool" {
+		return value
+	}
+	if type(value) == "int" {
+		return value != 0
+	}
+	if type(value) == "string" {
+		lower := to_lower(trim(value))
+		if lower == "true" || lower == "1" || lower == "yes" || lower == "on" {
+			return true
+		}
+		if lower == "false" || lower == "0" || lower == "no" || lower == "off" {
+			return false
+		}
+	}
+	return default_value
+}
+
+export parse_positive_int_text := func(raw_text, default_value) {
+	err := null
+	value := default_value
+	try {
+		value = parse_int(trim(to_string(raw_text)))
+	} except e {
+		err = e
+	}
+	if type(err) != "null" {
+		return default_value
+	}
+	if value <= 0 {
+		return default_value
+	}
+	return value
+}
+
+export parse_positive_int_env := func(var_name, default_value) {
+	raw := env_or(var_name, to_string(default_value))
+	return parse_positive_int_text(raw, default_value)
+}
+
+export trim_or := func(value, default_value) {
+	if type(value) != "string" {
+		return default_value
+	}
+	return trim(value)
+}
+
+export normalize_slug_key := func(value) {
+	slug := to_lower(trim(to_string(value)))
+	slug = regex_replace(slug, "[^a-z0-9_\\-]", "")
+	slug = regex_replace(slug, "-{2,}", "-")
+	slug = regex_replace(slug, "_{2,}", "_")
+	slug = trim(slug)
+	return slug
+}
+
+export is_valid_slug_key := func(value) {
+	if type(value) != "string" {
+		return false
+	}
+	raw := trim(value)
+	if len(raw) < 2 || len(raw) > 64 {
+		return false
+	}
+	normalized := normalize_slug_key(raw)
+	if normalized != raw {
+		return false
+	}
+	if starts_with(raw, "-") || starts_with(raw, "_") {
+		return false
+	}
+	return true
+}
+
+export ensure_json_text := func(value, fallback_obj) {
+	if type(value) == "string" {
+		trimmed := trim(value)
+		if trimmed == "" {
+			return to_json(fallback_obj)
+		}
+		err := null
+		parsed := null
+		try {
+			parsed = parse_json(trimmed)
+		} except e {
+			err = e
+		}
+		if type(err) == "null" {
+			return to_json(parsed)
+		}
+	}
+	if type(value) == "dict" || type(value) == "array" {
+		return to_json(value)
+	}
+	return to_json(fallback_obj)
+}
+
+export parse_list_query := func(query, defaults) {
+	query_dict := query
+	if type(query_dict) != "dict" {
+		query_dict = {}
+	}
+
+	default_limit := int_or(dict_get_or(defaults, "default_limit", 50), 50)
+	max_limit := int_or(dict_get_or(defaults, "max_limit", 200), 200)
+	default_offset := int_or(dict_get_or(defaults, "default_offset", 0), 0)
+	default_sort_by := to_lower(trim(to_string(dict_get_or(defaults, "default_sort_by", "id"))))
+	default_sort_dir := to_lower(trim(to_string(dict_get_or(defaults, "default_sort_dir", "asc"))))
+
+	if default_limit < 1 {
+		default_limit = 1
+	}
+	if max_limit < 1 {
+		max_limit = default_limit
+	}
+	if default_limit > max_limit {
+		default_limit = max_limit
+	}
+	if default_offset < 0 {
+		default_offset = 0
+	}
+	if default_sort_by == "" {
+		default_sort_by = "id"
+	}
+	if default_sort_dir != "asc" && default_sort_dir != "desc" {
+		default_sort_dir = "asc"
+	}
+
+	limit := default_limit
+	offset := default_offset
+	if has_key(query_dict, "limit") == 1 {
+		limit = to_int(query_dict["limit"])
+	}
+	if has_key(query_dict, "offset") == 1 {
+		offset = to_int(query_dict["offset"])
+	}
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > max_limit {
+		limit = max_limit
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	sort_by := to_lower(trim(to_string(dict_get_or(query_dict, "sort_by", default_sort_by))))
+	sort_dir := to_lower(trim(to_string(dict_get_or(query_dict, "sort_dir", default_sort_dir))))
+	if sort_dir != "asc" && sort_dir != "desc" {
+		sort_dir = default_sort_dir
+	}
+
+	allowed_sort_fields := dict_get_or(defaults, "allowed_sort_fields", [])
+	is_allowed_sort_field := false
+	if type(allowed_sort_fields) == "array" {
+		for allowed_field in allowed_sort_fields {
+			field_name := to_lower(trim(to_string(allowed_field)))
+			if field_name != "" && sort_by == field_name {
+				is_allowed_sort_field = true
+			}
+		}
+	}
+	if is_allowed_sort_field == false {
+		sort_by = default_sort_by
+	}
+
+	return {
+		"limit": limit,
+		"offset": offset,
+		"sort_by": sort_by,
+		"sort_dir": sort_dir
+	}
+}
