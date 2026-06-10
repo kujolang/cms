@@ -58,7 +58,7 @@ Current conclusion:
   - Existing explicit override knobs still work for controlled environments.
 - **Validation/testing expectations**:
   - `CMS_TEST_PORT=53012 bash scripts/integration-enterprise-security.sh`
-  - `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo -v`
+  - `KUJO_BIN=/path/to/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo -v`
 - **Dependencies/unknowns**:
   - Decide final entropy rule (length-only vs. character-class rule).
 
@@ -91,7 +91,7 @@ Current conclusion:
 - **Validation/testing expectations**:
   - Extend `scripts/integration-stage2-round3-idempotency.sh`
   - `CMS_TEST_PORT=53014 bash scripts/integration-stage1.sh`
-  - `KUJO_BIN=/Users/robertdevore/2026/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo -v`
+  - `KUJO_BIN=/path/to/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo -v`
 - **Dependencies/unknowns**:
   - Prioritize endpoints by write criticality and external retry frequency.
 
