@@ -16,7 +16,7 @@ else
 	exit 1
 fi
 
-WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kujo-cms-callback-helper-repro.XXXXXX")"
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cms-callback-helper-repro.XXXXXX")"
 WORK_DIR="${WORK_ROOT}/work"
 
 pick_free_port() {

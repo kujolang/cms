@@ -95,7 +95,7 @@ cp .env.example .env
 2. Start the API:
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 /path/to/kujo/target/debug/kujo run --interpreter backend/runtime/main.kujo
 ```
 
@@ -118,14 +118,14 @@ Recommended env overrides:
 Contract tests:
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 /path/to/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo
 ```
 
 Full release gate:
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
 ```
 

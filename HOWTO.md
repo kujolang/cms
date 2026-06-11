@@ -60,7 +60,7 @@ This guide assumes your runtime is at:
 From the CMS repository root:
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 cp .env.example .env
 ```
 
@@ -78,7 +78,7 @@ Minimum `.env` values to verify:
 ### Foreground mode (recommended while developing)
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 /path/to/kujo/target/debug/kujo run --interpreter main.kujo
 ```
 
@@ -91,7 +91,7 @@ Expected startup output includes:
 ### Background mode (if you want your shell back)
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 mkdir -p results
 CMS_API_PORT=4200 \
 CMS_API_HOST=127.0.0.1 \
@@ -121,7 +121,7 @@ Press `Ctrl+C`.
 ### If running in background with PID file
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 kill "$(cat results/dev_server_4200.pid)"
 rm -f results/dev_server_4200.pid
 ```
@@ -370,7 +370,7 @@ Use an explicit runtime binary to avoid drift:
 
 ```bash
 export KUJO_BIN=/path/to/kujo/target/debug/kujo
-cd /path/to/kujo-cms
+cd /path/to/cms
 ```
 
 Run all gates:
@@ -399,14 +399,14 @@ Perf report output:
 You can also run all gates with one command:
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
 ```
 
 If you want to skip perf in a fast CI-style pass:
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
 ```
 
@@ -426,21 +426,21 @@ CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/ru
 Run migration safety validation (fresh boot + restart idempotence):
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/migration-safety.sh
 ```
 
 Create a backup:
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 bash scripts/backup-db.sh ./cms.db
 ```
 
 Restore a backup:
 
 ```bash
-cd /path/to/kujo-cms
+cd /path/to/cms
 bash scripts/restore-db.sh ./results/backups/<backup-file>.bak ./cms.db --force
 ```
 
