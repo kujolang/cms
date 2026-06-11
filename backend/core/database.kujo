@@ -192,7 +192,7 @@ func ensure_baseline_data(db, cfg) {
 		"plugin_key",
 		"analytics",
 		"INSERT INTO plugins (plugin_key, name, version, status, capabilities_json, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		["analytics", "Analytics Connector", "0.1.0", "inactive", to_json(["event.track", "event.pageview"]), to_json({"provider": "internal"}), now_ts, now_ts]
+		["analytics", "Analytics Connector", "1.0.0", "inactive", to_json(["event.track", "event.pageview"]), to_json({"provider": "internal"}), now_ts, now_ts]
 	)
 	if seed_7["ok"] == false {
 		return seed_7

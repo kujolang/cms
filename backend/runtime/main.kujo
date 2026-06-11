@@ -141,7 +141,7 @@ func build_api_contract(cfg, schema_version) {
 		"openapi": "3.1.0",
 		"info": {
 			"title": to_string(dict_get_or(cfg, "service_name", "CMS API")),
-			"version": to_string(dict_get_or(cfg, "service_version", "0.1.0"))
+			"version": to_string(dict_get_or(cfg, "service_version", "1.0.0"))
 		},
 		"servers": [
 			{"url": site_url}

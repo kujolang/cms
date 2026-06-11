@@ -8,7 +8,7 @@ export load_config_backend_impl := func(overrides) {
 
 	cfg := {
 		"service_name": "CMS API",
-		"service_version": "0.1.0",
+		"service_version": "1.0.0",
 		"environment": to_lower(env_or("CMS_ENV", "development")),
 		"api_host": env_or("CMS_API_HOST", "127.0.0.1"),
 		"port": parse_positive_int_env("CMS_API_PORT", 4200),

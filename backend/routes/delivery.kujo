@@ -234,7 +234,7 @@ export build_sitemap_xml := func(cfg, rows) {
 export build_rss_xml := func(cfg, rows) {
 	site_url := get_site_url(cfg)
 	service_name := xml_escape(to_string(dict_get_or(cfg, "service_name", "CMS API")))
-	service_version := xml_escape(to_string(dict_get_or(cfg, "service_version", "0.1.0")))
+	service_version := xml_escape(to_string(dict_get_or(cfg, "service_version", "1.0.0")))
 
 	lines := [
 		"<?xml version=\"1.0\" encoding=\"UTF-8\"?>",

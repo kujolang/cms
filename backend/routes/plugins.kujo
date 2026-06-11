@@ -578,10 +578,10 @@ export register_plugin_routes := func(server, ctx) {
 
 		plugin_key := trim(to_string(dict_get_or(body, "plugin_key", "")))
 		name := trim(to_string(dict_get_or(body, "name", "")))
-		version := trim(to_string(dict_get_or(body, "version", "0.1.0")))
+		version := trim(to_string(dict_get_or(body, "version", "1.0.0")))
 		status := to_lower(trim(to_string(dict_get_or(body, "status", "inactive"))))
 		if version == "" {
-			version = "0.1.0"
+			version = "1.0.0"
 		}
 		if status == "" {
 			status = "inactive"
