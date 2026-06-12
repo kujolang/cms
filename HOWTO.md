@@ -15,24 +15,16 @@ This project is an API-first CMS backend implemented in Kujo with SQLite storage
 
 Main runtime entrypoint:
 
-- `main.kujo`
+- `backend/runtime/main.kujo`
 
 Core local modules used by the runtime:
 
-- `config.kujo`
-- `database.kujo`
-- `migrations.kujo`
-- `http.kujo`
-- `auth.kujo`
-- `delivery.kujo`
-- `content_types.kujo`
-- `taxonomies.kujo`
-- `entries.kujo`
-- `media.kujo`
-- `menus.kujo`
-- `plugins.kujo`
-- `themes.kujo`
-- `authz.kujo`
+| Area | Paths |
+| --- | --- |
+| Config | `backend/config/config.kujo` |
+| Core transport and persistence | `backend/core/*.kujo` |
+| Auth and authorization | `backend/modules/*.kujo` |
+| Domain routes | `backend/routes/*.kujo` |
 
 ## 2) Prerequisites
 
@@ -79,7 +71,7 @@ Minimum `.env` values to verify:
 
 ```bash
 cd /path/to/cms
-/path/to/kujo/target/debug/kujo run --interpreter main.kujo
+/path/to/kujo/target/debug/kujo run --interpreter backend/runtime/main.kujo
 ```
 
 Expected startup output includes:
@@ -87,6 +79,15 @@ Expected startup output includes:
 - `CMS API`
 - `Server: http://127.0.0.1:<port>` when `CMS_API_HOST=127.0.0.1`
 - `Press Ctrl+C to stop`
+
+Expected local output shape:
+
+```text
+CMS API
+Server: http://127.0.0.1:4200
+...
+Press Ctrl+C to stop
+```
 
 ### Background mode (if you want your shell back)
 
@@ -98,7 +99,7 @@ CMS_API_HOST=127.0.0.1 \
 CMS_SITE_URL=http://127.0.0.1:4200 \
 CMS_DB_PATH=results/dev_4200.db \
 CMS_API_TOKEN=change-me-in-production \
-/path/to/kujo/target/debug/kujo run --interpreter main.kujo \
+/path/to/kujo/target/debug/kujo run --interpreter backend/runtime/main.kujo \
   > results/dev_server_4200.log 2>&1 &
 echo $! > results/dev_server_4200.pid
 ```
@@ -142,6 +143,8 @@ Most write endpoints require bearer auth.
 ```bash
 export CMS_TOKEN="change-me-in-production"
 export CMS_BASE="http://127.0.0.1:4200"
+auth=(-H "Authorization: Bearer ${CMS_TOKEN}")
+json=("${auth[@]}" -H "Content-Type: application/json")
 ```
 
 Header pattern:
@@ -157,14 +160,9 @@ The examples below are intentionally practical and minimal.
 ## 8.1 Core + Delivery
 
 ```bash
-curl -sS "${CMS_BASE}/"
-curl -sS "${CMS_BASE}/health"
-curl -sS "${CMS_BASE}/v1"
-curl -sS "${CMS_BASE}/robots.txt"
-curl -sS "${CMS_BASE}/.well-known/security.txt"
-curl -sS "${CMS_BASE}/sitemap.xml"
-curl -sS "${CMS_BASE}/rss.xml"
-curl -sS "${CMS_BASE}/llms.txt"
+for path in / /health /v1 /robots.txt /.well-known/security.txt /sitemap.xml /rss.xml /llms.txt; do
+  curl -sS "${CMS_BASE}${path}"
+done
 ```
 
 ## 8.2 Content Types
@@ -173,8 +171,7 @@ Create:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/content-types" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"type_key":"news","label":"News","singular_label":"News Item"}'
 ```
 
@@ -190,8 +187,7 @@ Create taxonomy:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/taxonomies" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"taxonomy_key":"topic","label":"Topic","description":"Topic taxonomy"}'
 ```
 
@@ -199,8 +195,7 @@ Create term (replace `<taxonomy_id>`):
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/taxonomies/<taxonomy_id>/terms" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"name":"Platform","slug":"platform"}'
 ```
 
@@ -210,8 +205,7 @@ Create entry:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/entries" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"content_type_key":"news","title":"First Post","slug":"first-post","status":"published","body":"Hello API"}'
 ```
 
@@ -237,8 +231,7 @@ Create revision snapshot:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/entries/<entry_id>/revisions" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"note":"checkpoint before major edit"}'
 ```
 
@@ -252,23 +245,22 @@ Restore a revision (replace `<revision_id>`):
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/entries/<entry_id>/revisions/<revision_id>/restore" \
-  -H "Authorization: Bearer ${CMS_TOKEN}"
+  "${auth[@]}"
 ```
 
 Run scheduler:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/entries/scheduler/run" \
-  -H "Authorization: Bearer ${CMS_TOKEN}"
+  "${auth[@]}"
 ```
 
 Acquire lock:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/entry-locks/acquire" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
+  "${json[@]}" \
   -H "X-Lock-Session: editor-a" \
-  -H "Content-Type: application/json" \
   --data '{"entry_id":<entry_id>,"session_id":"editor-a","note":"editing"}'
 ```
 
@@ -282,9 +274,8 @@ Release lock:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/entry-locks/release" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
+  "${json[@]}" \
   -H "X-Lock-Session: editor-a" \
-  -H "Content-Type: application/json" \
   --data '{"entry_id":<entry_id>,"session_id":"editor-a"}'
 ```
 
@@ -292,8 +283,7 @@ curl -sS -X POST "${CMS_BASE}/v1/entry-locks/release" \
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/media" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"url":"https://example.com/image.jpg","mime_type":"image/jpeg","alt_text":"Example image"}'
 
 curl -sS "${CMS_BASE}/v1/media"
@@ -303,13 +293,11 @@ curl -sS "${CMS_BASE}/v1/media"
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/menus" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"name":"Main Navigation","location":"primary"}'
 
 curl -sS -X POST "${CMS_BASE}/v1/menus/<menu_id>/items" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"label":"Home","item_type":"custom","target":"/","sort_order":1}'
 
 curl -sS "${CMS_BASE}/v1/menus/<menu_id>/items"
@@ -319,13 +307,11 @@ curl -sS "${CMS_BASE}/v1/menus/<menu_id>/items"
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/plugins" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"name":"Example Plugin","slug":"example-plugin","version":"1.0.0","enabled":true}'
 
 curl -sS -X POST "${CMS_BASE}/v1/plugins/<plugin_id>/hooks" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"hook_name":"publish","handler_url":"https://example.com/hook","shared_secret":"secret"}'
 
 curl -sS "${CMS_BASE}/v1/plugins/<plugin_id>/hooks"
@@ -335,13 +321,11 @@ curl -sS "${CMS_BASE}/v1/plugins/<plugin_id>/hooks"
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/themes" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"name":"Default Theme","slug":"default-theme","version":"1.0.0","is_active":false}'
 
 curl -sS -X POST "${CMS_BASE}/v1/themes/<theme_id>/activate" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{}'
 
 curl -sS "${CMS_BASE}/v1/themes/active"
@@ -351,17 +335,15 @@ curl -sS "${CMS_BASE}/v1/themes/active"
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/auth/roles" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"name":"Editor","permissions":["entries:write","entries:read","taxonomies:read"]}'
 
 curl -sS -X POST "${CMS_BASE}/v1/auth/tokens" \
-  -H "Authorization: Bearer ${CMS_TOKEN}" \
-  -H "Content-Type: application/json" \
+  "${json[@]}" \
   --data '{"label":"dashboard-token","role_id":1}'
 
 curl -sS "${CMS_BASE}/v1/auth/tokens" \
-  -H "Authorization: Bearer ${CMS_TOKEN}"
+  "${auth[@]}"
 ```
 
 ## 9) Full Beta-Readiness Validation Commands

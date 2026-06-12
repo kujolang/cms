@@ -33,6 +33,12 @@ This index organizes CMS documentation by audience and workflow.
 - `contributor-one-loop-playbook.md`: contribution protocol, required validations, and done criteria
 - `next-session-enterprise-enhancement-checklist.md`: next implementation loop queue
 
+## Agent-Facing Example Policy
+
+- Canonical copyable examples live in `../README.md`, `../HOWTO.md`, this index, and `backend-architecture-notes.md`.
+- Integration scripts and `tests/` are validation surfaces; keep explicit request/response detail when it helps failures stay diagnosable.
+- Exclude ignored bulk output such as `results/` from broad readability sweeps unless a task explicitly targets generated artifacts.
+
 ## Internal Historical Notes
 
 The following files are retained as historical execution records and may be more verbose than day-to-day operator docs:

@@ -16,7 +16,17 @@ Use one loop per checklist item so behavior changes stay reviewable and easy to 
 - Preserve API v1 response shapes unless the item explicitly allows a contract change.
 - Prefer additive behavior over breaking changes.
 
-## 3. Run Smallest Relevant Validation First
+## 3. Agent And Example Hygiene
+
+Prioritize copyable examples over tests: examples should model the most token-efficient idioms we want agents to imitate.
+
+- Treat `README.md`, `HOWTO.md`, `docs/README.md`, and `docs/backend-architecture-notes.md` as canonical onboarding surfaces.
+- Treat `tests/`, integration scripts, and historical execution records as validation evidence first; do not shorten fixture detail just to reduce tokens.
+- Exclude generated/bulk paths from the main sweep unless the task explicitly targets them; for this repo, start with `-g '!results/**' -g '!target/**'`.
+- Label stale, legacy, historical, or expected-fail examples instead of leaving them mixed with copyable examples.
+- Prefer small local helpers for repeated output or example boilerplate, but keep the API behavior being demonstrated visible.
+
+## 4. Run Smallest Relevant Validation First
 
 Use the narrowest command that proves your change works:
 
@@ -25,7 +35,7 @@ Use the narrowest command that proves your change works:
 - Broad regression check: `CMS_SMOKE_PORT=4291 KUJO_BIN=/path/to/kujo bash scripts/smoke-api.sh`
 - Contract sanity: `KUJO_BIN=/path/to/kujo test-run tests/cms_contract_tests.kujo`
 
-## 4. Expand Validation To Gate Level
+## 5. Expand Validation To Gate Level
 
 Before marking done, run full release-level verification for the branch:
 
@@ -33,7 +43,7 @@ Before marking done, run full release-level verification for the branch:
 
 If full gate is too expensive for an intermediate loop, document the deferred command explicitly in the handoff note.
 
-## 5. Update Docs And Checklist
+## 6. Update Docs And Checklist
 
 For completed checklist items:
 
@@ -46,7 +56,7 @@ For completed checklist items:
 - Update `README.md` if behavior or endpoints changed.
 - Add a categorized entry in `CHANGELOG.md` (`FEATURE`, `FIX`, `TWEAK`, etc.).
 
-## 6. Done Criteria
+## 7. Done Criteria
 
 A loop is done only when all are true:
 
@@ -55,7 +65,7 @@ A loop is done only when all are true:
 - Checklist and docs are updated.
 - No unresolved runtime errors were introduced.
 
-## 7. Handoff Template
+## 8. Handoff Template
 
 Use this in PR notes or agent handoff:
 

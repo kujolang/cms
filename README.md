@@ -180,4 +180,5 @@ Key docs:
 ## Contribution
 
 - Use `docs/contributor-one-loop-playbook.md` for contribution flow and validation expectations.
+- Keep copyable examples concise and canonical; treat tests, integration scripts, and historical records as validation evidence before shortening them.
 - Keep changes scoped, behavior-compatible, and release-gate validated.
