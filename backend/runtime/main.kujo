@@ -216,6 +216,12 @@ func readiness_db_checks_enabled(cfg) {
 	return true
 }
 
+func print_lines(lines) {
+	for line in lines {
+		print(line)
+	}
+}
+
 func load_health_counts(db) {
 	err := null
 	content_types_rows := []
@@ -567,16 +573,18 @@ server = register_theme_routes(server, ctx)
 server = register_authz_routes(server, ctx)
 server = register_tenancy_routes(server, ctx)
 
-print("CMS API")
-print("Server: http://" + api_host + ":" + to_string(cfg["port"]))
-print("Database: " + cfg["db_path"])
-print("Site URL: " + cfg["site_url"])
-print("CORS origin: " + cfg["cors_origin"])
-print("Write token required: " + to_string(trim(to_string(cfg["api_token"])) != ""))
-print("Schema version: " + to_string(schema_version))
-print("Readiness DB checks: " + to_string(dict_get_or(cfg, "readiness_check_db", true)))
-print("Structured logs: " + to_string(dict_get_or(cfg, "structured_logs", true)))
-print("Modules: delivery, content_types, taxonomies, entries, media, menus, plugins, themes, authz, tenancy")
-print("Press Ctrl+C to stop")
+print_lines([
+	"CMS API",
+	"Server: http://" + api_host + ":" + to_string(cfg["port"]),
+	"Database: " + cfg["db_path"],
+	"Site URL: " + cfg["site_url"],
+	"CORS origin: " + cfg["cors_origin"],
+	"Write token required: " + to_string(trim(to_string(cfg["api_token"])) != ""),
+	"Schema version: " + to_string(schema_version),
+	"Readiness DB checks: " + to_string(dict_get_or(cfg, "readiness_check_db", true)),
+	"Structured logs: " + to_string(dict_get_or(cfg, "structured_logs", true)),
+	"Modules: delivery, content_types, taxonomies, entries, media, menus, plugins, themes, authz, tenancy",
+	"Press Ctrl+C to stop"
+])
 
 server.listen()
