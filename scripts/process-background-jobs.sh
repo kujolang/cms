@@ -6,21 +6,33 @@ DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/data/cms.db}"
 LIMIT="${CMS_BACKGROUND_JOB_PROCESS_LIMIT:-50}"
 RETRY_BASE_SEC="${CMS_BACKGROUND_JOB_RETRY_BASE_SEC:-20}"
 MAX_ATTEMPTS_DEFAULT="${CMS_BACKGROUND_JOB_MAX_ATTEMPTS:-5}"
+SCRIPT_LABEL="Background job processor"
+
+fail() {
+	echo "${SCRIPT_LABEL}: $1"
+	exit 1
+}
+
+require_command() {
+	local command_name="$1"
+	if ! command -v "${command_name}" >/dev/null 2>&1; then
+		fail "${command_name} is required"
+	fi
+}
+
+job_status() {
+	local status="$1"
+	local job_id="$2"
+	local job_type="$3"
+	echo "[${status}] job_id=${job_id} type=${job_type}"
+}
 
 if [[ ! -f "${DB_PATH}" ]]; then
-	echo "Background job processor: database not found at ${DB_PATH}"
-	exit 1
+	fail "database not found at ${DB_PATH}"
 fi
 
-if ! command -v sqlite3 >/dev/null 2>&1; then
-	echo "Background job processor: sqlite3 is required"
-	exit 1
-fi
-
-if ! command -v node >/dev/null 2>&1; then
-	echo "Background job processor: node is required"
-	exit 1
-fi
+require_command sqlite3
+require_command node
 
 if ! [[ "${LIMIT}" =~ ^[0-9]+$ ]] || [[ "${LIMIT}" -lt 1 ]]; then
 	LIMIT="50"
@@ -186,7 +198,7 @@ run_job_by_type() {
 rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, job_type, hex(payload_json), attempt_count, max_attempts FROM background_jobs WHERE status IN ('pending','retry') AND CAST(run_after AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER) ORDER BY id ASC LIMIT ${LIMIT};")"
 
 if [[ -z "${rows}" ]]; then
-	echo "Background job processor: no due jobs"
+	echo "${SCRIPT_LABEL}: no due jobs"
 	exit 0
 fi
 
@@ -236,7 +248,7 @@ while IFS='|' read -r job_id job_type payload_hex attempt_count max_attempts; do
 		sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'completed', attempt_count = ${next_attempt_count}, last_error = NULL, result_json = '${result_sql}', completed_at = '${now_value}', updated_at = '${now_value}' WHERE id = ${job_id};"
 		write_audit_row "background.job.completed" "200" "${job_id}" "${result_json}"
 		completed=$((completed + 1))
-		echo "[COMPLETED] job_id=${job_id} type=${job_type}"
+		job_status "COMPLETED" "${job_id}" "${job_type}"
 		continue
 	fi
 
@@ -252,7 +264,7 @@ while IFS='|' read -r job_id job_type payload_hex attempt_count max_attempts; do
 		sqlite3 "${DB_PATH}" "INSERT OR REPLACE INTO background_job_dead_letters (job_id, job_type, payload_json, attempt_count, max_attempts, last_error, failed_at, created_at) SELECT id, job_type, payload_json, attempt_count, max_attempts, '${error_sql}', '${now_value}', '${now_value}' FROM background_jobs WHERE id = ${job_id};"
 		write_audit_row "background.job.dead_letter" "500" "${job_id}" "{\"job_type\":\"${job_type}\",\"error\":\"${error_sql}\",\"attempt\":${next_attempt_count},\"max_attempts\":${max_attempts}}"
 		dead_lettered=$((dead_lettered + 1))
-		echo "[DEAD-LETTER] job_id=${job_id} type=${job_type}"
+		job_status "DEAD-LETTER" "${job_id}" "${job_type}"
 		continue
 	fi
 
@@ -260,7 +272,7 @@ while IFS='|' read -r job_id job_type payload_hex attempt_count max_attempts; do
 	sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'retry', attempt_count = ${next_attempt_count}, last_error = '${error_sql}', run_after = '${next_run_after}', updated_at = '${now_value}' WHERE id = ${job_id};"
 	write_audit_row "background.job.retry" "429" "${job_id}" "{\"job_type\":\"${job_type}\",\"attempt\":${next_attempt_count},\"next_run_after\":\"${next_run_after}\"}"
 	retried=$((retried + 1))
-	echo "[RETRY] job_id=${job_id} type=${job_type}"
+	job_status "RETRY" "${job_id}" "${job_type}"
 done <<< "${rows}"
 
-echo "Background job processor summary: processed=${processed} completed=${completed} retried=${retried} dead_lettered=${dead_lettered}"
+echo "${SCRIPT_LABEL} summary: processed=${processed} completed=${completed} retried=${retried} dead_lettered=${dead_lettered}"

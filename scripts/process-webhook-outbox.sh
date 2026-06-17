@@ -7,16 +7,33 @@ LIMIT="${CMS_WEBHOOK_PROCESS_LIMIT:-50}"
 RETRY_BASE_SEC="${CMS_WEBHOOK_RETRY_BASE_SEC:-30}"
 CONNECT_TIMEOUT_SEC="${CMS_WEBHOOK_CONNECT_TIMEOUT_SEC:-3}"
 MAX_TIME_SEC="${CMS_WEBHOOK_MAX_TIME_SEC:-10}"
+SCRIPT_LABEL="Webhook outbox processor"
+
+fail() {
+	echo "${SCRIPT_LABEL}: $1"
+	exit 1
+}
+
+require_command() {
+	local command_name="$1"
+	if ! command -v "${command_name}" >/dev/null 2>&1; then
+		fail "${command_name} is required"
+	fi
+}
+
+delivery_status() {
+	local status="$1"
+	local outbox_id="$2"
+	local event_type="$3"
+	local details="$4"
+	echo "[${status}] outbox_id=${outbox_id} event=${event_type} ${details}"
+}
 
 if [[ ! -f "${DB_PATH}" ]]; then
-	echo "Webhook outbox processor: database not found at ${DB_PATH}"
-	exit 1
+	fail "database not found at ${DB_PATH}"
 fi
 
-if ! command -v sqlite3 >/dev/null 2>&1; then
-	echo "Webhook outbox processor: sqlite3 is required"
-	exit 1
-fi
+require_command sqlite3
 
 sql_escape() {
 	printf '%s' "$1" | sed "s/'/''/g"
@@ -33,7 +50,7 @@ now_epoch() {
 rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, hook_id, event_id, event_type, hex(payload_json), hex(handler_url), hex(shared_secret), attempt_count, max_attempts FROM webhook_outbox WHERE status IN ('pending','retry') AND CAST(next_attempt_at AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER) ORDER BY id ASC LIMIT ${LIMIT};")"
 
 if [[ -z "${rows}" ]]; then
-	echo "Webhook outbox processor: no due deliveries"
+	echo "${SCRIPT_LABEL}: no due deliveries"
 	exit 0
 fi
 
@@ -70,7 +87,7 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 		next_attempt_count=$((attempt_count + 1))
 		sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'delivered', attempt_count = ${next_attempt_count}, last_error = NULL, last_status_code = ${http_status}, delivered_at = '${now_value}', updated_at = '${now_value}' WHERE id = ${outbox_id};"
 		delivered=$((delivered + 1))
-		echo "[DELIVERED] outbox_id=${outbox_id} event=${event_type} status=${http_status}"
+		delivery_status "DELIVERED" "${outbox_id}" "${event_type}" "status=${http_status}"
 		rm -f "${response_file}"
 		continue
 	fi
@@ -88,15 +105,15 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 		sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'dead_letter', attempt_count = ${next_attempt_count}, last_error = '${escaped_error}', last_status_code = ${http_status:-0}, updated_at = '${now_value}' WHERE id = ${outbox_id};"
 		sqlite3 "${DB_PATH}" "INSERT OR REPLACE INTO webhook_dead_letters (outbox_id, hook_id, event_id, event_type, payload_json, handler_url, shared_secret, attempt_count, last_error, last_status_code, failed_at, created_at) SELECT id, hook_id, event_id, event_type, payload_json, handler_url, shared_secret, attempt_count, '${escaped_error}', ${http_status:-0}, '${now_value}', '${now_value}' FROM webhook_outbox WHERE id = ${outbox_id};"
 		dead_lettered=$((dead_lettered + 1))
-		echo "[DEAD-LETTER] outbox_id=${outbox_id} event=${event_type} attempts=${next_attempt_count}/${max_attempts}"
+		delivery_status "DEAD-LETTER" "${outbox_id}" "${event_type}" "attempts=${next_attempt_count}/${max_attempts}"
 	else
 		next_attempt_at=$((now_value + (RETRY_BASE_SEC * next_attempt_count)))
 		sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'retry', attempt_count = ${next_attempt_count}, last_error = '${escaped_error}', last_status_code = ${http_status:-0}, next_attempt_at = '${next_attempt_at}', updated_at = '${now_value}' WHERE id = ${outbox_id};"
 		retried=$((retried + 1))
-		echo "[RETRY] outbox_id=${outbox_id} event=${event_type} attempts=${next_attempt_count}/${max_attempts}"
+		delivery_status "RETRY" "${outbox_id}" "${event_type}" "attempts=${next_attempt_count}/${max_attempts}"
 	fi
 
 	rm -f "${response_file}"
 done <<< "${rows}"
 
-echo "Webhook outbox processor summary: processed=${processed} delivered=${delivered} retried=${retried} dead_lettered=${dead_lettered}"
+echo "${SCRIPT_LABEL} summary: processed=${processed} delivered=${delivered} retried=${retried} dead_lettered=${dead_lettered}"

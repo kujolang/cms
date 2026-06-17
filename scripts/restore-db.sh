@@ -2,9 +2,25 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+USAGE="Usage: bash scripts/restore-db.sh <backup_db_path> [target_db_path] [--force]"
+
+usage() {
+	echo "${USAGE}"
+}
+
+fail() {
+	for line in "$@"; do
+		echo "${line}"
+	done
+	exit 1
+}
+
+info() {
+	echo "$1"
+}
 
 if [[ $# -lt 1 ]]; then
-	echo "Usage: bash scripts/restore-db.sh <backup_db_path> [target_db_path] [--force]"
+	usage
 	exit 1
 fi
 
@@ -13,20 +29,19 @@ TARGET_DB="${2:-${CMS_DB_PATH:-${ROOT_DIR}/cms.db}}"
 FORCE_FLAG="${3:-}"
 
 if [[ ! -f "${BACKUP_DB}" ]]; then
-	echo "Backup file not found: ${BACKUP_DB}"
-	exit 1
+	fail "Backup file not found: ${BACKUP_DB}"
 fi
 
 if [[ -f "${TARGET_DB}" ]] && [[ "${FORCE_FLAG}" != "--force" ]]; then
-	echo "Target DB already exists: ${TARGET_DB}"
-	echo "Pass --force as the third argument to overwrite."
-	exit 1
+	fail \
+		"Target DB already exists: ${TARGET_DB}" \
+		"Pass --force as the third argument to overwrite."
 fi
 
 if [[ -f "${TARGET_DB}" ]] && lsof "${TARGET_DB}" >/dev/null 2>&1; then
-	echo "Refusing restore while target DB is actively opened by another process: ${TARGET_DB}"
-	echo "Stop the CMS server first, then retry."
-	exit 1
+	fail \
+		"Refusing restore while target DB is actively opened by another process: ${TARGET_DB}" \
+		"Stop the CMS server first, then retry."
 fi
 
 mkdir -p "$(dirname "${TARGET_DB}")"
@@ -45,4 +60,4 @@ else
 	rm -f "${TARGET_DB}-shm" || true
 fi
 
-echo "Restore completed: ${TARGET_DB}"
+info "Restore completed: ${TARGET_DB}"

@@ -3,16 +3,25 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/data/cms.db}"
+SCRIPT_LABEL="Media maintenance"
+
+fail() {
+	echo "${SCRIPT_LABEL}: $1"
+	exit 1
+}
+
+require_command() {
+	local command_name="$1"
+	if ! command -v "${command_name}" >/dev/null 2>&1; then
+		fail "${command_name} is required"
+	fi
+}
 
 if [[ ! -f "${DB_PATH}" ]]; then
-	echo "Media maintenance: database not found at ${DB_PATH}"
-	exit 1
+	fail "database not found at ${DB_PATH}"
 fi
 
-if ! command -v sqlite3 >/dev/null 2>&1; then
-	echo "Media maintenance: sqlite3 is required"
-	exit 1
-fi
+require_command sqlite3
 
 total_items="$(sqlite3 "${DB_PATH}" "SELECT COUNT(*) FROM media_items;")"
 missing_storage_path="$(sqlite3 "${DB_PATH}" "SELECT COUNT(*) FROM media_items WHERE TRIM(COALESCE(storage_path, '')) = '';")"

@@ -5,21 +5,26 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/data/cms.db}"
 LIMIT="${CMS_WEBHOOK_ENQUEUE_LIMIT:-200}"
 MAX_ATTEMPTS="${CMS_WEBHOOK_MAX_ATTEMPTS:-5}"
+SCRIPT_LABEL="Webhook enqueue"
+
+fail() {
+	echo "${SCRIPT_LABEL}: $1"
+	exit 1
+}
+
+require_command() {
+	local command_name="$1"
+	if ! command -v "${command_name}" >/dev/null 2>&1; then
+		fail "${command_name} is required"
+	fi
+}
 
 if [[ ! -f "${DB_PATH}" ]]; then
-	echo "Webhook enqueue: database not found at ${DB_PATH}"
-	exit 1
+	fail "database not found at ${DB_PATH}"
 fi
 
-if ! command -v sqlite3 >/dev/null 2>&1; then
-	echo "Webhook enqueue: sqlite3 is required"
-	exit 1
-fi
-
-if ! command -v node >/dev/null 2>&1; then
-	echo "Webhook enqueue: node is required"
-	exit 1
-fi
+require_command sqlite3
+require_command node
 
 sql_escape() {
 	printf '%s' "$1" | sed "s/'/''/g"
@@ -140,7 +145,7 @@ fi
 AUDIT_ROWS="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, action, target_id, hex(details_json) FROM audit_log WHERE id > ${LAST_AUDIT_ID} AND status_code >= 200 AND status_code < 300 AND action IN ('entry.create', 'entry.update', 'entry.patch', 'entry.delete') ORDER BY id ASC LIMIT ${LIMIT};")"
 
 if [[ -z "${AUDIT_ROWS}" ]]; then
-	echo "Webhook enqueue: no new audit events"
+	echo "${SCRIPT_LABEL}: no new audit events"
 	exit 0
 fi
 
@@ -194,4 +199,4 @@ done <<< "${AUDIT_ROWS}"
 
 sqlite3 "${DB_PATH}" "UPDATE webhook_dispatch_state SET last_audit_id = ${HIGHEST_AUDIT_ID}, updated_at = strftime('%s','now') WHERE id = 1;"
 
-echo "Webhook enqueue summary: processed=${PROCESSED_TOTAL} enqueued=${ENQUEUED_TOTAL} skipped=${SKIPPED_TOTAL} last_audit_id=${HIGHEST_AUDIT_ID}"
+echo "${SCRIPT_LABEL} summary: processed=${PROCESSED_TOTAL} enqueued=${ENQUEUED_TOTAL} skipped=${SKIPPED_TOTAL} last_audit_id=${HIGHEST_AUDIT_ID}"

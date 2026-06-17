@@ -36,6 +36,7 @@ This index organizes CMS documentation by audience and workflow.
 ## Agent-Facing Example Policy
 
 - Canonical copyable examples live in `../README.md`, `../HOWTO.md`, this index, and `backend-architecture-notes.md`.
+- Small operator scripts should prefer local helpers for repeated fail/status/summary output when the helper keeps the operation visible.
 - Integration scripts and `tests/` are validation surfaces; keep explicit request/response detail when it helps failures stay diagnosable.
 - Exclude ignored bulk output such as `results/` from broad readability sweeps unless a task explicitly targets generated artifacts.
 

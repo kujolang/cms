@@ -25,6 +25,7 @@ Prioritize copyable examples over tests: examples should model the most token-ef
 - Exclude generated/bulk paths from the main sweep unless the task explicitly targets them; for this repo, start with `-g '!results/**' -g '!target/**'`.
 - Label stale, legacy, historical, or expected-fail examples instead of leaving them mixed with copyable examples.
 - Prefer small local helpers for repeated output or example boilerplate, but keep the API behavior being demonstrated visible.
+- For operator scripts, use local `fail`, `require_command`, and status helpers once the same echo/exit pattern repeats.
 
 ## 4. Run Smallest Relevant Validation First
 

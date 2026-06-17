@@ -7,9 +7,22 @@ JOB_TYPE=""
 PAYLOAD_JSON="{}"
 RUN_AFTER=""
 MAX_ATTEMPTS="${CMS_BACKGROUND_JOB_MAX_ATTEMPTS:-5}"
+SCRIPT_LABEL="Background job enqueue"
 
 usage() {
 	echo "Usage: $0 --job-type <type> [--payload-json <json>] [--run-after <epoch_seconds>] [--max-attempts <n>]"
+}
+
+fail() {
+	echo "${SCRIPT_LABEL}: $1"
+	exit 1
+}
+
+require_command() {
+	local command_name="$1"
+	if ! command -v "${command_name}" >/dev/null 2>&1; then
+		fail "${command_name} is required"
+	fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -46,29 +59,20 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [[ -z "${JOB_TYPE}" ]]; then
-	echo "Background job enqueue: --job-type is required"
+	echo "${SCRIPT_LABEL}: --job-type is required"
 	usage
 	exit 1
 fi
 
 if [[ ! -f "${DB_PATH}" ]]; then
-	echo "Background job enqueue: database not found at ${DB_PATH}"
-	exit 1
+	fail "database not found at ${DB_PATH}"
 fi
 
-if ! command -v sqlite3 >/dev/null 2>&1; then
-	echo "Background job enqueue: sqlite3 is required"
-	exit 1
-fi
-
-if ! command -v node >/dev/null 2>&1; then
-	echo "Background job enqueue: node is required"
-	exit 1
-fi
+require_command sqlite3
+require_command node
 
 if ! [[ "${MAX_ATTEMPTS}" =~ ^[0-9]+$ ]] || [[ "${MAX_ATTEMPTS}" -lt 1 ]]; then
-	echo "Background job enqueue: max attempts must be a positive integer"
-	exit 1
+	fail "max attempts must be a positive integer"
 fi
 
 if [[ -z "${RUN_AFTER}" ]]; then
@@ -76,8 +80,7 @@ if [[ -z "${RUN_AFTER}" ]]; then
 fi
 
 if ! [[ "${RUN_AFTER}" =~ ^[0-9]+$ ]]; then
-	echo "Background job enqueue: run-after must be epoch seconds"
-	exit 1
+	fail "run-after must be epoch seconds"
 fi
 
 PAYLOAD_JSON="$(printf '%s' "${PAYLOAD_JSON}" | node -e '
@@ -105,4 +108,4 @@ sqlite3 "${DB_PATH}" "INSERT INTO background_jobs (job_type, payload_json, statu
 
 job_id="$(sqlite3 "${DB_PATH}" "SELECT id FROM background_jobs ORDER BY id DESC LIMIT 1;")"
 
-echo "Background job enqueue: job_id=${job_id} type=${JOB_TYPE} run_after=${RUN_AFTER} max_attempts=${MAX_ATTEMPTS}"
+echo "${SCRIPT_LABEL}: job_id=${job_id} type=${JOB_TYPE} run_after=${RUN_AFTER} max_attempts=${MAX_ATTEMPTS}"

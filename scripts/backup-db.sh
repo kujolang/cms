@@ -6,16 +6,25 @@ RESULTS_DIR="${ROOT_DIR}/results"
 BACKUP_DIR="${CMS_BACKUP_DIR:-${RESULTS_DIR}/backups}"
 
 SOURCE_DB="${1:-${CMS_DB_PATH:-${ROOT_DIR}/cms.db}}"
+fail() {
+	for line in "$@"; do
+		echo "${line}"
+	done
+	exit 1
+}
+
+info() {
+	echo "$1"
+}
 
 if [[ ! -f "${SOURCE_DB}" ]]; then
-	echo "Source database file not found: ${SOURCE_DB}"
-	exit 1
+	fail "Source database file not found: ${SOURCE_DB}"
 fi
 
 if lsof "${SOURCE_DB}" >/dev/null 2>&1; then
-	echo "Refusing backup while database file is actively opened by another process: ${SOURCE_DB}"
-	echo "Stop the CMS server first, then retry."
-	exit 1
+	fail \
+		"Refusing backup while database file is actively opened by another process: ${SOURCE_DB}" \
+		"Stop the CMS server first, then retry."
 fi
 
 mkdir -p "${BACKUP_DIR}"
@@ -42,5 +51,5 @@ fi
 	echo "created_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "${MANIFEST_FILE}"
 
-echo "Backup completed: ${BACKUP_DB}"
-echo "Manifest: ${MANIFEST_FILE}"
+info "Backup completed: ${BACKUP_DB}"
+info "Manifest: ${MANIFEST_FILE}"
