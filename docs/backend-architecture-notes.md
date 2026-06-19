@@ -18,6 +18,8 @@ This document defines the stable architecture contract for CMS internals.
 | Modules | Reusable domain/security logic | `backend/modules/*.kujo` |
 | Routes | API endpoint composition and request handling | `backend/routes/*.kujo` |
 
+Empty migration-era placeholders such as `backend/app` and `backend/bootstrap` are no longer part of the active source tree. Add new folders only when they have executable source, tests, or documentation-backed ownership.
+
 ## Import and Execution Policy
 
 - Use dotted backend imports only (for example, `from backend.core.http import fail`).
@@ -64,5 +66,6 @@ For high-risk internal refactors:
 ## Current State
 
 - Root compatibility wrapper `.kujo` files have been removed.
+- Redundant tracked `.gitkeep` placeholders have been removed from populated backend folders.
 - Backend module imports and runtime entrypoint migration are complete.
 - Architecture is aligned to a backend-first, enterprise-ready layout.
