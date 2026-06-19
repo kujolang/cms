@@ -4,6 +4,12 @@ CMS is a server-first showcase/proof app that demonstrates local Kujo applicatio
 
 It boots from `backend/runtime/main.kujo`; there is no standalone CLI wrapper to validate.
 
+## Production Readiness Posture
+
+CMS is production-capable as a Kujo showcase backend when deployed with rotated secrets, explicit CORS policy, durable storage/backup practices, and the documented release gate. It is not presented as universally enterprise-complete out of the box: default branch protection enforcement remains the known pre-launch governance gate, and teams should still run their own infrastructure, compliance, and threat-model review before public production use.
+
+The current codebase is intentionally backend-first. Active source lives under `backend/config`, `backend/core`, `backend/modules`, `backend/routes`, and `backend/runtime`; empty migration-era placeholder folders are not part of the current architecture.
+
 ## Why CMS
 
 - Server-first architecture with clear module ownership under `backend/`
@@ -76,7 +82,8 @@ Operations controls:
 
 Code and validation status:
 
-- Contract tests, smoke API checks, compatibility startup, and the release gate all pass.
+- Contract tests, smoke API checks, compatibility startup, and the release gate all pass as of the 2026-06-19 hardening review.
+- Contract coverage includes safe pagination parsing for malformed list query input across list endpoint helpers.
 - The verified release-gate run disables performance checks with `CMS_GATE_RUN_PERF=false`.
 - Repository code and docs are aligned to the backend-first architecture.
 
@@ -112,6 +119,13 @@ Recommended env overrides:
 - `CMS_API_TOKEN`
 - `CMS_DB_PATH`
 - `CMS_SITE_URL`
+- `CMS_CORS_ORIGIN`
+- `CMS_RATE_LIMIT_MODE`
+- `CMS_IDEMPOTENCY_ENABLED`
+- `CMS_PLUGIN_HOOK_URL_ALLOWLIST`
+- `CMS_PLUGIN_HOOK_URL_DENYLIST`
+- `CMS_READINESS_CHECK_DB`
+- `CMS_METRICS_ENABLED`
 
 ## Validation and Release Gate
 

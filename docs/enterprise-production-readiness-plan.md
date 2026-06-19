@@ -5,7 +5,7 @@ This plan tracks launch-readiness gates for CMS.
 ## Current Posture
 
 - Code readiness: complete
-- Validation readiness: complete for the verified release gate (performance disabled)
+- Validation readiness: complete for the 2026-06-19 verified release gate (performance disabled)
 - Governance readiness: one open pre-launch gate
 
 ## Launch Gates

@@ -31,7 +31,8 @@ This index organizes CMS documentation by audience and workflow.
 ## Contributor Workflow
 
 - `contributor-one-loop-playbook.md`: contribution protocol, required validations, and done criteria
-- `next-session-enterprise-enhancement-checklist.md`: next implementation loop queue
+- `next-session-enterprise-enhancement-checklist-v0.3.md`: current next implementation loop queue
+- `next-session-enterprise-enhancement-checklist.md`: completed v0.1 -> v0.2 implementation queue
 
 ## Agent-Facing Example Policy
 
