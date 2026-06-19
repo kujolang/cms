@@ -1,4 +1,4 @@
-from backend.core.utils import dict_get_or
+from backend.core.utils import dict_get_or, parse_list_query
 from backend.core.http import fail, guard_request, write_audit
 
 get_tenant_scope := func(auth_context) {
@@ -75,25 +75,18 @@ export register_tenancy_routes := func(server, ctx) {
 
 		cfg := ctx["cfg"]
 		query := dict_get_or(req, "query", {})
-		limit := 50
-		offset := 0
-		if has_key(query, "limit") == 1 {
-			limit = to_int(query["limit"])
-		}
-		if has_key(query, "offset") == 1 {
-			offset = to_int(query["offset"])
-		}
-		if limit < 1 {
-			limit = 1
-		}
-		if limit > 200 {
-			limit = 200
-		}
-		if offset < 0 {
-			offset = 0
-		}
-		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
-		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		list_query := parse_list_query(query, {
+			"default_limit": 50,
+			"max_limit": 200,
+			"default_offset": 0,
+			"default_sort_by": "id",
+			"default_sort_dir": "asc",
+			"allowed_sort_fields": ["id", "tenant_key", "name", "status", "created_at", "updated_at"]
+		})
+		limit := list_query["limit"]
+		offset := list_query["offset"]
+		sort_by := list_query["sort_by"]
+		sort_dir := list_query["sort_dir"]
 		sort_field := "id"
 		if sort_by == "tenant_key" {
 			sort_field = "tenant_key"
@@ -614,25 +607,18 @@ export register_tenancy_routes := func(server, ctx) {
 
 		cfg := ctx["cfg"]
 		query := dict_get_or(req, "query", {})
-		limit := 50
-		offset := 0
-		if has_key(query, "limit") == 1 {
-			limit = to_int(query["limit"])
-		}
-		if has_key(query, "offset") == 1 {
-			offset = to_int(query["offset"])
-		}
-		if limit < 1 {
-			limit = 1
-		}
-		if limit > 200 {
-			limit = 200
-		}
-		if offset < 0 {
-			offset = 0
-		}
-		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
-		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		list_query := parse_list_query(query, {
+			"default_limit": 50,
+			"max_limit": 200,
+			"default_offset": 0,
+			"default_sort_by": "id",
+			"default_sort_dir": "asc",
+			"allowed_sort_fields": ["id", "workspace_key", "tenant_id", "name", "status", "created_at", "updated_at"]
+		})
+		limit := list_query["limit"]
+		offset := list_query["offset"]
+		sort_by := list_query["sort_by"]
+		sort_dir := list_query["sort_dir"]
 		sort_field := "id"
 		if sort_by == "tenant_id" {
 			sort_field = "tenant_id"

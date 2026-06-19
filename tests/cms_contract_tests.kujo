@@ -1,5 +1,5 @@
 test_setup {
-	from backend.core.utils import is_valid_slug_key, parse_positive_int_text
+	from backend.core.utils import is_valid_slug_key, parse_list_query, parse_nonnegative_int_text, parse_positive_int_text
 	from backend.core.http import get_header, parse_bounded_int, req_actor
 	from backend.config.config import load_config, load_config_impl
 	from backend.modules.auth import authorize_request, permissions_allow
@@ -28,6 +28,48 @@ test "parse positive integer helper honors defaults" {
 	assert_equal(parse_positive_int_text("42", -1), 42)
 	assert_equal(parse_positive_int_text("0", 9), 9)
 	assert_equal(parse_positive_int_text("invalid", 9), 9)
+	assert_equal(parse_nonnegative_int_text("0", 9), 0)
+	assert_equal(parse_nonnegative_int_text("-1", 9), 9)
+}
+
+test "list query parser bounds malformed pagination and sort input" {
+	parsed := parse_list_query({
+		"limit": "not-a-number",
+		"offset": "-12",
+		"sort_by": "unsafe_sql_fragment",
+		"sort_dir": "sideways"
+	}, {
+		"default_limit": 25,
+		"max_limit": 100,
+		"default_offset": 3,
+		"default_sort_by": "id",
+		"default_sort_dir": "desc",
+		"allowed_sort_fields": ["id", "created_at"]
+	})
+
+	assert_equal(parsed["limit"], 25)
+	assert_equal(parsed["offset"], 3)
+	assert_equal(parsed["sort_by"], "id")
+	assert_equal(parsed["sort_dir"], "desc")
+
+	clamped := parse_list_query({
+		"limit": "999",
+		"offset": "0",
+		"sort_by": "created_at",
+		"sort_dir": "asc"
+	}, {
+		"default_limit": 25,
+		"max_limit": 100,
+		"default_offset": 3,
+		"default_sort_by": "id",
+		"default_sort_dir": "desc",
+		"allowed_sort_fields": ["id", "created_at"]
+	})
+
+	assert_equal(clamped["limit"], 100)
+	assert_equal(clamped["offset"], 0)
+	assert_equal(clamped["sort_by"], "created_at")
+	assert_equal(clamped["sort_dir"], "asc")
 }
 
 test "config applies enterprise bootstrap defaults in production" {

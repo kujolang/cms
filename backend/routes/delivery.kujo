@@ -1,5 +1,5 @@
 from backend.core.http import api_text, fail, guard_request
-from backend.core.utils import dict_get_or, trim_or
+from backend.core.utils import dict_get_or, parse_positive_int_text, trim_or
 
 func query_rows_safe(db, sql, params) {
 	err := null
@@ -358,7 +358,7 @@ export register_delivery_routes := func(server, ctx) {
 		query := dict_get_or(req, "query", {})
 		limit_value := 1000
 		if has_key(query, "limit") == 1 {
-			limit_value = to_int(query["limit"])
+			limit_value = parse_positive_int_text(query["limit"], 1000)
 		}
 		if limit_value < 1 {
 			limit_value = 1
@@ -508,7 +508,7 @@ export register_delivery_routes := func(server, ctx) {
 		query := dict_get_or(req, "query", {})
 		limit_value := 5000
 		if has_key(query, "limit") == 1 {
-			limit_value = to_int(query["limit"])
+			limit_value = parse_positive_int_text(query["limit"], 5000)
 		}
 		if limit_value < 1 {
 			limit_value = 1
@@ -597,7 +597,7 @@ export register_delivery_routes := func(server, ctx) {
 		query := dict_get_or(req, "query", {})
 		limit_value := 5000
 		if has_key(query, "limit") == 1 {
-			limit_value = to_int(query["limit"])
+			limit_value = parse_positive_int_text(query["limit"], 5000)
 		}
 		if limit_value < 1 {
 			limit_value = 1
@@ -650,7 +650,7 @@ export register_delivery_routes := func(server, ctx) {
 		query := dict_get_or(req, "query", {})
 		limit_value := 100
 		if has_key(query, "limit") == 1 {
-			limit_value = to_int(query["limit"])
+			limit_value = parse_positive_int_text(query["limit"], 100)
 		}
 		if limit_value < 1 {
 			limit_value = 1
@@ -696,7 +696,7 @@ export register_delivery_routes := func(server, ctx) {
 		query := dict_get_or(req, "query", {})
 		limit_value := 100
 		if has_key(query, "limit") == 1 {
-			limit_value = to_int(query["limit"])
+			limit_value = parse_positive_int_text(query["limit"], 100)
 		}
 		if limit_value < 1 {
 			limit_value = 1
@@ -756,7 +756,7 @@ export register_delivery_routes := func(server, ctx) {
 		query := dict_get_or(req, "query", {})
 		limit_value := 100
 		if has_key(query, "limit") == 1 {
-			limit_value = to_int(query["limit"])
+			limit_value = parse_positive_int_text(query["limit"], 100)
 		}
 		if limit_value < 1 {
 			limit_value = 1

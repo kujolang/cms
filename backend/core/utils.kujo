@@ -61,6 +61,23 @@ export parse_positive_int_text := func(raw_text, default_value) {
 	return value
 }
 
+export parse_nonnegative_int_text := func(raw_text, default_value) {
+	err := null
+	value := default_value
+	try {
+		value = parse_int(trim(to_string(raw_text)))
+	} except e {
+		err = e
+	}
+	if type(err) != "null" {
+		return default_value
+	}
+	if value < 0 {
+		return default_value
+	}
+	return value
+}
+
 export parse_positive_int_env := func(var_name, default_value) {
 	raw := env_or(var_name, to_string(default_value))
 	return parse_positive_int_text(raw, default_value)
@@ -157,10 +174,10 @@ export parse_list_query := func(query, defaults) {
 	limit := default_limit
 	offset := default_offset
 	if has_key(query_dict, "limit") == 1 {
-		limit = to_int(query_dict["limit"])
+		limit = parse_positive_int_text(query_dict["limit"], default_limit)
 	}
 	if has_key(query_dict, "offset") == 1 {
-		offset = to_int(query_dict["offset"])
+		offset = parse_nonnegative_int_text(query_dict["offset"], default_offset)
 	}
 	if limit < 1 {
 		limit = 1

@@ -1,4 +1,4 @@
-from backend.core.utils import dict_get_or, ensure_json_text
+from backend.core.utils import dict_get_or, ensure_json_text, parse_list_query
 from backend.core.http import fail, get_header, guard_request, ok, write_audit
 
 export register_entry_routes := func(server, ctx) {
@@ -17,32 +17,18 @@ export register_entry_routes := func(server, ctx) {
 		search_filter := trim(to_string(dict_get_or(query, "q", "")))
 		published_after := trim(to_string(dict_get_or(query, "published_after", "")))
 		published_before := trim(to_string(dict_get_or(query, "published_before", "")))
-		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
-		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "desc"))))
-		limit := 50
-		offset := 0
-		if has_key(query, "limit") == 1 {
-			limit = to_int(query["limit"])
-		}
-		if has_key(query, "offset") == 1 {
-			offset = to_int(query["offset"])
-		}
-		if limit < 1 {
-			limit = 1
-		}
-		if limit > 200 {
-			limit = 200
-		}
-		if offset < 0 {
-			offset = 0
-		}
-
-		if sort_by != "id" && sort_by != "created_at" && sort_by != "updated_at" && sort_by != "published_at" && sort_by != "title" && sort_by != "status" {
-			sort_by = "id"
-		}
-		if sort_dir != "asc" && sort_dir != "desc" {
-			sort_dir = "desc"
-		}
+		list_query := parse_list_query(query, {
+			"default_limit": 50,
+			"max_limit": 200,
+			"default_offset": 0,
+			"default_sort_by": "id",
+			"default_sort_dir": "desc",
+			"allowed_sort_fields": ["id", "created_at", "updated_at", "published_at", "title", "status"]
+		})
+		limit := list_query["limit"]
+		offset := list_query["offset"]
+		sort_by := list_query["sort_by"]
+		sort_dir := list_query["sort_dir"]
 
 		pagination_mode := to_lower(trim(to_string(dict_get_or(query, "pagination", "offset"))))
 		cursor_text := trim(to_string(dict_get_or(query, "cursor", "")))
@@ -1176,13 +1162,15 @@ export register_entry_routes := func(server, ctx) {
 		query := dict_get_or(req, "query", {})
 		limit := 50
 		if has_key(query, "limit") == 1 {
-			limit = to_int(query["limit"])
-		}
-		if limit < 1 {
-			limit = 1
-		}
-		if limit > 200 {
-			limit = 200
+			revision_query := parse_list_query(query, {
+				"default_limit": 50,
+				"max_limit": 200,
+				"default_offset": 0,
+				"default_sort_by": "id",
+				"default_sort_dir": "desc",
+				"allowed_sort_fields": ["id"]
+			})
+			limit = revision_query["limit"]
 		}
 
 		rows := []

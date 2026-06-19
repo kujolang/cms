@@ -1,4 +1,4 @@
-from backend.core.utils import dict_get_or
+from backend.core.utils import dict_get_or, parse_list_query
 from backend.core.http import fail, guard_request
 
 export register_taxonomy_routes := func(server, ctx) {
@@ -11,25 +11,18 @@ export register_taxonomy_routes := func(server, ctx) {
 		cfg := ctx["cfg"]
 		db := ctx["db"]
 		query := dict_get_or(req, "query", {})
-		limit := 100
-		offset := 0
-		if has_key(query, "limit") == 1 {
-			limit = to_int(query["limit"])
-		}
-		if has_key(query, "offset") == 1 {
-			offset = to_int(query["offset"])
-		}
-		if limit < 1 {
-			limit = 1
-		}
-		if limit > 200 {
-			limit = 200
-		}
-		if offset < 0 {
-			offset = 0
-		}
-		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "id"))))
-		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		list_query := parse_list_query(query, {
+			"default_limit": 100,
+			"max_limit": 200,
+			"default_offset": 0,
+			"default_sort_by": "id",
+			"default_sort_dir": "asc",
+			"allowed_sort_fields": ["id", "taxonomy_key", "label", "hierarchical", "created_at", "updated_at"]
+		})
+		limit := list_query["limit"]
+		offset := list_query["offset"]
+		sort_by := list_query["sort_by"]
+		sort_dir := list_query["sort_dir"]
 		sort_field := "id"
 		if sort_by == "taxonomy_key" {
 			sort_field = "taxonomy_key"
@@ -373,25 +366,18 @@ export register_taxonomy_routes := func(server, ctx) {
 		}
 
 		query := dict_get_or(req, "query", {})
-		limit := 100
-		offset := 0
-		if has_key(query, "limit") == 1 {
-			limit = to_int(query["limit"])
-		}
-		if has_key(query, "offset") == 1 {
-			offset = to_int(query["offset"])
-		}
-		if limit < 1 {
-			limit = 1
-		}
-		if limit > 500 {
-			limit = 500
-		}
-		if offset < 0 {
-			offset = 0
-		}
-		sort_by := to_lower(trim(to_string(dict_get_or(query, "sort_by", "name"))))
-		sort_dir := to_lower(trim(to_string(dict_get_or(query, "sort_dir", "asc"))))
+		list_query := parse_list_query(query, {
+			"default_limit": 100,
+			"max_limit": 500,
+			"default_offset": 0,
+			"default_sort_by": "name",
+			"default_sort_dir": "asc",
+			"allowed_sort_fields": ["id", "name", "slug", "created_at"]
+		})
+		limit := list_query["limit"]
+		offset := list_query["offset"]
+		sort_by := list_query["sort_by"]
+		sort_dir := list_query["sort_dir"]
 		sort_field := "name"
 		if sort_by == "id" {
 			sort_field = "id"
