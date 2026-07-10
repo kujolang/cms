@@ -5,7 +5,9 @@ This plan tracks launch-readiness gates for CMS.
 ## Current Posture
 
 - Code readiness: complete
-- Validation readiness: complete for the 2026-06-19 verified release gate (performance disabled)
+- Validation readiness: complete for the 2026-07-10 local release gate with
+  performance and performance-budget checks enabled (see
+  [release-gate-evidence-2026-07-10.md](release-gate-evidence-2026-07-10.md))
 - Governance readiness: one open pre-launch gate
 
 ## Launch Gates
@@ -31,6 +33,23 @@ This plan tracks launch-readiness gates for CMS.
 Known blocker for gate 3:
 
 - GitHub branch protections/rulesets return `HTTP 403` on current private repository plan.
+
+### Ready-to-apply branch rule
+
+An organization or repository administrator should apply this ruleset to the
+default branch after confirming the repository plan supports it:
+
+1. Target the `main` branch, including direct pushes and pull-request merges.
+2. Require a pull request before merging, at least one approval, and dismissal
+   of stale approvals after new commits.
+3. Require status checks to pass and be up to date. Require the exact GitHub
+   Actions job check names `stage1-gates` and `release-gates` from `CMS CI`.
+4. Require conversation resolution and block force pushes and branch deletion.
+5. Restrict bypass actors to the minimum repository-administrator set required
+   for incident recovery; record every bypass in the release evidence note.
+
+Validate the rule with one intentionally failing pull request and one passing
+release-gate pull request before treating this governance item as closed.
 
 Pre-launch completion steps:
 

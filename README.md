@@ -86,9 +86,12 @@ Operations controls:
 
 Code and validation status:
 
-- Contract tests, smoke API checks, compatibility startup, and the release gate all pass as of the 2026-06-19 hardening review.
+- Contract tests, smoke API checks, compatibility startup, and the release gate
+  all pass in the 2026-07-10 local receipt, including enabled performance and
+  performance-budget checks; see
+  [`docs/release-gate-evidence-2026-07-10.md`](docs/release-gate-evidence-2026-07-10.md).
 - Contract coverage includes safe pagination parsing for malformed list query input across list endpoint helpers.
-- The verified release-gate run disables performance checks with `CMS_GATE_RUN_PERF=false`.
+- The documented release gate enables performance checks by default.
 - Repository code and docs are aligned to the backend-first architecture.
 
 Open governance item before public launch:
