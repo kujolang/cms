@@ -13,3 +13,4 @@ cms.db
 
 # Runtime output
 results/
+.loop-engineering/
