@@ -1,6 +1,14 @@
 from backend.core.utils import dict_get_or, ensure_json_text, parse_list_query
 from backend.core.http import fail, get_header, guard_request, ok, write_audit
 
+export can_read_entry_status := func(auth_context, status) {
+	role_key := to_string(dict_get_or(auth_context, "role_key", "anonymous"))
+	if role_key == "anonymous" {
+		return to_lower(trim(to_string(status))) == "published"
+	}
+	return true
+}
+
 export register_entry_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/entries", func(req) {
 		guard := guard_request(req, ctx, false)
@@ -13,6 +21,10 @@ export register_entry_routes := func(server, ctx) {
 		query := dict_get_or(req, "query", {})
 		content_type_filter := trim(to_string(dict_get_or(query, "content_type", "")))
 		status_filter := trim(to_string(dict_get_or(query, "status", "")))
+		auth_context := dict_get_or(guard, "auth", {})
+		if to_string(dict_get_or(auth_context, "role_key", "anonymous")) == "anonymous" {
+			status_filter = "published"
+		}
 		author_filter := trim(to_string(dict_get_or(query, "author_id", "")))
 		search_filter := trim(to_string(dict_get_or(query, "q", "")))
 		published_after := trim(to_string(dict_get_or(query, "published_after", "")))
@@ -1059,7 +1071,7 @@ export register_entry_routes := func(server, ctx) {
 		rows := []
 		query_err := null
 		try {
-			rows = db_query(db, "SELECT id, content_type_key, slug, title, excerpt, published_at, updated_at, meta_json FROM entries WHERE id = ? LIMIT 1", [entry_id])
+			rows = db_query(db, "SELECT id, content_type_key, slug, title, excerpt, status, published_at, updated_at, meta_json FROM entries WHERE id = ? LIMIT 1", [entry_id])
 		} except e {
 			query_err = e
 		}
@@ -1067,6 +1079,9 @@ export register_entry_routes := func(server, ctx) {
 			return fail(cfg, 500, "db_query_failed", "Failed to load entry SEO data", {})
 		}
 		if len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+		if can_read_entry_status(dict_get_or(guard, "auth", {}), dict_get_or(rows[0], "status", "")) == false {
 			return fail(cfg, 404, "not_found", "Entry not found", {})
 		}
 
@@ -1136,7 +1151,7 @@ export register_entry_routes := func(server, ctx) {
 	})
 
 	server = server.route("GET", "/v1/entries/:id/revisions", func(req) {
-		guard := guard_request(req, ctx, false)
+		guard := guard_request(req, ctx, true)
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -1533,6 +1548,9 @@ export register_entry_routes := func(server, ctx) {
 		if len(entry_rows) == 0 {
 			return fail(cfg, 404, "not_found", "Entry not found", {})
 		}
+		if can_read_entry_status(dict_get_or(guard, "auth", {}), dict_get_or(entry_rows[0], "status", "")) == false {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
 
 		term_rows := []
 		term_err := null
@@ -1580,6 +1598,9 @@ export register_entry_routes := func(server, ctx) {
 			return fail(cfg, 500, "db_query_failed", "Failed to query entry by slug", {})
 		}
 		if len(rows) == 0 {
+			return fail(cfg, 404, "not_found", "Entry not found", {})
+		}
+		if can_read_entry_status(dict_get_or(guard, "auth", {}), dict_get_or(rows[0], "status", "")) == false {
 			return fail(cfg, 404, "not_found", "Entry not found", {})
 		}
 

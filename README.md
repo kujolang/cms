@@ -67,6 +67,7 @@ Import policy:
 Security controls:
 
 - Bearer token enforcement for write routes
+- Published-only anonymous entry reads; draft/scheduled/archived details and revision history require authenticated access
 - Bootstrap token hardening (production-safe defaults, entropy policy)
 - Strict JSON mutation validation and body-size limits
 - Rate limiting (`memory`, `sqlite`, `external`, `off` modes)

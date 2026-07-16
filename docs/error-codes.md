@@ -51,6 +51,7 @@ Contract rules:
 
 - `not_found`: generic missing resource.
 - `content_type_not_found`, `term_not_found`, `tenant_not_found`, `revision_not_found`, `role_not_found`: domain-specific not found variants.
+- Anonymous entry detail and slug lookups return `not_found` for draft, scheduled, and archived entries to avoid disclosing editorial state.
 
 ### 409 Conflict
 

@@ -234,6 +234,27 @@ request "POST" "${BASE_URL_ONE}" "/v1/entries" '{"content_type_key":"stories","t
 assert_status "201" "create lock target entry"
 ENTRY_ID="$(json_extract 'data.id')"
 
+request "GET" "${BASE_URL_ONE}" "/v1/entries/${ENTRY_ID}"
+assert_status "404" "anonymous draft detail is hidden"
+assert_contains '"code":"not_found"' "anonymous draft detail error"
+
+request "GET" "${BASE_URL_ONE}" "/v1/entries/by-slug/stories/lock-target"
+assert_status "404" "anonymous draft slug lookup is hidden"
+
+request "GET" "${BASE_URL_ONE}" "/v1/entries?status=draft"
+assert_status "200" "anonymous entry list remains available"
+if [[ "${BODY}" == *"lock-target"* ]]; then
+	echo "[FAIL] anonymous entry list disclosed a draft"
+	exit 1
+fi
+echo "[PASS] anonymous entry list excludes drafts"
+
+request "GET" "${BASE_URL_ONE}" "/v1/entries/${ENTRY_ID}" "" "Bearer ${TOKEN}"
+assert_status "200" "authenticated editor can read draft detail"
+
+request "GET" "${BASE_URL_ONE}" "/v1/entries/${ENTRY_ID}/revisions"
+assert_status "401" "anonymous revision history is denied"
+
 request "POST" "${BASE_URL_ONE}" "/v1/entry-locks/acquire" "{\"entry_id\":${ENTRY_ID},\"session_id\":\"owner-session\",\"note\":\"security lock\"}" "Bearer ${TOKEN}" "text/plain"
 assert_status "400" "unsupported content type rejected for lock acquire"
 assert_contains "Content-Type must be application/json" "lock acquire content type error"
