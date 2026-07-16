@@ -170,7 +170,7 @@ func build_api_contract(cfg, schema_version) {
 			"/v1/entries/by-slug/:content_type/:slug": {"get": {"x-auth": "public"}},
 			"/v1/entries/:id/terms": {"post": {"x-auth": "bearer"}},
 			"/v1/entries/:id/seo": {"get": {"x-auth": "public"}},
-			"/v1/entries/:id/revisions": {"get": {"x-auth": "public"}, "post": {"x-auth": "bearer"}},
+			"/v1/entries/:id/revisions": {"get": {"x-auth": "bearer"}, "post": {"x-auth": "bearer"}},
 			"/v1/entries/:id/revisions/:revision_id/restore": {"post": {"x-auth": "bearer"}},
 			"/v1/entries/scheduler/run": {"post": {"x-auth": "bearer"}},
 			"/v1/entry-locks/state": {"get": {"x-auth": "public"}},

@@ -151,7 +151,7 @@ assert_contains '"restored_from_revision_id":'"${BASELINE_REVISION_ID}" "restore
 assert_contains '"title":"Guide One"' "restore response title"
 assert_contains '"body":"Original body"' "restore response body"
 
-request "GET" "/v1/entries/${ENTRY_ID}/revisions"
+request "GET" "/v1/entries/${ENTRY_ID}/revisions" "" "1"
 assert_status "200" "list revisions after restore"
 assert_contains '"count":2' "revision count includes pre-restore backup"
 assert_contains '"revision_note":"pre_restore_backup_from_revision_'"${BASELINE_REVISION_ID}"'"' "pre-restore backup note"

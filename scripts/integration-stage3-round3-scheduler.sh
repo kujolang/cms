@@ -133,20 +133,20 @@ assert_status "200" "run scheduler"
 assert_contains '"published_count":1' "scheduler published count"
 assert_contains '"unpublished_count":1' "scheduler unpublished count"
 
-request "GET" "/v1/entries/by-slug/timed/due-publish"
+request "GET" "/v1/entries/by-slug/timed/due-publish" "" "1"
 assert_status "200" "fetch due publish entry"
 assert_contains '"status":"published"' "due publish transitioned"
 
-request "GET" "/v1/entries/by-slug/timed/future-publish"
+request "GET" "/v1/entries/by-slug/timed/future-publish" "" "1"
 assert_status "200" "fetch future publish entry"
 assert_contains '"status":"scheduled"' "future publish remains scheduled"
 
-request "GET" "/v1/entries/by-slug/timed/due-unpublish"
+request "GET" "/v1/entries/by-slug/timed/due-unpublish" "" "1"
 assert_status "200" "fetch due unpublish entry"
 assert_contains '"status":"archived"' "due unpublish transitioned"
 assert_contains '"unpublish_at":null' "due unpublish cleared unpublish_at"
 
-request "GET" "/v1/entries/by-slug/timed/future-unpublish"
+request "GET" "/v1/entries/by-slug/timed/future-unpublish" "" "1"
 assert_status "200" "fetch future unpublish entry"
 assert_contains '"status":"published"' "future unpublish remains published"
 

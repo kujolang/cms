@@ -149,7 +149,7 @@ request "POST" "/v1/entries/${ENTRY_ID}/revisions" '{"note":"manual checkpoint s
 assert_status "201" "create second revision snapshot"
 assert_contains '"revision_note":"manual checkpoint snapshot"' "second revision note"
 
-request "GET" "/v1/entries/${ENTRY_ID}/revisions"
+request "GET" "/v1/entries/${ENTRY_ID}/revisions" "" "1"
 assert_status "200" "list entry revisions"
 assert_contains '"count":2' "revision count"
 assert_contains '"revision_note":"manual checkpoint snapshot"' "revision ordering latest first"
