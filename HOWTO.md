@@ -34,17 +34,16 @@ You need:
 - Bash + curl
 - Node.js (used by integration scripts for JSON extraction)
 
-### Build Kujo runtime (if you do not already have it)
+### Verify Kujo runtime
 
 ```bash
-cd /path/to/kujo
-cargo build --bin kujo
+kujo --version
 ```
 
 This guide assumes your runtime is at:
 
 ```bash
-/path/to/kujo/target/debug/kujo
+kujo
 ```
 
 ## 3) Initial Setup
@@ -71,7 +70,7 @@ Minimum `.env` values to verify:
 
 ```bash
 cd /path/to/cms
-/path/to/kujo/target/debug/kujo run --interpreter backend/runtime/main.kujo
+kujo run --interpreter backend/runtime/main.kujo
 ```
 
 Expected startup output includes:
@@ -99,7 +98,7 @@ CMS_API_HOST=127.0.0.1 \
 CMS_SITE_URL=http://127.0.0.1:4200 \
 CMS_DB_PATH=results/dev_4200.db \
 CMS_API_TOKEN=change-me-in-production \
-/path/to/kujo/target/debug/kujo run --interpreter backend/runtime/main.kujo \
+kujo run --interpreter backend/runtime/main.kujo \
   > results/dev_server_4200.log 2>&1 &
 echo $! > results/dev_server_4200.pid
 ```
@@ -351,7 +350,7 @@ curl -sS "${CMS_BASE}/v1/auth/tokens" \
 Use an explicit runtime binary to avoid drift:
 
 ```bash
-export KUJO_BIN=/path/to/kujo/target/debug/kujo
+export KUJO_BIN=kujo
 cd /path/to/cms
 ```
 
@@ -382,14 +381,14 @@ You can also run all gates with one command:
 
 ```bash
 cd /path/to/cms
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
+KUJO_BIN=kujo bash scripts/run-release-gate.sh
 ```
 
 If you want to skip perf in a fast CI-style pass:
 
 ```bash
 cd /path/to/cms
-CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
+CMS_GATE_RUN_PERF=false KUJO_BIN=kujo bash scripts/run-release-gate.sh
 ```
 
 ## 10) Important Operational Notes
@@ -409,7 +408,7 @@ Run migration safety validation (fresh boot + restart idempotence):
 
 ```bash
 cd /path/to/cms
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/migration-safety.sh
+KUJO_BIN=kujo bash scripts/migration-safety.sh
 ```
 
 Create a backup:

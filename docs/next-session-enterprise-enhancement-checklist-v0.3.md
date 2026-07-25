@@ -8,10 +8,10 @@ This checklist captures the next high-leverage improvements after the v0.2 harde
 
 Validation baseline captured on 2026-06-19:
 
-- Contract tests: pass (`/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo -v`)
-- Release gate: pass with performance budget skipped (`PATH=/Users/robertdevore/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH CMS_GATE_RUN_PERF=false KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo bash scripts/run-release-gate.sh`)
-- Smoke API: pass (`PATH=/Users/robertdevore/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo bash scripts/smoke-api.sh`)
-- Compatibility startup: pass (`PATH=/Users/robertdevore/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo bash scripts/verify-compat-startup.sh`)
+- Contract tests: pass (`kujo test-run tests/cms_contract_tests.kujo -v`)
+- Release gate: pass with performance budget skipped (`PATH=/Users/robertdevore/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH CMS_GATE_RUN_PERF=false KUJO_BIN=kujo bash scripts/run-release-gate.sh`)
+- Smoke API: pass (`PATH=/Users/robertdevore/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH KUJO_BIN=kujo bash scripts/smoke-api.sh`)
+- Compatibility startup: pass (`PATH=/Users/robertdevore/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH KUJO_BIN=kujo bash scripts/verify-compat-startup.sh`)
 - List endpoints now use bounded parsing for malformed `limit`, `offset`, `sort_by`, and `sort_dir` inputs instead of direct query casts.
 - Active backend source is under `backend/config`, `backend/core`, `backend/modules`, `backend/routes`, and `backend/runtime`.
 - Empty migration-era backend placeholders were removed from the tracked tree.
@@ -40,8 +40,8 @@ Current conclusion:
   - Representative content, taxonomy, media, menu, plugin, authz, tenancy, and delivery lists have negative-query coverage.
   - Existing integration scripts keep passing without response-shape changes.
 - **Validation/testing expectations**:
-  - `/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo -v`
-  - `KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo bash scripts/smoke-api.sh`
+  - `kujo test-run tests/cms_contract_tests.kujo -v`
+  - `KUJO_BIN=kujo bash scripts/smoke-api.sh`
   - Targeted negative-query checks for at least menus, plugins, roles, tenants, and delivery feeds.
 
 ### [ ] E-12: Add explicit production configuration doctor output
@@ -91,7 +91,7 @@ Current conclusion:
   - Restore validation proves data shape and key counts, not only file existence.
   - Operator docs show the expected evidence.
 - **Validation/testing expectations**:
-  - `KUJO_BIN=/Users/robertdevore/2026/Kujolang/kujo-repos/kujo/target/debug/kujo bash scripts/ops-load-validation.sh`
+  - `KUJO_BIN=kujo bash scripts/ops-load-validation.sh`
   - `bash scripts/backup-db.sh` and `bash scripts/restore-db.sh` with a disposable DB.
 
 ## Tier C - Showcase Polish (Adoption + Funnel)

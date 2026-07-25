@@ -50,10 +50,10 @@ All scoped items in this checklist are complete.
 Representative validation commands used to close this backlog:
 
 ```bash
-KUJO_BIN=/path/to/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/integration-stage1.sh
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/integration-enterprise-security.sh
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
+KUJO_BIN=kujo test-run tests/cms_contract_tests.kujo
+KUJO_BIN=kujo bash scripts/integration-stage1.sh
+KUJO_BIN=kujo bash scripts/integration-enterprise-security.sh
+KUJO_BIN=kujo bash scripts/run-release-gate.sh
 ```
 
 ## Historical Detail

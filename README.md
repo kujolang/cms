@@ -111,7 +111,7 @@ cp .env.example .env
 
 ```bash
 cd /path/to/cms
-/path/to/kujo/target/debug/kujo run --interpreter backend/runtime/main.kujo
+kujo run --interpreter backend/runtime/main.kujo
 ```
 
 Default bind: `http://127.0.0.1:4200`
@@ -141,23 +141,23 @@ Contract tests:
 
 ```bash
 cd /path/to/cms
-/path/to/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo
+kujo test-run tests/cms_contract_tests.kujo
 ```
 
 Full release gate:
 
 ```bash
 cd /path/to/cms
-CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
+CMS_GATE_RUN_PERF=false KUJO_BIN=kujo bash scripts/run-release-gate.sh
 ```
 
 Useful targeted checks:
 
 ```bash
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/integration-enterprise-security.sh
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/integration-multitenant.sh
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/smoke-api.sh
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/verify-compat-startup.sh
+KUJO_BIN=kujo bash scripts/integration-enterprise-security.sh
+KUJO_BIN=kujo bash scripts/integration-multitenant.sh
+KUJO_BIN=kujo bash scripts/smoke-api.sh
+KUJO_BIN=kujo bash scripts/verify-compat-startup.sh
 ```
 
 ## Operational Commands

@@ -31,16 +31,16 @@ Prioritize copyable examples over tests: examples should model the most token-ef
 
 Use the narrowest command that proves your change works:
 
-- Security change: `KUJO_BIN=/path/to/kujo bash scripts/integration-enterprise-security.sh`
-- API behavior change: `CMS_TEST_PORT=4290 KUJO_BIN=/path/to/kujo bash scripts/integration-stage1.sh`
-- Broad regression check: `CMS_SMOKE_PORT=4291 KUJO_BIN=/path/to/kujo bash scripts/smoke-api.sh`
-- Contract sanity: `KUJO_BIN=/path/to/kujo test-run tests/cms_contract_tests.kujo`
+- Security change: `KUJO_BIN=kujo bash scripts/integration-enterprise-security.sh`
+- API behavior change: `CMS_TEST_PORT=4290 KUJO_BIN=kujo bash scripts/integration-stage1.sh`
+- Broad regression check: `CMS_SMOKE_PORT=4291 KUJO_BIN=kujo bash scripts/smoke-api.sh`
+- Contract sanity: `KUJO_BIN=kujo test-run tests/cms_contract_tests.kujo`
 
 ## 5. Expand Validation To Gate Level
 
 Before marking done, run full release-level verification for the branch:
 
-- `KUJO_BIN=/path/to/kujo bash scripts/run-release-gate.sh`
+- `KUJO_BIN=kujo bash scripts/run-release-gate.sh`
 
 If full gate is too expensive for an intermediate loop, document the deferred command explicitly in the handoff note.
 

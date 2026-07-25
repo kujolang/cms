@@ -11,7 +11,7 @@
 Command:
 
 ```bash
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/validate-graceful-restart.sh
+KUJO_BIN=kujo bash scripts/validate-graceful-restart.sh
 ```
 
 Expected outcomes:
@@ -25,7 +25,7 @@ Expected outcomes:
 Command:
 
 ```bash
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/ops-load-validation.sh
+KUJO_BIN=kujo bash scripts/ops-load-validation.sh
 ```
 
 Expected outcomes:
@@ -40,7 +40,7 @@ Expected outcomes:
 Command:
 
 ```bash
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/integration-enterprise-security.sh
+KUJO_BIN=kujo bash scripts/integration-enterprise-security.sh
 ```
 
 Expected outcomes:

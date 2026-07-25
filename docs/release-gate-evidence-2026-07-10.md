@@ -11,7 +11,7 @@ Command:
 
 ```bash
 CMS_GATE_RUN_PERF=true CMS_GATE_PERF_RUNS=5 CMS_GATE_RUN_PERF_BUDGET=true \
-KUJO_BIN=/path/to/kujo/target/release/kujo \
+KUJO_BIN=kujo \
 bash scripts/run-release-gate.sh
 ```
 
@@ -28,7 +28,7 @@ validates the restored data. To repeat the focused drill:
 
 ```bash
 CMS_OPS_LOAD_PERF_PORT=49440 CMS_OPS_LOAD_MIGRATION_PORT=49441 \
-CMS_OPS_LOAD_PORT=49442 KUJO_BIN=/path/to/kujo/target/release/kujo \
+CMS_OPS_LOAD_PORT=49442 KUJO_BIN=kujo \
 bash scripts/ops-load-validation.sh
 ```
 
