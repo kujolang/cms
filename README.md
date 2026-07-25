@@ -148,16 +148,16 @@ Full release gate:
 
 ```bash
 cd /path/to/cms
-CMS_GATE_RUN_PERF=false KUJO_BIN=kujo bash scripts/run-release-gate.sh
+CMS_GATE_RUN_PERF=false bash scripts/run-release-gate.sh
 ```
 
 Useful targeted checks:
 
 ```bash
-KUJO_BIN=kujo bash scripts/integration-enterprise-security.sh
-KUJO_BIN=kujo bash scripts/integration-multitenant.sh
-KUJO_BIN=kujo bash scripts/smoke-api.sh
-KUJO_BIN=kujo bash scripts/verify-compat-startup.sh
+bash scripts/integration-enterprise-security.sh
+bash scripts/integration-multitenant.sh
+bash scripts/smoke-api.sh
+bash scripts/verify-compat-startup.sh
 ```
 
 ## Operational Commands

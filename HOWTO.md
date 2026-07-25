@@ -347,30 +347,30 @@ curl -sS "${CMS_BASE}/v1/auth/tokens" \
 
 ## 9) Full Beta-Readiness Validation Commands
 
-Use an explicit runtime binary to avoid drift:
+Use the installed Kujo command:
 
 ```bash
-export KUJO_BIN=kujo
+kujo --version
 cd /path/to/cms
 ```
 
 Run all gates:
 
 ```bash
-"${KUJO_BIN}" test-run tests/cms_contract_tests.kujo
-CMS_TEST_PORT=49390 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage1.sh
-CMS_TEST_PORT=49391 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round1.sh
-CMS_TEST_PORT=49392 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round2-sitemaps.sh
-CMS_TEST_PORT=49393 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round2-feeds.sh
-CMS_TEST_PORT=49394 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round2-cursor.sh
-CMS_TEST_PORT=49395 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round2-projection.sh
-CMS_TEST_PORT=49396 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage3-round1-revisions.sh
-CMS_TEST_PORT=49397 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage3-round2-rollback.sh
-CMS_TEST_PORT=49398 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage3-round3-scheduler.sh
-CMS_TEST_PORT=49399 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage3-round3-locking.sh
-CMS_SMOKE_PORT=49400 KUJO_BIN="${KUJO_BIN}" bash scripts/smoke-api.sh
-CMS_SECURITY_TEST_PORT_BASE=49410 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-enterprise-security.sh
-CMS_PERF_PORT=49420 CMS_PERF_RUNS=5 KUJO_BIN="${KUJO_BIN}" bash scripts/perf-baseline.sh
+kujo test-run tests/cms_contract_tests.kujo
+CMS_TEST_PORT=49390 bash scripts/integration-stage1.sh
+CMS_TEST_PORT=49391 bash scripts/integration-stage2-round1.sh
+CMS_TEST_PORT=49392 bash scripts/integration-stage2-round2-sitemaps.sh
+CMS_TEST_PORT=49393 bash scripts/integration-stage2-round2-feeds.sh
+CMS_TEST_PORT=49394 bash scripts/integration-stage2-round2-cursor.sh
+CMS_TEST_PORT=49395 bash scripts/integration-stage2-round2-projection.sh
+CMS_TEST_PORT=49396 bash scripts/integration-stage3-round1-revisions.sh
+CMS_TEST_PORT=49397 bash scripts/integration-stage3-round2-rollback.sh
+CMS_TEST_PORT=49398 bash scripts/integration-stage3-round3-scheduler.sh
+CMS_TEST_PORT=49399 bash scripts/integration-stage3-round3-locking.sh
+CMS_SMOKE_PORT=49400 bash scripts/smoke-api.sh
+CMS_SECURITY_TEST_PORT_BASE=49410 bash scripts/integration-enterprise-security.sh
+CMS_PERF_PORT=49420 CMS_PERF_RUNS=5 bash scripts/perf-baseline.sh
 ```
 
 Perf report output:
@@ -381,14 +381,14 @@ You can also run all gates with one command:
 
 ```bash
 cd /path/to/cms
-KUJO_BIN=kujo bash scripts/run-release-gate.sh
+bash scripts/run-release-gate.sh
 ```
 
 If you want to skip perf in a fast CI-style pass:
 
 ```bash
 cd /path/to/cms
-CMS_GATE_RUN_PERF=false KUJO_BIN=kujo bash scripts/run-release-gate.sh
+CMS_GATE_RUN_PERF=false bash scripts/run-release-gate.sh
 ```
 
 ## 10) Important Operational Notes
@@ -408,7 +408,7 @@ Run migration safety validation (fresh boot + restart idempotence):
 
 ```bash
 cd /path/to/cms
-KUJO_BIN=kujo bash scripts/migration-safety.sh
+bash scripts/migration-safety.sh
 ```
 
 Create a backup:

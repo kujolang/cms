@@ -18,15 +18,13 @@ projects have their own contribution rules.
 
 ## Local Setup
 
-Use the Kujo runtime expected by this repository. Most repos support one of
-these environment variables:
+Install Kujo so the `kujo` command is available on your `PATH`:
 
 ```bash
-export KUJO_BIN=kujo
-export KUJO=kujo
+kujo --version
 ```
 
-If `kujo` is already on your `PATH`, no extra setup may be needed.
+If a local script explicitly requires `KUJO_BIN` or `KUJO`, set it only for that command.
 
 Check the repo README, `Makefile`, `tests/`, and `scripts/` directory for the
 authoritative local commands.
