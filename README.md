@@ -10,7 +10,7 @@ It boots from `backend/runtime/main.kujo`; there is no standalone CLI wrapper to
 
 ## Production Readiness Posture
 
-CMS is production-capable as a Kujo showcase backend when deployed with rotated secrets, explicit CORS policy, durable storage/backup practices, and the documented release gate. It is not presented as universally enterprise-complete out of the box: default branch protection enforcement remains the known pre-launch governance gate, and teams should still run their own infrastructure, compliance, and threat-model review before public production use.
+CMS is locally release-ready as a Kujo showcase backend when validated with the documented release gate. Production use still requires target-environment proof: rotated secrets, explicit CORS policy, durable storage/backup practices, infrastructure review, compliance review, threat-model review, and branch protection/ruleset decisions. It is not presented as enterprise-complete out of the box.
 
 The current codebase is intentionally backend-first. Active source lives under `backend/config`, `backend/core`, `backend/modules`, `backend/routes`, and `backend/runtime`; empty migration-era placeholder folders are not part of the current architecture.
 

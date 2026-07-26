@@ -1,0 +1,62 @@
+name: "CMS launch readiness review"
+goal: "Keep CMS locally release-ready as a Kujo server-first showcase backend with contract-tested content APIs and operational gates."
+version: "1.0.0"
+background: "CMS is part of the Kujo prelaunch showcase matrix. The verified scope is local backend/runtime behavior, contract tests, integration scripts, smoke checks, and documented production-boundary blockers."
+scope: "Repository-local backend runtime, content and delivery route contracts, auth/security boundaries, release-gate scripts, docs/readiness wording, and launch evidence capture."
+non_goals:
+  - "Publishing packages or public releases"
+  - "Pushing final release tags"
+  - "Hosted deployment or live credential use"
+  - "Claiming production or enterprise readiness without target-environment proof"
+relevant_systems:
+  - "Kujo runtime"
+  - "CMS backend runtime"
+  - "SQLite/local storage"
+  - "release-gate scripts"
+  - "prelaunch launch evidence packet"
+likely_files:
+  - "README.md"
+  - "backend/runtime/main.kujo"
+  - "backend/config/config.kujo"
+  - "backend/core/*.kujo"
+  - "backend/modules/*.kujo"
+  - "backend/routes/*.kujo"
+  - "tests/cms_contract_tests.kujo"
+  - "scripts/run-release-gate.sh"
+  - "tests/cms_eval.json"
+acceptance_criteria:
+  - "`kujo test-run tests/cms_contract_tests.kujo` passes."
+  - "`CMS_GATE_RUN_PERF=false KUJO_BIN=/Users/robertdevore/.local/bin/kujo bash scripts/run-release-gate.sh` passes locally."
+  - "Smoke, startup compatibility, integration, security, and operations checks are covered by the release gate or targeted scripts."
+  - "Docs avoid production/enterprise claims without target-environment proof."
+eval_requirements:
+  - description: "CMS contract tests pass."
+    check_type: "command_succeeds"
+    params:
+      command: "kujo test-run tests/cms_contract_tests.kujo"
+  - description: "CMS smoke API passes."
+    check_type: "command_succeeds"
+    params:
+      command: "CMS_SMOKE_PORT=49711 KUJO_BIN=/Users/robertdevore/.local/bin/kujo bash scripts/smoke-api.sh"
+risks:
+  - risk: "Production deployment requires target secrets, storage, ingress, backup, and governance proof."
+    mitigation: "Keep local proof separate from production claims and record deployment proof as external."
+    severity: "high"
+  - risk: "Operational scripts mutate local queues, databases, backups, or runtime artifacts."
+    mitigation: "Run only fixture/local gate scripts during launch review and keep generated artifacts out of git."
+    severity: "medium"
+dependencies:
+  - "kujo on PATH or KUJO_BIN set"
+  - "Bash 3.2+"
+review_expectations:
+  - "Review API contracts and security boundaries before production deployment."
+  - "Review generated runtime artifacts and local databases before cleanup or sharing."
+human_approval_points:
+  - "Before hosted deployment or live credential use"
+  - "Before changing branch protection/rulesets"
+  - "Before publishing packages, public releases, or final release tags"
+priority: "high"
+tags:
+  - "kujo"
+  - "cms"
+  - "launch-readiness"

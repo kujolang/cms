@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add launch-readiness Spec and Eval metadata for the Kujo prelaunch review.
 - Harden list-query parsing so malformed pagination and sort input falls back to bounded defaults instead of risking direct cast failures.
 - Remove stale tracked backend placeholder files after the backend-first source layout became canonical.
 - Expand `.env.example` and README production-readiness notes to better reflect the operational surface and remaining governance gate.
