@@ -1,4 +1,4 @@
-from backend.core.utils import dict_get_or, parse_list_query
+from backend.core.utils import dict_get_or, is_valid_slug_key, parse_list_query
 from backend.core.http import fail, guard_request, write_audit
 
 get_tenant_scope := func(auth_context) {
@@ -193,8 +193,8 @@ export register_tenancy_routes := func(server, ctx) {
 		tenant_key := trim(to_string(dict_get_or(body, "tenant_key", "")))
 		name := trim(to_string(dict_get_or(body, "name", "")))
 		status := to_lower(trim(to_string(dict_get_or(body, "status", "active"))))
-		if len(tenant_key) < 2 {
-			return fail(cfg, 400, "invalid_tenant_key", "tenant_key is required", {})
+		if is_valid_slug_key(tenant_key) == false {
+			return fail(cfg, 400, "invalid_tenant_key", "tenant_key must be lowercase slug text", {})
 		}
 		if len(name) < 2 {
 			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
@@ -787,8 +787,8 @@ export register_tenancy_routes := func(server, ctx) {
 		workspace_key := trim(to_string(dict_get_or(body, "workspace_key", "")))
 		name := trim(to_string(dict_get_or(body, "name", "")))
 		status := to_lower(trim(to_string(dict_get_or(body, "status", "active"))))
-		if len(workspace_key) < 2 {
-			return fail(cfg, 400, "invalid_workspace_key", "workspace_key is required", {})
+		if is_valid_slug_key(workspace_key) == false {
+			return fail(cfg, 400, "invalid_workspace_key", "workspace_key must be lowercase slug text", {})
 		}
 		if len(name) < 2 {
 			return fail(cfg, 400, "invalid_name", "name must be at least 2 characters", {})
@@ -819,13 +819,13 @@ export register_tenancy_routes := func(server, ctx) {
 			insert_err = e
 		}
 		if type(insert_err) != "null" {
-			return fail(cfg, 409, "create_failed", "Could not create workspace (duplicate workspace_key)", {})
+			return fail(cfg, 409, "create_failed", "Could not create workspace (duplicate workspace_key for tenant)", {})
 		}
 
 		rows := []
 		row_err := null
 		try {
-			rows = db_query(db, "SELECT id, tenant_id, workspace_key, name, status, created_at, updated_at, disabled_at, archived_at FROM workspaces WHERE workspace_key = ? ORDER BY id DESC LIMIT 1", [workspace_key])
+			rows = db_query(db, "SELECT id, tenant_id, workspace_key, name, status, created_at, updated_at, disabled_at, archived_at FROM workspaces WHERE tenant_id = ? AND workspace_key = ? ORDER BY id DESC LIMIT 1", [tenant_id, workspace_key])
 		} except e {
 			row_err = e
 		}

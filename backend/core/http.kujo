@@ -503,10 +503,33 @@ func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 	}
 
 	if resolved_status < 0 && method == "POST" && path == "/v1/workspaces" {
-		resolved := idempotency_resolve_create_by_unique_key(db, req, parsed_body, "workspace_key", "workspaces", "workspace_key", "workspace.create", "workspace")
-		if resolved["ok"] == true {
-			resolved_status = resolved["status_code"]
-			resolved_payload = resolved["payload"]
+		if type(parsed_body) == "dict" {
+			workspace_key := trim(to_string(dict_get_or(parsed_body, "workspace_key", "")))
+			tenant_id := parse_positive_int_text(dict_get_or(parsed_body, "tenant_id", 0), 0)
+			if workspace_key != "" && tenant_id > 0 {
+				workspace_rows := db_query_safe(
+					db,
+					"SELECT id FROM workspaces WHERE tenant_id = ? AND workspace_key = ? ORDER BY id DESC LIMIT 1",
+					[tenant_id, workspace_key]
+				)
+				if workspace_rows["ok"] == true && len(workspace_rows["rows"]) > 0 {
+					workspace_id := to_string(dict_get_or(workspace_rows["rows"][0], "id", ""))
+					resolved_status = 201
+					resolved_payload = {
+						"ok": true,
+						"data": {
+							"idempotency": {
+								"replayed": true,
+								"action": "workspace.create",
+								"target_type": "workspace",
+								"target_id": workspace_id,
+								"request_id": to_string(dict_get_or(req, "request_id", "")),
+								"status_code": 201
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 

@@ -46,6 +46,7 @@ The following must remain stable unless explicitly versioned:
 
 - Tenant and workspace context must be resolved before domain mutation.
 - Cross-tenant access attempts must be denied before business logic executes.
+- Workspace keys are unique within a tenant; separate tenants may use the same workspace key.
 - Audit events for tenant/workspace mutations must be preserved.
 
 ## Operational Invariants

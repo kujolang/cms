@@ -33,6 +33,7 @@ Contract rules:
 - `invalid_limit`, `invalid_offset`: pagination inputs are invalid.
 - `invalid_fields`: sparse-field selection contains unsupported fields.
 - `invalid_type_key`, `invalid_taxonomy_key`, `invalid_workspace_key`, `invalid_tenant_key`: invalid key format.
+- `invalid_size_bytes`: media size is not a non-negative integer.
 - `invalid_slug`, `invalid_slug_params`: invalid slug input.
 - `invalid_term_ids`, `invalid_term_id`, `invalid_taxonomy_scope`: invalid taxonomy term inputs.
 - `invalid_expires_at`, `invalid_token`, `invalid_token_id`: token input validation failures.

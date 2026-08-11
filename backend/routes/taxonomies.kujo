@@ -643,6 +643,24 @@ export register_taxonomy_routes := func(server, ctx) {
 			if len(parent_rows) == 0 {
 				return fail(cfg, 400, "invalid_parent_id", "parent_id must reference a term in the same taxonomy", {})
 			}
+
+			cycle_rows := []
+			cycle_err := null
+			try {
+				cycle_rows = db_query(
+					db,
+					"WITH RECURSIVE descendants(id) AS (SELECT id FROM taxonomy_terms WHERE parent_id = ? AND taxonomy_id = ? UNION ALL SELECT child.id FROM taxonomy_terms child JOIN descendants parent ON child.parent_id = parent.id WHERE child.taxonomy_id = ?) SELECT id FROM descendants WHERE id = ? LIMIT 1",
+					[term_id, existing["taxonomy_id"], existing["taxonomy_id"], parent_value]
+				)
+			} except e {
+				cycle_err = e
+			}
+			if type(cycle_err) != "null" {
+				return fail(cfg, 500, "db_query_failed", "Failed to validate term hierarchy", {})
+			}
+			if len(cycle_rows) > 0 {
+				return fail(cfg, 400, "invalid_parent_id", "parent_id cannot reference a descendant term", {})
+			}
 		}
 
 		update_err := null

@@ -127,27 +127,33 @@ export register_theme_routes := func(server, ctx) {
 			return fail(cfg, 400, "invalid_status", "status must be active or inactive", {})
 		}
 
-		if status == "active" {
-			reset_err := null
-			try {
-				db_execute(db, "UPDATE themes SET status = 'inactive', updated_at = ?", [now()])
-			} except e {
-				reset_err = e
-			}
-			if type(reset_err) != "null" {
-				return fail(cfg, 500, "update_failed", "Failed to update active theme state", {})
-			}
-		}
-
 		insert_err := null
+		transaction_started := false
 		try {
+			if status == "active" {
+				db_execute(db, "BEGIN IMMEDIATE", [])
+				transaction_started = true
+				db_execute(db, "UPDATE themes SET status = 'inactive', updated_at = ?", [now()])
+			}
 			db_execute(
 				db,
 				"INSERT INTO themes (theme_key, name, version, status, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 				[theme_key, name, version, status, config_json, now(), now()]
 			)
+			if transaction_started == true {
+				db_execute(db, "COMMIT", [])
+				transaction_started = false
+			}
 		} except e {
 			insert_err = e
+		}
+		if transaction_started == true {
+			rollback_err := null
+			try {
+				db_execute(db, "ROLLBACK", [])
+			} except e {
+				rollback_err = e
+			}
 		}
 		if type(insert_err) != "null" {
 			return fail(cfg, 409, "create_failed", "Could not create theme (possibly duplicate theme_key)", {})

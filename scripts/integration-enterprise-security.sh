@@ -210,6 +210,10 @@ request "POST" "${BASE_URL_ONE}" "/v1/tenants" '{"tenant_key":"x","name":"Invali
 assert_status "400" "invalid tenant key rejected"
 assert_contains '"code":"invalid_tenant_key"' "invalid tenant key code"
 
+request "POST" "${BASE_URL_ONE}" "/v1/tenants" '{"tenant_key":"Bad Key","name":"Invalid Tenant"}' "Bearer ${TOKEN}"
+assert_status "400" "malformed tenant key rejected"
+assert_contains '"code":"invalid_tenant_key"' "malformed tenant key code"
+
 request "POST" "${BASE_URL_ONE}" "/v1/tenants" '{"tenant_key":"tenant-security","name":"Tenant Security"}' "Bearer ${TOKEN}"
 assert_status "201" "create tenant for workspace validation"
 TENANT_ID="$(json_extract 'data.id')"
@@ -217,6 +221,70 @@ TENANT_ID="$(json_extract 'data.id')"
 request "POST" "${BASE_URL_ONE}" "/v1/workspaces" "{\"tenant_id\":${TENANT_ID},\"workspace_key\":\"x\",\"name\":\"Invalid Workspace\"}" "Bearer ${TOKEN}"
 assert_status "400" "invalid workspace key rejected"
 assert_contains '"code":"invalid_workspace_key"' "invalid workspace key code"
+
+request "POST" "${BASE_URL_ONE}" "/v1/workspaces" "{\"tenant_id\":${TENANT_ID},\"workspace_key\":\"Bad Key\",\"name\":\"Invalid Workspace\"}" "Bearer ${TOKEN}"
+assert_status "400" "malformed workspace key rejected"
+assert_contains '"code":"invalid_workspace_key"' "malformed workspace key code"
+
+request "POST" "${BASE_URL_ONE}" "/v1/tenants" '{"tenant_key":"tenant-secondary","name":"Tenant Secondary"}' "Bearer ${TOKEN}"
+assert_status "201" "create second tenant for workspace key scope"
+SECOND_TENANT_ID="$(json_extract 'data.id')"
+
+request "POST" "${BASE_URL_ONE}" "/v1/workspaces" "{\"tenant_id\":${TENANT_ID},\"workspace_key\":\"primary\",\"name\":\"Primary Workspace\"}" "Bearer ${TOKEN}"
+assert_status "201" "create tenant-scoped workspace key"
+
+request "POST" "${BASE_URL_ONE}" "/v1/workspaces" "{\"tenant_id\":${SECOND_TENANT_ID},\"workspace_key\":\"primary\",\"name\":\"Secondary Workspace\"}" "Bearer ${TOKEN}"
+assert_status "201" "reuse workspace key in another tenant"
+
+request "POST" "${BASE_URL_ONE}" "/v1/media" '{"filename":"bad.png","storage_path":"/bad.png","size_bytes":-1}' "Bearer ${TOKEN}"
+assert_status "400" "negative media size rejected"
+assert_contains '"code":"invalid_size_bytes"' "negative media size code"
+
+request "DELETE" "${BASE_URL_ONE}" "/v1/media/999999" "" "Bearer ${TOKEN}"
+assert_status "404" "missing media delete returns not found"
+
+request "POST" "${BASE_URL_ONE}" "/v1/taxonomies" '{"taxonomy_key":"hierarchy","label":"Hierarchy","hierarchical":true}' "Bearer ${TOKEN}"
+assert_status "201" "create hierarchy taxonomy"
+HIERARCHY_TAXONOMY_ID="$(json_extract 'data.id')"
+
+request "POST" "${BASE_URL_ONE}" "/v1/taxonomies/${HIERARCHY_TAXONOMY_ID}/terms" '{"name":"Parent","slug":"parent"}' "Bearer ${TOKEN}"
+assert_status "201" "create parent term"
+PARENT_TERM_ID="$(json_extract 'data.id')"
+
+request "POST" "${BASE_URL_ONE}" "/v1/taxonomies/${HIERARCHY_TAXONOMY_ID}/terms" "{\"name\":\"Child\",\"slug\":\"child\",\"parent_id\":${PARENT_TERM_ID}}" "Bearer ${TOKEN}"
+assert_status "201" "create child term"
+CHILD_TERM_ID="$(json_extract 'data.id')"
+
+request "PATCH" "${BASE_URL_ONE}" "/v1/terms/${PARENT_TERM_ID}" "{\"parent_id\":${CHILD_TERM_ID}}" "Bearer ${TOKEN}"
+assert_status "400" "taxonomy descendant cycle rejected"
+assert_contains "descendant term" "taxonomy cycle error"
+
+request "POST" "${BASE_URL_ONE}" "/v1/menus" '{"menu_key":"cycle-menu","name":"Cycle Menu","location":"footer"}' "Bearer ${TOKEN}"
+assert_status "201" "create cycle test menu"
+CYCLE_MENU_ID="$(json_extract 'data.id')"
+
+request "POST" "${BASE_URL_ONE}" "/v1/menus/${CYCLE_MENU_ID}/items" '{"label":"Parent","url":"/parent"}' "Bearer ${TOKEN}"
+assert_status "201" "create parent menu item"
+PARENT_MENU_ITEM_ID="$(json_extract 'data.id')"
+
+request "POST" "${BASE_URL_ONE}" "/v1/menus/${CYCLE_MENU_ID}/items" "{\"label\":\"Child\",\"url\":\"/child\",\"parent_id\":${PARENT_MENU_ITEM_ID}}" "Bearer ${TOKEN}"
+assert_status "201" "create child menu item"
+CHILD_MENU_ITEM_ID="$(json_extract 'data.id')"
+
+request "PATCH" "${BASE_URL_ONE}" "/v1/menu-items/${PARENT_MENU_ITEM_ID}" "{\"parent_id\":${CHILD_MENU_ITEM_ID}}" "Bearer ${TOKEN}"
+assert_status "400" "menu descendant cycle rejected"
+assert_contains "descendant menu item" "menu cycle error"
+
+request "GET" "${BASE_URL_ONE}" "/v1/themes/active"
+assert_status "200" "load active theme before duplicate create"
+ACTIVE_THEME_ID="$(json_extract 'data.id')"
+
+request "POST" "${BASE_URL_ONE}" "/v1/themes" '{"theme_key":"starter","name":"Duplicate Starter","status":"active"}' "Bearer ${TOKEN}"
+assert_status "409" "duplicate active theme rejected"
+
+request "GET" "${BASE_URL_ONE}" "/v1/themes/active"
+assert_status "200" "active theme preserved after failed create"
+assert_contains "\"id\":${ACTIVE_THEME_ID}" "active theme identity preserved"
 
 request "POST" "${BASE_URL_ONE}" "/v1/plugins/1/hooks" '{"hook_name":"entry.created","handler_url":"bad","shared_secret":"supersecret","enabled":true}' "Bearer ${TOKEN}"
 assert_status "400" "invalid plugin hook URL rejected"

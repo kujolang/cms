@@ -1,6 +1,20 @@
 from backend.core.utils import dict_get_or, parse_list_query
 from backend.core.http import fail, guard_request
 
+export parse_media_size_bytes := func(raw_value) {
+	size_value := -1
+	parse_err := null
+	try {
+		size_value = parse_int(trim(to_string(raw_value)))
+	} except e {
+		parse_err = e
+	}
+	if type(parse_err) != "null" || size_value < 0 {
+		return {"ok": false, "value": 0}
+	}
+	return {"ok": true, "value": size_value}
+}
+
 export register_media_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/media", func(req) {
 		guard := guard_request(req, ctx, false)
@@ -96,7 +110,11 @@ export register_media_routes := func(server, ctx) {
 		filename := trim(to_string(dict_get_or(body, "filename", "")))
 		mime_type := trim(to_string(dict_get_or(body, "mime_type", "application/octet-stream")))
 		storage_path := trim(to_string(dict_get_or(body, "storage_path", "")))
-		size_bytes := dict_get_or(body, "size_bytes", 0)
+		size_result := parse_media_size_bytes(dict_get_or(body, "size_bytes", 0))
+		if size_result["ok"] == false {
+			return fail(cfg, 400, "invalid_size_bytes", "size_bytes must be a non-negative integer", {})
+		}
+		size_bytes := size_result["value"]
 		alt_text := trim(to_string(dict_get_or(body, "alt_text", "")))
 		meta_json := "{}"
 		if has_key(body, "meta") == 1 {
@@ -242,7 +260,11 @@ export register_media_routes := func(server, ctx) {
 		filename := trim(to_string(dict_get_or(body, "filename", existing["filename"])))
 		mime_type := trim(to_string(dict_get_or(body, "mime_type", existing["mime_type"])))
 		storage_path := trim(to_string(dict_get_or(body, "storage_path", existing["storage_path"])))
-		size_bytes := dict_get_or(body, "size_bytes", existing["size_bytes"])
+		size_result := parse_media_size_bytes(dict_get_or(body, "size_bytes", existing["size_bytes"]))
+		if size_result["ok"] == false {
+			return fail(cfg, 400, "invalid_size_bytes", "size_bytes must be a non-negative integer", {})
+		}
+		size_bytes := size_result["value"]
 		alt_text := trim(to_string(dict_get_or(body, "alt_text", existing["alt_text"])))
 		meta_json := to_string(dict_get_or(existing, "meta_json", "{}"))
 		if has_key(body, "meta") == 1 {
@@ -304,6 +326,20 @@ export register_media_routes := func(server, ctx) {
 		}
 		if type(id_err) != "null" || media_id <= 0 {
 			return fail(cfg, 400, "invalid_id", "id must be a positive integer", {})
+		}
+
+		existing_rows := []
+		existing_err := null
+		try {
+			existing_rows = db_query(db, "SELECT id FROM media_items WHERE id = ? LIMIT 1", [media_id])
+		} except e {
+			existing_err = e
+		}
+		if type(existing_err) != "null" {
+			return fail(cfg, 500, "db_query_failed", "Failed to load media item", {})
+		}
+		if len(existing_rows) == 0 {
+			return fail(cfg, 404, "not_found", "Media item not found", {})
 		}
 
 		delete_err := null

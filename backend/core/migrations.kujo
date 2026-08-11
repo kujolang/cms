@@ -1,17 +1,37 @@
-export TARGET_SCHEMA_VERSION := 6
+export TARGET_SCHEMA_VERSION := 7
 
 func db_query_safe(sql_db, sql_text, sql_params) {
-	rows := db_query(sql_db, sql_text, sql_params)
-	if type(rows) == "error" {
-		return {"ok": false, "error": to_string(rows), "rows": []}
+	rows := []
+	query_err := null
+	try {
+		rows = db_query(sql_db, sql_text, sql_params)
+	} except e {
+		query_err = e
+	}
+	if type(query_err) != "null" || type(rows) == "error" {
+		error_value := query_err
+		if type(error_value) == "null" {
+			error_value = rows
+		}
+		return {"ok": false, "error": to_string(error_value), "rows": []}
 	}
 	return {"ok": true, "rows": rows}
 }
 
 func db_execute_safe(sql_db, sql_text, sql_params) {
-	result := db_execute(sql_db, sql_text, sql_params)
-	if type(result) == "error" {
-		return {"ok": false, "error": to_string(result)}
+	result := null
+	execute_err := null
+	try {
+		result = db_execute(sql_db, sql_text, sql_params)
+	} except e {
+		execute_err = e
+	}
+	if type(execute_err) != "null" || type(result) == "error" {
+		error_value := execute_err
+		if type(error_value) == "null" {
+			error_value = result
+		}
+		return {"ok": false, "error": to_string(error_value)}
 	}
 	return {"ok": true, "result": result}
 }
@@ -242,6 +262,51 @@ export run_post_bootstrap_migrations := func(db) {
 		}
 		current_version = 6
 		applied = push(applied, "v6_background_jobs")
+	}
+
+	if current_version < 7 {
+		begin_result := db_execute_safe(db, "BEGIN IMMEDIATE", [])
+		if begin_result["ok"] == false {
+			return begin_result
+		}
+
+		migration_error := null
+		steps := [
+			"CREATE TABLE workspaces_v7 (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_id INTEGER NOT NULL, workspace_key TEXT NOT NULL, name TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, disabled_at TEXT, archived_at TEXT, FOREIGN KEY(tenant_id) REFERENCES tenants(id) ON DELETE CASCADE, UNIQUE(tenant_id, workspace_key))",
+			"INSERT INTO workspaces_v7 (id, tenant_id, workspace_key, name, status, created_at, updated_at, disabled_at, archived_at) SELECT id, tenant_id, workspace_key, name, status, created_at, updated_at, disabled_at, archived_at FROM workspaces",
+			"DROP TABLE workspaces",
+			"ALTER TABLE workspaces_v7 RENAME TO workspaces",
+			"CREATE INDEX idx_workspaces_tenant_id ON workspaces(tenant_id)",
+			"CREATE INDEX idx_workspaces_status ON workspaces(status)"
+		]
+		for step_sql in steps {
+			if type(migration_error) == "null" {
+				step_result := db_execute_safe(db, step_sql, [])
+				if step_result["ok"] == false {
+					migration_error = step_result["error"]
+				}
+			}
+		}
+
+		if type(migration_error) != "null" {
+			_ = db_execute_safe(db, "ROLLBACK", [])
+			return {"ok": false, "error": to_string(migration_error)}
+		}
+
+		mark_v7 := set_schema_version(db, 7)
+		if mark_v7["ok"] == false {
+			_ = db_execute_safe(db, "ROLLBACK", [])
+			return mark_v7
+		}
+
+		commit_result := db_execute_safe(db, "COMMIT", [])
+		if commit_result["ok"] == false {
+			_ = db_execute_safe(db, "ROLLBACK", [])
+			return commit_result
+		}
+
+		current_version = 7
+		applied = push(applied, "v7_workspace_keys_per_tenant")
 	}
 
 	return {
