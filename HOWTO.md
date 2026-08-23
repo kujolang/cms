@@ -1,446 +1,328 @@
-# CMS HOWTO (Beta Runbook)
+# Build a Site with Kujo CMS
 
-This guide is written for people who are new to Kujo and new to this CMS repository.
+Kujo CMS is a server-first, headless content backend. It stores and delivers content, while your website remains a separate application that you are free to build with any frontend stack: Next.js, Astro, Nuxt, SvelteKit, a native app, a static-site generator, or plain HTML and JavaScript.
 
-If you follow this document from top to bottom, you will be able to:
+That separation is the central idea behind this guide. The CMS owns content, publishing state, API access, and operational concerns. Your frontend owns routes, components, styling, rendering, and the user experience.
 
-- Start and stop the CMS server reliably
-- Use each major API piece (content types, entries, taxonomies, media, menus, plugins, themes, auth)
-- Run the full beta-readiness validation suite
-- Hand the API and data layer off to dashboard/frontend work with confidence
+By the end of this HOWTO, you will have:
 
-## 1) What This Repository Is
+- A local CMS API backed by SQLite
+- An `article` content type
+- A published first article
+- A frontend reading content through the public API
+- A clear path from local prototype to an agent-assisted production workflow
 
-This project is an API-first CMS backend implemented in Kujo with SQLite storage.
+## Why Build This Way?
 
-Main runtime entrypoint:
+### Your frontend is whatever you want it to be
 
-- `backend/runtime/main.kujo`
+Kujo CMS does not force your site into a theme runtime or a specific JavaScript framework. A frontend only needs to make HTTP requests and read JSON. You can replace the frontend without migrating the content backend, add a mobile client alongside the website, or serve multiple experiences from the same content source.
 
-Core local modules used by the runtime:
+The CMS does include a theme registry, but theme records are metadata and activation controls. They do not take ownership of frontend rendering. Your application still decides what an active theme means and how it should look.
 
-| Area | Paths |
-| --- | --- |
-| Config | `backend/config/config.kujo` |
-| Core transport and persistence | `backend/core/*.kujo` |
-| Auth and authorization | `backend/modules/*.kujo` |
-| Domain routes | `backend/routes/*.kujo` |
+### The workflow is agentic-first
 
-## 2) Prerequisites
+An agent works best when a system is discoverable, explicit, and testable. Kujo CMS exposes the surfaces an agent needs to understand and safely operate the project:
+
+- `GET /v1` advertises API capabilities.
+- `GET /v1/openapi.json` provides a machine-readable API contract.
+- `GET /.well-known/llms.txt` and `GET /llms.txt` describe useful public routes.
+- Predictable JSON envelopes make responses easy to inspect and compose.
+- Bearer-authenticated writes keep public reads separate from mutations.
+- Idempotency support makes automated mutation retries safer.
+- Contract tests and a release gate give both humans and agents an objective definition of working.
+
+This makes a practical agentic loop possible: inspect the contract, model the content, create or update it through authenticated routes, connect the frontend, run validation, and use failures as structured feedback.
+
+Agentic-first does not mean agents bypass review or security. It means the normal interface is structured enough for agents to contribute without relying on hidden dashboard behavior or brittle browser automation.
+
+### Content and presentation can evolve independently
+
+Editors and automations can work with entries while frontend developers refine the site. Published-only anonymous reads prevent drafts, scheduled entries, archived entries, and revision history from leaking through the public delivery path. Revisions, rollback, scheduling, entry locks, webhooks, and background jobs are available when the workflow grows beyond a simple blog.
+
+### Delivery basics are already present
+
+The backend provides sitemap, RSS, robots, security, health, readiness, metrics, and API discovery routes. These do not replace good frontend SEO or production operations, but they give a new site a useful foundation.
+
+## 1. Prerequisites
 
 You need:
 
 - A Kujo runtime binary
-- Bash + curl
-- Node.js (used by integration scripts for JSON extraction)
+- Bash and `curl`
+- This repository checked out locally
 
-### Build Kujo runtime (if you do not already have it)
+If you need to build Kujo first:
 
 ```bash
 cd /path/to/kujo
 cargo build --bin kujo
 ```
 
-This guide assumes your runtime is at:
+The examples below assume the binary is at `/path/to/kujo/target/debug/kujo` and this repository is at `/path/to/cms`.
 
-```bash
-/path/to/kujo/target/debug/kujo
-```
+## 2. Configure the CMS
 
-## 3) Initial Setup
-
-From the CMS repository root:
+From the repository root, create your local environment file:
 
 ```bash
 cd /path/to/cms
 cp .env.example .env
 ```
 
-Minimum `.env` values to verify:
+The development defaults bind the server to `127.0.0.1:4200` and store data in `cms.db`. Before doing anything beyond local development, replace the bootstrap token and set the public site URL and CORS origin deliberately.
 
-- `CMS_API_HOST=127.0.0.1`
-- `CMS_API_PORT=4200`
-- `CMS_SITE_URL=http://127.0.0.1:4200`
-- `CMS_DB_PATH=cms.db`
-- `CMS_API_TOKEN=change-me-in-production`
-- `CMS_ENV=development`
+For this local walkthrough, confirm these values in `.env`:
 
-## 4) Turn CMS Server On
+```dotenv
+CMS_API_HOST=127.0.0.1
+CMS_API_PORT=4200
+CMS_SITE_URL=http://127.0.0.1:4200
+CMS_DB_PATH=cms.db
+CMS_API_TOKEN=change-me-in-production
+CMS_ENV=development
+```
 
-### Foreground mode (recommended while developing)
+The placeholder token is only for a local walkthrough. Never deploy it.
+
+## 3. Start the API
+
+The canonical runtime entrypoint is `backend/runtime/main.kujo`:
 
 ```bash
 cd /path/to/cms
 /path/to/kujo/target/debug/kujo run --interpreter backend/runtime/main.kujo
 ```
 
-Expected startup output includes:
-
-- `CMS API`
-- `Server: http://127.0.0.1:<port>` when `CMS_API_HOST=127.0.0.1`
-- `Press Ctrl+C to stop`
-
-Expected local output shape:
-
-```text
-CMS API
-Server: http://127.0.0.1:4200
-...
-Press Ctrl+C to stop
-```
-
-### Background mode (if you want your shell back)
-
-```bash
-cd /path/to/cms
-mkdir -p results
-CMS_API_PORT=4200 \
-CMS_API_HOST=127.0.0.1 \
-CMS_SITE_URL=http://127.0.0.1:4200 \
-CMS_DB_PATH=results/dev_4200.db \
-CMS_API_TOKEN=change-me-in-production \
-/path/to/kujo/target/debug/kujo run --interpreter backend/runtime/main.kujo \
-  > results/dev_server_4200.log 2>&1 &
-echo $! > results/dev_server_4200.pid
-```
-
-## 5) Verify Server Is Running
+Keep that process running. In another terminal, verify the API and inspect its discovery surfaces:
 
 ```bash
 curl -sS http://127.0.0.1:4200/health
 curl -sS http://127.0.0.1:4200/v1
+curl -sS http://127.0.0.1:4200/v1/openapi.json
+curl -sS http://127.0.0.1:4200/.well-known/llms.txt
 ```
 
-You should see HTTP 200 payloads and API capability metadata.
+These are also good first requests for a coding agent joining the project: health establishes that the service is running, while the capability and contract endpoints describe the available interface.
 
-## 6) Turn CMS Server Off
-
-### If running in foreground
-
-Press `Ctrl+C`.
-
-### If running in background with PID file
+Set a few shell variables for the remaining examples:
 
 ```bash
-cd /path/to/cms
-kill "$(cat results/dev_server_4200.pid)"
-rm -f results/dev_server_4200.pid
-```
-
-### If port is stuck/in use
-
-```bash
-lsof -nP -iTCP:4200 -sTCP:LISTEN
-kill <PID>
-```
-
-Use this when an old process prevents startup with `Address already in use`.
-
-## 7) Auth Header You Will Reuse
-
-Most write endpoints require bearer auth.
-
-```bash
-export CMS_TOKEN="change-me-in-production"
 export CMS_BASE="http://127.0.0.1:4200"
-auth=(-H "Authorization: Bearer ${CMS_TOKEN}")
-json=("${auth[@]}" -H "Content-Type: application/json")
+export CMS_TOKEN="change-me-in-production"
 ```
 
-Header pattern:
+## 4. Model the Site's Content
 
-```bash
--H "Authorization: Bearer ${CMS_TOKEN}"
-```
-
-## 8) Use Each API Piece (Step-by-Step)
-
-The examples below are intentionally practical and minimal.
-
-## 8.1 Core + Delivery
-
-```bash
-for path in / /health /v1 /robots.txt /.well-known/security.txt /sitemap.xml /rss.xml /llms.txt; do
-  curl -sS "${CMS_BASE}${path}"
-done
-```
-
-## 8.2 Content Types
-
-Create:
+A content type describes a family of entries. For a publication site, start with an `article` type:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/content-types" \
-  "${json[@]}" \
-  --data '{"type_key":"news","label":"News","singular_label":"News Item"}'
+  -H "Authorization: Bearer ${CMS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: setup-article-content-type-v1" \
+  --data '{
+    "type_key": "article",
+    "label": "Articles",
+    "singular_label": "Article",
+    "description": "Long-form editorial content",
+    "supports": {
+      "excerpt": true,
+      "seo": true
+    }
+  }'
 ```
 
-List:
+List the available content types to confirm it was created:
 
 ```bash
-curl -sS "${CMS_BASE}/v1/content-types"
+curl -sS "${CMS_BASE}/v1/content-types?sort_by=type_key&sort_dir=asc"
 ```
 
-## 8.3 Taxonomies + Terms
+Content modeling is where headless architecture pays off. Use content types to describe editorial meaning—articles, documentation pages, release notes, case studies—not frontend component names. A `case-study` content type can be rendered as a full web page, a homepage card, an email excerpt, and a mobile screen without duplicating the underlying content.
 
-Create taxonomy:
+## 5. Publish the First Article
 
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/taxonomies" \
-  "${json[@]}" \
-  --data '{"taxonomy_key":"topic","label":"Topic","description":"Topic taxonomy"}'
-```
-
-Create term (replace `<taxonomy_id>`):
-
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/taxonomies/<taxonomy_id>/terms" \
-  "${json[@]}" \
-  --data '{"name":"Platform","slug":"platform"}'
-```
-
-## 8.4 Entries (CRUD, SEO, revisions, scheduling, locking)
-
-Create entry:
+Create a published entry:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/entries" \
-  "${json[@]}" \
-  --data '{"content_type_key":"news","title":"First Post","slug":"first-post","status":"published","body":"Hello API"}'
+  -H "Authorization: Bearer ${CMS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: publish-hello-kujo-v1" \
+  --data '{
+    "content_type_key": "article",
+    "title": "Hello from Kujo CMS",
+    "slug": "hello-kujo",
+    "status": "published",
+    "excerpt": "Our first article from a frontend-agnostic CMS.",
+    "body": "# Hello, world!\n\nThis body is stored by the CMS and rendered by the frontend.",
+    "author_id": "editorial-team",
+    "meta": {
+      "featured": true
+    },
+    "seo": {
+      "title": "Hello from Kujo CMS",
+      "description": "A first site powered by Kujo CMS.",
+      "schema_type": "Article"
+    }
+  }'
 ```
 
-List entries with deterministic filters/sort:
+The `body` is stored as text. In this example it contains Markdown, but the frontend is responsible for parsing and sanitizing it. You could instead establish HTML, portable JSON, or another body convention for your project.
+
+Read the entry without authentication, just as the public site will:
 
 ```bash
-curl -sS "${CMS_BASE}/v1/entries?content_type=news&status=published&sort_by=created_at&sort_dir=desc"
+curl -sS "${CMS_BASE}/v1/entries/by-slug/article/hello-kujo"
 ```
 
-Lookup by slug:
+Or fetch an article index with only the fields a listing page needs:
 
 ```bash
-curl -sS "${CMS_BASE}/v1/entries/by-slug/news/first-post"
+curl -sS "${CMS_BASE}/v1/entries?content_type=article&fields=title,slug,excerpt,published_at&sort_by=published_at&sort_dir=desc"
 ```
 
-Entry SEO projection (replace `<entry_id>`):
+Anonymous requests only receive published entries. Authenticated editorial clients can also work with `draft`, `scheduled`, and `archived` content.
+
+## 6. Connect Any Frontend
+
+The integration contract is ordinary HTTP plus JSON, so the same approach works in server-rendered frameworks, build-time generators, browser applications, and native clients.
+
+Here is a framework-neutral JavaScript data layer:
+
+```js
+const cmsBase = process.env.CMS_BASE_URL ?? "http://127.0.0.1:4200";
+
+export async function getArticles() {
+  const url = new URL("/v1/entries", cmsBase);
+  url.searchParams.set("content_type", "article");
+  url.searchParams.set("fields", "title,slug,excerpt,published_at");
+  url.searchParams.set("sort_by", "published_at");
+  url.searchParams.set("sort_dir", "desc");
+
+  const response = await fetch(url, { headers: { Accept: "application/json" } });
+  if (!response.ok) throw new Error(`CMS request failed: ${response.status}`);
+
+  const payload = await response.json();
+  return payload.data.items;
+}
+
+export async function getArticle(slug) {
+  const path = `/v1/entries/by-slug/article/${encodeURIComponent(slug)}`;
+  const response = await fetch(new URL(path, cmsBase), {
+    headers: { Accept: "application/json" },
+  });
+
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`CMS request failed: ${response.status}`);
+
+  const payload = await response.json();
+  return payload.data;
+}
+```
+
+Use `getArticles()` in an index route and `getArticle(slug)` in a dynamic article route. Everything after that—Markdown rendering, design tokens, image handling, caching, page transitions, analytics—is a frontend decision.
+
+For a static site, call these functions during the build. For server-side rendering, call them per request or through the framework's cache. For a client-rendered app, set `CMS_CORS_ORIGIN` to the exact frontend origin rather than leaving it as `*` in production.
+
+Do not expose `CMS_API_TOKEN` in browser code. Public pages do not need it. Put editorial mutations in a trusted server, admin application, CI workflow, or agent tool that can protect credentials.
+
+## 7. Add Taxonomy, Navigation, and Media
+
+Once the basic route works, the API can model the rest of the site:
+
+- Taxonomies and terms categorize content.
+- Menus provide managed navigation data.
+- Media records associate URLs, MIME types, and alt text with assets.
+- SEO projections expose normalized metadata for a frontend.
+- RSS and sitemap variants support discovery by content type and taxonomy.
+
+For example, create a topic taxonomy:
 
 ```bash
-curl -sS "${CMS_BASE}/v1/entries/<entry_id>/seo"
+curl -sS -X POST "${CMS_BASE}/v1/taxonomies" \
+  -H "Authorization: Bearer ${CMS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "taxonomy_key": "topic",
+    "label": "Topics",
+    "description": "Editorial subject areas"
+  }'
 ```
 
-Create revision snapshot:
+Use the returned taxonomy ID to create terms, then attach term IDs to entries through `POST /v1/entries/:id/terms`. The live contract at `/v1/openapi.json` is the best place for a human or agent to discover the rest of the current route surface.
 
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/entries/<entry_id>/revisions" \
-  "${json[@]}" \
-  --data '{"note":"checkpoint before major edit"}'
-```
+## 8. Use an Agentic Build Loop
 
-List revisions:
+A productive agent-assisted workflow can stay small and explicit:
 
-```bash
-curl -sS "${CMS_BASE}/v1/entries/<entry_id>/revisions"
-```
+1. Ask the agent to inspect `/v1`, `/v1/openapi.json`, and `/.well-known/llms.txt`.
+2. Describe the site in editorial terms: required content types, taxonomies, menus, and publishing rules.
+3. Have the agent propose API mutations before applying them, especially against shared or production data.
+4. Use a unique `Idempotency-Key` for retryable mutations.
+5. Let the agent build the frontend against public, published-only routes.
+6. Run contract tests and the release gate after source or API-documentation changes.
+7. Review the rendered site, accessibility, content accuracy, and production configuration as human-owned release decisions.
 
-Restore a revision (replace `<revision_id>`):
+A useful prompt might be:
 
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/entries/<entry_id>/revisions/<revision_id>/restore" \
-  "${auth[@]}"
-```
+> Inspect the Kujo CMS capability and OpenAPI endpoints. Create a content model for a documentation site with guides and release notes, then build the frontend against published-only routes. Keep write credentials server-side, use idempotency keys for mutations, and run the repository validation gate before reporting completion.
 
-Run scheduler:
+Because the CMS contract is available over HTTP, this workflow is not tied to a particular agent product. The same system can support a local coding agent, an internal editorial automation, or a CI publishing job.
 
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/entries/scheduler/run" \
-  "${auth[@]}"
-```
+## 9. Editorial and Operational Features
 
-Acquire lock:
+As the site matures, you can add:
 
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/entry-locks/acquire" \
-  "${json[@]}" \
-  -H "X-Lock-Session: editor-a" \
-  --data '{"entry_id":<entry_id>,"session_id":"editor-a","note":"editing"}'
-```
+- Revisions and rollback for editorial recovery
+- Entry locks for concurrent editing
+- Scheduled publishing and unpublishing
+- Webhook hooks and an outbox with retries
+- Background jobs and dead-letter replay
+- Roles and API tokens with lifecycle controls
+- Tenant and workspace isolation
+- Database migration checks, backup, and restore
+- Health, readiness, metrics, structured audit logs, and rate limiting
 
-Lock state:
+These features let the frontend stay focused on presentation while the backend handles content workflow and operational policy.
 
-```bash
-curl -sS "${CMS_BASE}/v1/entry-locks/state?entry_id=<entry_id>"
-```
+## 10. Validate Before You Ship
 
-Release lock:
-
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/entry-locks/release" \
-  "${json[@]}" \
-  -H "X-Lock-Session: editor-a" \
-  --data '{"entry_id":<entry_id>,"session_id":"editor-a"}'
-```
-
-## 8.5 Media
-
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/media" \
-  "${json[@]}" \
-  --data '{"url":"https://example.com/image.jpg","mime_type":"image/jpeg","alt_text":"Example image"}'
-
-curl -sS "${CMS_BASE}/v1/media"
-```
-
-## 8.6 Menus + Menu Items
-
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/menus" \
-  "${json[@]}" \
-  --data '{"name":"Main Navigation","location":"primary"}'
-
-curl -sS -X POST "${CMS_BASE}/v1/menus/<menu_id>/items" \
-  "${json[@]}" \
-  --data '{"label":"Home","item_type":"custom","target":"/","sort_order":1}'
-
-curl -sS "${CMS_BASE}/v1/menus/<menu_id>/items"
-```
-
-## 8.7 Plugins + Hooks
-
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/plugins" \
-  "${json[@]}" \
-  --data '{"name":"Example Plugin","slug":"example-plugin","version":"1.0.0","enabled":true}'
-
-curl -sS -X POST "${CMS_BASE}/v1/plugins/<plugin_id>/hooks" \
-  "${json[@]}" \
-  --data '{"hook_name":"publish","handler_url":"https://example.com/hook","shared_secret":"secret"}'
-
-curl -sS "${CMS_BASE}/v1/plugins/<plugin_id>/hooks"
-```
-
-## 8.8 Themes
-
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/themes" \
-  "${json[@]}" \
-  --data '{"name":"Default Theme","slug":"default-theme","version":"1.0.0","is_active":false}'
-
-curl -sS -X POST "${CMS_BASE}/v1/themes/<theme_id>/activate" \
-  "${json[@]}" \
-  --data '{}'
-
-curl -sS "${CMS_BASE}/v1/themes/active"
-```
-
-## 8.9 Auth (Roles + API Tokens)
-
-```bash
-curl -sS -X POST "${CMS_BASE}/v1/auth/roles" \
-  "${json[@]}" \
-  --data '{"name":"Editor","permissions":["entries:write","entries:read","taxonomies:read"]}'
-
-curl -sS -X POST "${CMS_BASE}/v1/auth/tokens" \
-  "${json[@]}" \
-  --data '{"label":"dashboard-token","role_id":1}'
-
-curl -sS "${CMS_BASE}/v1/auth/tokens" \
-  "${auth[@]}"
-```
-
-## 9) Full Beta-Readiness Validation Commands
-
-Use an explicit runtime binary to avoid drift:
-
-```bash
-export KUJO_BIN=/path/to/kujo/target/debug/kujo
-cd /path/to/cms
-```
-
-Run all gates:
-
-```bash
-"${KUJO_BIN}" test-run tests/cms_contract_tests.kujo
-CMS_TEST_PORT=49390 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage1.sh
-CMS_TEST_PORT=49391 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round1.sh
-CMS_TEST_PORT=49392 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round2-sitemaps.sh
-CMS_TEST_PORT=49393 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round2-feeds.sh
-CMS_TEST_PORT=49394 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round2-cursor.sh
-CMS_TEST_PORT=49395 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage2-round2-projection.sh
-CMS_TEST_PORT=49396 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage3-round1-revisions.sh
-CMS_TEST_PORT=49397 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage3-round2-rollback.sh
-CMS_TEST_PORT=49398 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage3-round3-scheduler.sh
-CMS_TEST_PORT=49399 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-stage3-round3-locking.sh
-CMS_SMOKE_PORT=49400 KUJO_BIN="${KUJO_BIN}" bash scripts/smoke-api.sh
-CMS_SECURITY_TEST_PORT_BASE=49410 KUJO_BIN="${KUJO_BIN}" bash scripts/integration-enterprise-security.sh
-CMS_PERF_PORT=49420 CMS_PERF_RUNS=5 KUJO_BIN="${KUJO_BIN}" bash scripts/perf-baseline.sh
-```
-
-Perf report output:
-
-- `results/perf_baseline_latest.json`
-
-You can also run all gates with one command:
+Run the contract suite:
 
 ```bash
 cd /path/to/cms
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
+/path/to/kujo/target/debug/kujo test-run tests/cms_contract_tests.kujo
 ```
 
-If you want to skip perf in a fast CI-style pass:
+Run the repository release gate without the optional performance pass:
 
 ```bash
 cd /path/to/cms
-CMS_GATE_RUN_PERF=false KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/run-release-gate.sh
+CMS_GATE_RUN_PERF=false \
+KUJO_BIN=/path/to/kujo/target/debug/kujo \
+bash scripts/run-release-gate.sh
 ```
 
-## 10) Important Operational Notes
+For a public production deployment, also:
 
-- If you see `Address already in use`, stop the old process or choose a different port.
-- Integration scripts create temporary DB files in `results/` and clean most of them after each run.
-- A production deployment should not use `CMS_API_TOKEN=change-me-in-production`.
-- In production, use:
-  - `CMS_ENV=production`
-  - `CMS_ALLOW_BOOTSTRAP_TOKEN=false` after bootstrap
-  - `CMS_ENFORCE_BOOTSTRAP_TOKEN_ROTATION=true`
-  - A real CORS origin instead of `*`
+- Set `CMS_ENV=production`.
+- Rotate `CMS_API_TOKEN` and disable the bootstrap token after provisioning.
+- Set a specific `CMS_CORS_ORIGIN`.
+- Use durable storage and test backup and restore procedures.
+- Review rate limiting, webhook URL policy, observability, TLS, infrastructure, and secrets management.
+- Run your own threat-model, privacy, compliance, accessibility, and load reviews.
+- Enforce the release gate through branch protection or repository rulesets.
 
-## 11) Enterprise DB Operations
+The repository documents its current production-readiness posture in `README.md` and `docs/enterprise-production-readiness-plan.md`. Treat that evidence as a starting point, not a substitute for reviewing the environment where your site will actually run.
 
-Run migration safety validation (fresh boot + restart idempotence):
+## Where to Go Next
 
-```bash
-cd /path/to/cms
-KUJO_BIN=/path/to/kujo/target/debug/kujo bash scripts/migration-safety.sh
-```
+- Read `README.md` for the architecture and current readiness posture.
+- Open `docs/README.md` for the documentation index.
+- Inspect `GET /v1/openapi.json` for the live route contract.
+- Use `backend/runtime/main.kujo` as the canonical server entrypoint.
+- Use `scripts/run-release-gate.sh` as the final repository validation path.
 
-Create a backup:
-
-```bash
-cd /path/to/cms
-bash scripts/backup-db.sh ./cms.db
-```
-
-Restore a backup:
-
-```bash
-cd /path/to/cms
-bash scripts/restore-db.sh ./results/backups/<backup-file>.bak ./cms.db --force
-```
-
-Notes:
-
-- Stop the running CMS server before backup/restore.
-- Backup files are timestamped and include a manifest.
-- Restore refuses to overwrite existing DBs unless `--force` is provided.
-
-## 12) UI/UX Handoff Checklist
-
-Use this list before starting admin dashboard and frontend work:
-
-- API contract tests passing
-- Stage 1/2/3 integration scripts passing
-- Smoke script passing
-- Enterprise security integration passing
-- Baseline perf report generated
-- Stable local runbook documented (this file)
-
-When all items are green, you can begin dashboard and frontend implementation with a stable backend foundation.
+The result is a content platform with a deliberately small boundary: Kujo CMS manages and delivers content; your frontend turns that content into whatever experience you want to build.
