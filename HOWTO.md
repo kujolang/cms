@@ -114,7 +114,13 @@ export CMS_TOKEN="change-me-in-production"
 
 ## 4. Model the Site's Content
 
-A content type describes a family of entries. For a publication site, start with an `article` type:
+A content type describes a family of entries. A fresh CMS database currently seeds `article` and `page` content types, plus a published welcome article. Inspect the available models before creating anything:
+
+```bash
+curl -sS "${CMS_BASE}/v1/content-types?sort_by=type_key&sort_dir=asc"
+```
+
+If `article` is already present, use it and skip the next request. If your installation does not include it, create it:
 
 ```bash
 curl -sS -X POST "${CMS_BASE}/v1/content-types" \
@@ -133,11 +139,13 @@ curl -sS -X POST "${CMS_BASE}/v1/content-types" \
   }'
 ```
 
-List the available content types to confirm it was created:
+List the available content types again to confirm the model you will use:
 
 ```bash
 curl -sS "${CMS_BASE}/v1/content-types?sort_by=type_key&sort_dir=asc"
 ```
+
+If the create request returns HTTP 409 with `create_failed`, the `type_key` probably already exists. Reuse the existing model or choose a different key; an idempotency key only replays the same earlier request and does not turn a pre-existing seeded record into a successful create.
 
 Content modeling is where headless architecture pays off. Use content types to describe editorial meaning—articles, documentation pages, release notes, case studies—not frontend component names. A `case-study` content type can be rendered as a full web page, a homepage card, an email excerpt, and a mobile screen without duplicating the underlying content.
 
@@ -189,7 +197,7 @@ Anonymous requests only receive published entries. Authenticated editorial clien
 
 The integration contract is ordinary HTTP plus JSON, so the same approach works in server-rendered frameworks, build-time generators, browser applications, and native clients.
 
-Here is a framework-neutral JavaScript data layer:
+Here is a framework-neutral JavaScript data layer for server-rendered frameworks and build-time generators:
 
 ```js
 const cmsBase = process.env.CMS_BASE_URL ?? "http://127.0.0.1:4200";
@@ -224,7 +232,7 @@ export async function getArticle(slug) {
 
 Use `getArticles()` in an index route and `getArticle(slug)` in a dynamic article route. Everything after that—Markdown rendering, design tokens, image handling, caching, page transitions, analytics—is a frontend decision.
 
-For a static site, call these functions during the build. For server-side rendering, call them per request or through the framework's cache. For a client-rendered app, set `CMS_CORS_ORIGIN` to the exact frontend origin rather than leaving it as `*` in production.
+For a static site, call these functions during the build. For server-side rendering, call them per request or through the framework's cache. In plain browser code, replace `process.env.CMS_BASE_URL` with your build tool's public environment convention or a fixed public API URL. For a client-rendered app, set `CMS_CORS_ORIGIN` to the exact frontend origin rather than leaving it as `*` in production.
 
 Do not expose `CMS_API_TOKEN` in browser code. Public pages do not need it. Put editorial mutations in a trusted server, admin application, CI workflow, or agent tool that can protect credentials.
 
@@ -251,7 +259,31 @@ curl -sS -X POST "${CMS_BASE}/v1/taxonomies" \
   }'
 ```
 
-Use the returned taxonomy ID to create terms, then attach term IDs to entries through `POST /v1/entries/:id/terms`. The live contract at `/v1/openapi.json` is the best place for a human or agent to discover the rest of the current route surface.
+Save the `id` from that response as `<taxonomy_id>`, then create a term:
+
+```bash
+curl -sS -X POST "${CMS_BASE}/v1/taxonomies/<taxonomy_id>/terms" \
+  -H "Authorization: Bearer ${CMS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: setup-agentic-systems-term-v1" \
+  --data '{
+    "name": "Agentic Systems",
+    "slug": "agentic-systems",
+    "description": "Tools and workflows designed for agents and humans"
+  }'
+```
+
+Save the term response `id` as `<term_id>` and the article response `id` from step 5 as `<entry_id>`. Attach the term with the actual returned IDs—IDs are database-assigned and must not be guessed:
+
+```bash
+curl -sS -X POST "${CMS_BASE}/v1/entries/<entry_id>/terms" \
+  -H "Authorization: Bearer ${CMS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: assign-hello-kujo-agentic-systems-v1" \
+  --data '{"term_ids":[<term_id>]}'
+```
+
+`POST /v1/entries/:id/terms` replaces the entry's complete term assignment with the supplied array. The live contract at `/v1/openapi.json` is the best place for a human or agent to discover the rest of the current route surface.
 
 ## 8. Use an Agentic Build Loop
 
