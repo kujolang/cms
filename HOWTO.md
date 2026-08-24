@@ -285,6 +285,22 @@ curl -sS -X POST "${CMS_BASE}/v1/entries/<entry_id>/terms" \
 
 `POST /v1/entries/:id/terms` replaces the entry's complete term assignment with the supplied array. The live contract at `/v1/openapi.json` is the best place for a human or agent to discover the rest of the current route surface.
 
+### Add a Human Editorial Studio
+
+Kujo CMS is a server-first content API; it does not bundle a browser admin interface. If editors need a familiar CMS experience, build an admin application on top of the authenticated routes and keep `CMS_API_TOKEN` in its trusted server layer. The browser should call that server layer, never the CMS directly with the token.
+
+A practical Markdown-focused editor should expose:
+
+- content type selection when creating an entry;
+- title, slug, excerpt, Markdown body, author, status, publish time, and unpublish time;
+- taxonomy term assignment and term creation;
+- SEO title, description, canonical URL, social sharing image, schema type, and project-specific metadata;
+- preview, revision snapshots before updates, and clear draft/published/scheduled states.
+
+The current entry update contract does not change `content_type_key` or `author_id`. Choose those values when creating the entry, or create a replacement entry when the model or author must change. Before an editor updates an existing entry, create a recovery point with `POST /v1/entries/:id/revisions`, then apply the edit with `PATCH /v1/entries/:id` and replace taxonomy assignments through `POST /v1/entries/:id/terms`.
+
+The media API registers asset metadata; it does not upload or serve binary files. Upload the bytes to an application-owned store first—local disk for development or object storage such as R2/S3 in production—then register the public URL as `storage_path` through `POST /v1/media`. Optimize raster assets before storage (WebP or AVIF, useful dimensions, and a sensible byte limit), preserve meaningful alt text, and let editors select the resulting media record for cover and social images.
+
 ## 8. Use an Agentic Build Loop
 
 A productive agent-assisted workflow can stay small and explicit:
