@@ -301,6 +301,31 @@ func idempotency_supported_request(method, path) {
 	return false
 }
 
+func idempotency_tenant_scope_allows(req, method, path, parsed_body) {
+	if method != "POST" || (path != "/v1/tenants" && path != "/v1/workspaces") {
+		return true
+	}
+	auth_context := dict_get_or(req, "auth_context", {})
+	permissions := dict_get_or(auth_context, "permissions", [])
+	if type(permissions) != "array" {
+		return false
+	}
+	tenant_id := 0
+	if path == "/v1/workspaces" && type(parsed_body) == "dict" {
+		tenant_id = parse_positive_int_text(dict_get_or(parsed_body, "tenant_id", 0), 0)
+	}
+	for permission in permissions {
+		perm := trim(to_string(permission))
+		if perm == "*" {
+			return true
+		}
+		if path == "/v1/workspaces" && tenant_id > 0 && perm == "tenant:" + to_string(tenant_id) {
+			return true
+		}
+	}
+	return false
+}
+
 func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 	if idempotency_enabled(cfg) == false {
 		return {"ok": true, "enabled": false}
@@ -327,6 +352,19 @@ func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 		return {"ok": true, "enabled": false}
 	}
 
+	parsed_body := null
+	if method == "POST" {
+		parsed_body = idempotency_parse_request_body(req)
+	}
+	if idempotency_tenant_scope_allows(req, method, path, parsed_body) == false {
+		return {
+			"ok": false,
+			"replay": false,
+			"status_code": 403,
+			"response": fail(cfg, 403, "tenant_scope_denied", "Token scope does not allow this idempotent tenant operation", {})
+		}
+	}
+
 	db := dict_get_or(ctx, "db", null)
 	if type(db) == "null" {
 		return {
@@ -337,7 +375,13 @@ func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 		}
 	}
 
+	auth_context := dict_get_or(req, "auth_context", {})
+	credential_scope := to_string(dict_get_or(auth_context, "credential_fingerprint", dict_get_or(auth_context, "actor", "unknown")))
+	auth_scope := credential_scope + ":" + to_string(dict_get_or(auth_context, "role_key", "unknown")) + ":" + sha256(to_json(dict_get_or(auth_context, "permissions", [])))
+	idempotency_key = sha256(auth_scope + ":" + idempotency_key)
 	request_hash := idempotency_request_hash(req, method, path)
+	now_ms := current_timestamp()
+	_ = db_execute_safe(db, "DELETE FROM idempotency_keys WHERE expires_at IS NOT NULL AND CAST(expires_at AS INTEGER) <= ?", [now_ms])
 	lookup_result := db_query_safe(
 		db,
 		"SELECT idempotency_key, request_method, request_path, request_hash, status, response_status, response_json FROM idempotency_keys WHERE idempotency_key = ? LIMIT 1",
@@ -353,7 +397,7 @@ func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 	}
 
 	if len(lookup_result["rows"]) == 0 {
-		_ = db_execute_safe(
+		insert_result := db_execute_safe(
 			db,
 			"INSERT INTO idempotency_keys (idempotency_key, request_method, request_path, request_hash, status, response_status, response_json, request_id, created_at, updated_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			[
@@ -367,10 +411,18 @@ func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 				to_string(dict_get_or(req, "request_id", "")),
 				now(),
 				now(),
-				null
+				now_ms + 300000
 			]
 		)
-		return {"ok": true, "enabled": true}
+		if insert_result["ok"] == false {
+			return {
+				"ok": false,
+				"replay": false,
+				"status_code": 409,
+				"response": fail(cfg, 409, "idempotency_in_progress", "Idempotent request is already being processed", {})
+			}
+		}
+		return {"ok": true, "enabled": true, "scoped_key": idempotency_key, "request_hash": request_hash}
 	}
 
 	existing := lookup_result["rows"][0]
@@ -433,11 +485,6 @@ func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 
 	resolved_status := -1
 	resolved_payload := null
-	parsed_body := null
-	if method == "POST" {
-		parsed_body = idempotency_parse_request_body(req)
-	}
-
 	if method == "POST" && path == "/v1/entries" {
 		if type(parsed_body) == "dict" {
 			body_obj := parsed_body
@@ -562,13 +609,14 @@ func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 	if resolved_status > 0 && type(resolved_payload) == "dict" {
 		_ = db_execute_safe(
 			db,
-			"UPDATE idempotency_keys SET status = ?, response_status = ?, response_json = ?, request_id = ?, updated_at = ? WHERE idempotency_key = ? AND request_hash = ?",
+			"UPDATE idempotency_keys SET status = ?, response_status = ?, response_json = ?, request_id = ?, updated_at = ?, expires_at = ? WHERE idempotency_key = ? AND request_hash = ?",
 			[
 				"completed",
 				resolved_status,
 				to_json(resolved_payload),
 				to_string(dict_get_or(req, "request_id", "")),
 				now(),
+				now_ms + 86400000,
 				idempotency_key,
 				request_hash
 			]
@@ -590,6 +638,23 @@ func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 		"status_code": 409,
 		"response": fail(cfg, 409, "idempotency_in_progress", "Idempotent request is still being processed", {})
 	}
+}
+
+export idempotency_complete := func(req, ctx, status_code, response_payload) {
+	idem_context := dict_get_or(req, "idempotency_context", null)
+	if type(idem_context) != "dict" {
+		return {"ok": true, "updated": false}
+	}
+	db := dict_get_or(ctx, "db", null)
+	if type(db) == "null" {
+		return {"ok": false, "updated": false}
+	}
+	result := db_execute_safe(
+		db,
+		"UPDATE idempotency_keys SET status = ?, response_status = ?, response_json = ?, request_id = ?, updated_at = ?, expires_at = ? WHERE idempotency_key = ? AND request_hash = ? AND status = 'pending'",
+		["completed", status_code, to_json(response_payload), to_string(dict_get_or(req, "request_id", "")), now(), current_timestamp() + 86400000, to_string(dict_get_or(idem_context, "scoped_key", "")), to_string(dict_get_or(idem_context, "request_hash", ""))]
+	)
+	return {"ok": result["ok"], "updated": result["ok"]}
 }
 
 func metric_increment(state, metric_name) {
@@ -892,6 +957,12 @@ export guard_request := func(req, ctx, require_write_auth) {
 			return {
 				"ok": false,
 				"response": idem_result["response"]
+			}
+		}
+		if dict_get_or(idem_result, "enabled", false) == true {
+			req["idempotency_context"] := {
+				"scoped_key": dict_get_or(idem_result, "scoped_key", ""),
+				"request_hash": dict_get_or(idem_result, "request_hash", "")
 			}
 		}
 

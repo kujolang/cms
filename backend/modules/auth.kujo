@@ -123,6 +123,7 @@ func load_token_auth(db, token) {
 	return {
 		"ok": true,
 		"actor": "token:" + substring(token_hash, 0, 12),
+		"credential_fingerprint": token_hash,
 		"role_key": role_key,
 		"permissions": permissions,
 		"token_id": row["id"],
@@ -220,6 +221,7 @@ export authorize_request := func(req, ctx, get_header_func, require_write_auth) 
 		return {
 			"ok": true,
 			"actor": "bootstrap-token",
+			"credential_fingerprint": sha256(token),
 			"role_key": "super_admin",
 			"permissions": permissions
 		}

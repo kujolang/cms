@@ -1,5 +1,5 @@
 from backend.core.utils import dict_get_or, is_valid_slug_key, parse_list_query
-from backend.core.http import fail, guard_request, write_audit
+from backend.core.http import fail, guard_request, idempotency_complete, write_audit
 
 get_tenant_scope := func(auth_context) {
 	permissions := []
@@ -309,7 +309,9 @@ export register_tenancy_routes := func(server, ctx) {
 			}
 		}
 
-		return json_response(201, {"ok": true, "data": rows[0]})
+		response_payload := {"ok": true, "data": rows[0]}
+		_ = idempotency_complete(req, ctx, 201, response_payload)
+		return json_response(201, response_payload)
 	})
 
 	server = server.route("POST", "/v1/tenants/update", func(req) {
@@ -876,7 +878,9 @@ export register_tenancy_routes := func(server, ctx) {
 			}
 		}
 
-		return json_response(201, {"ok": true, "data": rows[0]})
+		response_payload := {"ok": true, "data": rows[0]}
+		_ = idempotency_complete(req, ctx, 201, response_payload)
+		return json_response(201, response_payload)
 	})
 
 	return server

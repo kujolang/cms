@@ -284,6 +284,9 @@ test "database bootstrap applies schema version and auth seeds" {
 	}
 
 	db_path := "./results/test_cms_contract.db"
+	if file_exists(db_path) { delete_file(db_path) }
+	if file_exists(db_path + "-wal") { delete_file(db_path + "-wal") }
+	if file_exists(db_path + "-shm") { delete_file(db_path + "-shm") }
 	cfg := load_config({
 		"db_path": db_path,
 		"api_token": "contract-token-123456789",
@@ -312,7 +315,7 @@ test "database bootstrap applies schema version and auth seeds" {
 
 	tokens_result := db_query_safe(db, "SELECT COUNT(*) AS total FROM api_tokens", [])
 	assert_equal(tokens_result["ok"], true)
-	assert_true(to_bool(tokens_result["rows"][0]["total"] >= 1))
+	assert_equal(tokens_result["rows"][0]["total"], 0)
 
 	version_result := get_schema_version(db)
 	assert_equal(version_result["ok"], true)

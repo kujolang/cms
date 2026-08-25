@@ -258,6 +258,8 @@ assert_contains '"replayed":true' "delete retry returns replay marker"
 assert_contains "\"target_id\":\"${ENTRY_ID}\"" "delete retry target id preserved"
 
 assert_sql_equals "SELECT COUNT(*) FROM entries WHERE id = ${ENTRY_ID};" "0" "idempotent delete does not fail on retry"
-assert_sql_equals "SELECT COUNT(*) FROM idempotency_keys WHERE idempotency_key IN ('${CTYPE_KEY}','${TAXONOMY_KEY}','${PLUGIN_KEY}','${TENANT_KEY}','${WORKSPACE_KEY}','${CREATE_KEY}','${DELETE_KEY}');" "7" "idempotency keys persisted"
+assert_sql_equals "SELECT COUNT(*) FROM idempotency_keys;" "7" "credential-scoped idempotency keys persisted"
+assert_sql_equals "SELECT COUNT(*) FROM idempotency_keys WHERE status = 'completed';" "7" "successful requests finalize idempotency records"
+assert_sql_equals "SELECT CASE WHEN MIN(CAST(expires_at AS INTEGER)) > (CAST(strftime('%s','now') AS INTEGER) * 1000 + 300000) THEN 1 ELSE 0 END FROM idempotency_keys;" "1" "completed idempotency records outlive the pending lease"
 
 echo "Stage 2 Round 3 idempotency integration checks passed."

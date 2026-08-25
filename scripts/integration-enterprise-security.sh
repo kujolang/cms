@@ -11,6 +11,7 @@ PORT_TWO="$((BASE_PORT + 1))"
 PORT_THREE="$((BASE_PORT + 2))"
 PORT_FOUR="$((BASE_PORT + 3))"
 PORT_FIVE="$((BASE_PORT + 4))"
+PORT_SIX="$((BASE_PORT + 5))"
 
 TOKEN="${CMS_TEST_TOKEN:-enterprise-security-token-123456789}"
 
@@ -162,6 +163,31 @@ start_server() {
 	done
 
 	echo "[FAIL] server startup on ${site_url}"
+	tail -n 120 "${log_file}" || true
+	exit 1
+}
+
+restart_server_existing_db() {
+	local port="$1"
+	local db_path="$2"
+	local log_file="$3"
+	local site_url="http://127.0.0.1:${port}"
+
+	shift 3
+	clear_port "${port}"
+	rm -f "${log_file}" || true
+
+	(
+		cd "${ROOT_DIR}"
+		env CMS_API_PORT="${port}" CMS_SITE_URL="${site_url}" CMS_DB_PATH="${db_path}" CMS_API_TOKEN="${TOKEN}" "$@" "${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${log_file}" 2>&1
+	) &
+	SERVER_PID=$!
+
+	for _ in {1..50}; do
+		if curl -fsS --max-time 1 "${site_url}/health" >/dev/null 2>&1; then return 0; fi
+		sleep 0.2
+	done
+	echo "[FAIL] server restart on ${site_url}"
 	tail -n 120 "${log_file}" || true
 	exit 1
 }
@@ -400,7 +426,7 @@ BASE_URL_THREE="http://127.0.0.1:${PORT_THREE}"
 DB_THREE="${RESULTS_DIR}/integration_enterprise_security_${PORT_THREE}.db"
 LOG_THREE="${RESULTS_DIR}/integration_enterprise_security_${PORT_THREE}.log"
 TOKEN="change-me-in-production"
-start_server "${PORT_THREE}" "${DB_THREE}" "${LOG_THREE}" CMS_ENV=production CMS_ALLOW_BOOTSTRAP_TOKEN=true CMS_ENFORCE_BOOTSTRAP_TOKEN_ROTATION=true
+start_server "${PORT_THREE}" "${DB_THREE}" "${LOG_THREE}" CMS_ENV=production CMS_TRUSTED_INGRESS_LIMITS=true CMS_RATE_LIMIT_MODE=external CMS_ALLOW_BOOTSTRAP_TOKEN=true CMS_ENFORCE_BOOTSTRAP_TOKEN_ROTATION=true
 
 request "POST" "${BASE_URL_THREE}" "/v1/content-types" '{"type_key":"bootstrap-rotation","label":"Bootstrap Rotation","singular_label":"Bootstrap Rotation"}' "Bearer ${TOKEN}"
 assert_status "401" "bootstrap token rotation enforced"
@@ -412,7 +438,7 @@ BASE_URL_FOUR="http://127.0.0.1:${PORT_FOUR}"
 DB_FOUR="${RESULTS_DIR}/integration_enterprise_security_${PORT_FOUR}.db"
 LOG_FOUR="${RESULTS_DIR}/integration_enterprise_security_${PORT_FOUR}.log"
 TOKEN="aaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-start_server "${PORT_FOUR}" "${DB_FOUR}" "${LOG_FOUR}" CMS_ENV=production CMS_ALLOW_BOOTSTRAP_TOKEN=true CMS_ENFORCE_BOOTSTRAP_TOKEN_ROTATION=true
+start_server "${PORT_FOUR}" "${DB_FOUR}" "${LOG_FOUR}" CMS_ENV=production CMS_TRUSTED_INGRESS_LIMITS=true CMS_RATE_LIMIT_MODE=external CMS_ALLOW_BOOTSTRAP_TOKEN=true CMS_ENFORCE_BOOTSTRAP_TOKEN_ROTATION=true
 
 request "POST" "${BASE_URL_FOUR}" "/v1/content-types" '{"type_key":"bootstrap-entropy","label":"Bootstrap Entropy","singular_label":"Bootstrap Entropy"}' "Bearer ${TOKEN}"
 assert_status "401" "bootstrap token entropy classes enforced"
@@ -433,6 +459,33 @@ assert_contains '"code":"unsafe_handler_url"' "CIDR denylist unsafe code"
 request "POST" "${BASE_URL_FIVE}" "/v1/plugins/1/hooks" '{"hook_name":"entry.created","handler_url":"https://example.com/webhook","shared_secret":"supersecret","enabled":true}' "Bearer ${TOKEN}"
 assert_status "201" "public webhook host still accepted under CIDR denylist"
 
+stop_server
+
+BASE_URL_SIX="http://127.0.0.1:${PORT_SIX}"
+DB_SIX="${RESULTS_DIR}/integration_enterprise_security_${PORT_SIX}.db"
+LOG_SIX="${RESULTS_DIR}/integration_enterprise_security_${PORT_SIX}.log"
+OLD_TOKEN="EnterpriseOldBootstrapAa123456789"
+NEW_TOKEN="EnterpriseNewBootstrapBb234567891"
+TOKEN="${OLD_TOKEN}"
+start_server "${PORT_SIX}" "${DB_SIX}" "${LOG_SIX}"
+request "POST" "${BASE_URL_SIX}" "/v1/content-types" '{"type_key":"bootstrap-before-rotation","label":"Before Rotation","singular_label":"Before Rotation"}' "Bearer ${OLD_TOKEN}"
+assert_status "201" "initial bootstrap token works before rotation"
+stop_server
+
+OLD_TOKEN_HASH="$(printf '%s' "${OLD_TOKEN}" | shasum -a 256 | awk '{print $1}')"
+sqlite3 "${DB_SIX}" "INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES ('${OLD_TOKEN_HASH}', 'renamed legacy credential', 'super_admin', 1, strftime('%s','now'), strftime('%s','now'), NULL, NULL); UPDATE schema_version SET version = 8 WHERE id = 1;"
+
+TOKEN="${NEW_TOKEN}"
+restart_server_existing_db "${PORT_SIX}" "${DB_SIX}" "${LOG_SIX}"
+request "POST" "${BASE_URL_SIX}" "/v1/content-types" '{"type_key":"bootstrap-old-after-rotation","label":"Old Token","singular_label":"Old Token"}' "Bearer ${OLD_TOKEN}"
+assert_status "401" "rotated bootstrap token is revoked after restart"
+request "POST" "${BASE_URL_SIX}" "/v1/content-types" '{"type_key":"bootstrap-new-after-rotation","label":"New Token","singular_label":"New Token"}' "Bearer ${NEW_TOKEN}"
+assert_status "201" "replacement bootstrap token works after restart"
+if [[ "$(sqlite3 "${DB_SIX}" "SELECT COUNT(*) FROM api_tokens WHERE label = 'bootstrap-env-token' AND is_active = 1;")" != "0" ]]; then
+	echo "[FAIL] bootstrap environment token was persisted as an active database credential"
+	exit 1
+fi
+echo "[PASS] bootstrap environment token is not persisted"
 stop_server
 
 echo "[PASS] enterprise security integration checks completed"

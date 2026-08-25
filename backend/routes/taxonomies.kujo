@@ -1,5 +1,5 @@
 from backend.core.utils import dict_get_or, parse_list_query
-from backend.core.http import fail, guard_request
+from backend.core.http import fail, guard_request, idempotency_complete
 
 export register_taxonomy_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/taxonomies", func(req) {
@@ -135,7 +135,9 @@ export register_taxonomy_routes := func(server, ctx) {
 			return fail(cfg, 500, "load_failed", "Created taxonomy but failed to load it", {})
 		}
 
-		return json_response(201, {"ok": true, "data": rows[0]})
+		response_payload := {"ok": true, "data": rows[0]}
+		_ = idempotency_complete(req, ctx, 201, response_payload)
+		return json_response(201, response_payload)
 	})
 
 	server = server.route("GET", "/v1/taxonomies/:id", func(req) {

@@ -1,5 +1,5 @@
 from backend.core.utils import bool_or, dict_get_or, ensure_json_text, is_valid_slug_key, parse_list_query, trim_or
-from backend.core.http import fail, guard_request
+from backend.core.http import fail, guard_request, idempotency_complete
 
 func webhook_event_names() {
 	return [
@@ -714,7 +714,9 @@ export register_plugin_routes := func(server, ctx) {
 			}
 		}
 
-		return json_response(201, {"ok": true, "data": rows[0]})
+		response_payload := {"ok": true, "data": rows[0]}
+		_ = idempotency_complete(req, ctx, 201, response_payload)
+		return json_response(201, response_payload)
 	})
 
 	server = server.route("PATCH", "/v1/plugins/:id", func(req) {

@@ -1,4 +1,4 @@
-export TARGET_SCHEMA_VERSION := 8
+export TARGET_SCHEMA_VERSION := 11
 
 func db_query_safe(sql_db, sql_text, sql_params) {
 	rows := []
@@ -337,6 +337,116 @@ export run_post_bootstrap_migrations := func(db) {
 		}
 		current_version = 8
 		applied = push(applied, "v8_cms_users")
+	}
+
+	if current_version < 9 {
+		begin_v9 := db_execute_safe(db, "BEGIN IMMEDIATE", [])
+		if begin_v9["ok"] == false {
+			return begin_v9
+		}
+
+		deactivate_bootstrap := db_execute_safe(
+			db,
+			"UPDATE api_tokens SET is_active = 0, updated_at = ? WHERE is_active = 1",
+			[now()]
+		)
+		if deactivate_bootstrap["ok"] == false {
+			_ = db_execute_safe(db, "ROLLBACK", [])
+			return deactivate_bootstrap
+		}
+
+		clear_legacy_idempotency := db_execute_safe(db, "DELETE FROM idempotency_keys", [])
+		if clear_legacy_idempotency["ok"] == false {
+			_ = db_execute_safe(db, "ROLLBACK", [])
+			return clear_legacy_idempotency
+		}
+
+		mark_v9 := set_schema_version(db, 9)
+		if mark_v9["ok"] == false {
+			_ = db_execute_safe(db, "ROLLBACK", [])
+			return mark_v9
+		}
+		commit_v9 := db_execute_safe(db, "COMMIT", [])
+		if commit_v9["ok"] == false {
+			_ = db_execute_safe(db, "ROLLBACK", [])
+			return commit_v9
+		}
+		current_version = 9
+		applied = push(applied, "v9_credential_and_idempotency_lifecycle_reset")
+	}
+
+	if current_version < 10 {
+		columns_result := db_query_safe(db, "PRAGMA table_info(webhook_outbox)", [])
+		if columns_result["ok"] == false {
+			return columns_result
+		}
+		has_source_audit_id := false
+		for column_row in columns_result["rows"] {
+			if to_string(column_row["name"]) == "source_audit_id" {
+				has_source_audit_id = true
+			}
+		}
+		if has_source_audit_id == false {
+			add_source_audit := db_execute_safe(db, "ALTER TABLE webhook_outbox ADD COLUMN source_audit_id INTEGER", [])
+			if add_source_audit["ok"] == false {
+				return add_source_audit
+			}
+		}
+		outbox_dedupe_index := db_execute_safe(db, "CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_outbox_source_hook_event ON webhook_outbox(source_audit_id, hook_id, event_type) WHERE source_audit_id IS NOT NULL", [])
+		if outbox_dedupe_index["ok"] == false {
+			return outbox_dedupe_index
+		}
+		mark_v10 := set_schema_version(db, 10)
+		if mark_v10["ok"] == false {
+			return mark_v10
+		}
+		current_version = 10
+		applied = push(applied, "v10_webhook_outbox_deduplication")
+	}
+
+	if current_version < 11 {
+		job_columns := db_query_safe(db, "PRAGMA table_info(background_jobs)", [])
+		if job_columns["ok"] == false {
+			return job_columns
+		}
+		job_claim_token := false
+		job_claim_expires := false
+		for column_row in job_columns["rows"] {
+			column_name := to_string(column_row["name"])
+			if column_name == "claim_token" { job_claim_token = true }
+			if column_name == "claim_expires_at" { job_claim_expires = true }
+		}
+		if job_claim_token == false {
+			added := db_execute_safe(db, "ALTER TABLE background_jobs ADD COLUMN claim_token TEXT", [])
+			if added["ok"] == false { return added }
+		}
+		if job_claim_expires == false {
+			added := db_execute_safe(db, "ALTER TABLE background_jobs ADD COLUMN claim_expires_at TEXT", [])
+			if added["ok"] == false { return added }
+		}
+
+		outbox_columns := db_query_safe(db, "PRAGMA table_info(webhook_outbox)", [])
+		if outbox_columns["ok"] == false { return outbox_columns }
+		outbox_claim_token := false
+		outbox_claim_expires := false
+		for column_row in outbox_columns["rows"] {
+			column_name := to_string(column_row["name"])
+			if column_name == "claim_token" { outbox_claim_token = true }
+			if column_name == "claim_expires_at" { outbox_claim_expires = true }
+		}
+		if outbox_claim_token == false {
+			added := db_execute_safe(db, "ALTER TABLE webhook_outbox ADD COLUMN claim_token TEXT", [])
+			if added["ok"] == false { return added }
+		}
+		if outbox_claim_expires == false {
+			added := db_execute_safe(db, "ALTER TABLE webhook_outbox ADD COLUMN claim_expires_at TEXT", [])
+			if added["ok"] == false { return added }
+		}
+
+		mark_v11 := set_schema_version(db, 11)
+		if mark_v11["ok"] == false { return mark_v11 }
+		current_version = 11
+		applied = push(applied, "v11_worker_claim_leases")
 	}
 
 	return {

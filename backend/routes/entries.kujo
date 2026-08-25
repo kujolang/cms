@@ -1,5 +1,5 @@
 from backend.core.utils import dict_get_or, ensure_json_text, parse_list_query
-from backend.core.http import fail, get_header, guard_request, ok, write_audit
+from backend.core.http import fail, get_header, guard_request, idempotency_complete, ok, write_audit
 
 export can_read_entry_status := func(auth_context, status) {
 	role_key := to_string(dict_get_or(auth_context, "role_key", "anonymous"))
@@ -516,7 +516,9 @@ export register_entry_routes := func(server, ctx) {
 				fallback_insert_err = e
 			}
 		}
-		return json_response(201, {"ok": true, "data": rows[0]})
+		response_payload := {"ok": true, "data": rows[0]}
+		_ = idempotency_complete(req, ctx, 201, response_payload)
+		return json_response(201, response_payload)
 	})
 
 	server = server.route("POST", "/v1/entries/scheduler/run", func(req) {
@@ -2066,7 +2068,9 @@ export register_entry_routes := func(server, ctx) {
 		} except e {
 			audit_err = e
 		}
-		return json_response(200, {"ok": true, "data": {"deleted": true, "id": entry_id}})
+		response_payload := {"ok": true, "data": {"deleted": true, "id": entry_id}}
+		_ = idempotency_complete(req, ctx, 200, response_payload)
+		return json_response(200, response_payload)
 	})
 
 	server = server.route("POST", "/v1/entries/:id/terms", func(req) {
