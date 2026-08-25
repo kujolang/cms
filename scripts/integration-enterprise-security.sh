@@ -173,6 +173,46 @@ DB_ONE="${RESULTS_DIR}/integration_enterprise_security_${PORT_ONE}.db"
 LOG_ONE="${RESULTS_DIR}/integration_enterprise_security_${PORT_ONE}.log"
 start_server "${PORT_ONE}" "${DB_ONE}" "${LOG_ONE}" CMS_MAX_BODY_BYTES=128
 
+EDITOR_TOKEN="enterprise-security-editor-token-123456789"
+request "POST" "${BASE_URL_ONE}" "/v1/auth/tokens" "{\"label\":\"security editor\",\"role_key\":\"editor\",\"token\":\"${EDITOR_TOKEN}\"}" "Bearer ${TOKEN}"
+assert_status "201" "super admin creates editor token"
+
+request "POST" "${BASE_URL_ONE}" "/v1/auth/tokens" '{"label":"generated one","role_key":"viewer"}' "Bearer ${TOKEN}"
+assert_status "201" "automatic token generation succeeds"
+GENERATED_TOKEN_ONE="$(json_extract 'data.token_secret')"
+if [[ "${GENERATED_TOKEN_ONE}" != cms_* || ${#GENERATED_TOKEN_ONE} -ne 52 ]]; then
+	echo "[FAIL] generated token has unexpected format"
+	exit 1
+fi
+echo "[PASS] generated token uses expected one-time secret format"
+
+request "POST" "${BASE_URL_ONE}" "/v1/auth/tokens" '{"label":"generated two","role_key":"viewer"}' "Bearer ${TOKEN}"
+assert_status "201" "second automatic token generation succeeds"
+GENERATED_TOKEN_TWO="$(json_extract 'data.token_secret')"
+if [[ "${GENERATED_TOKEN_ONE}" == "${GENERATED_TOKEN_TWO}" ]]; then
+	echo "[FAIL] generated token secrets must be distinct"
+	exit 1
+fi
+echo "[PASS] generated token secrets are distinct"
+
+request "POST" "${BASE_URL_ONE}" "/v1/auth/tokens" '{"label":"blocked escalation","role_key":"super_admin","token":"blocked-escalation-token-123456789"}' "Bearer ${EDITOR_TOKEN}"
+assert_status "403" "editor cannot mint super admin token"
+assert_contains '"code":"forbidden"' "editor privilege escalation error"
+
+request "GET" "${BASE_URL_ONE}" "/v1/users" "" "Bearer ${EDITOR_TOKEN}"
+assert_status "403" "editor cannot administer users"
+
+request "PATCH" "${BASE_URL_ONE}" "/v1/settings/registration" '{"mode":"open","default_role":"subscriber"}' "Bearer ${EDITOR_TOKEN}"
+assert_status "403" "editor cannot administer registration settings"
+
+request "POST" "${BASE_URL_ONE}" "/v1/plugins/1/hooks" '{"hook_name":"entry.created","handler_url":"https://0177.1/webhook","shared_secret":"supersecret","enabled":true}' "Bearer ${TOKEN}"
+assert_status "400" "octal loopback webhook host rejected"
+assert_contains '"code":"unsafe_handler_url"' "octal loopback policy code"
+
+request "POST" "${BASE_URL_ONE}" "/v1/plugins/1/hooks" '{"hook_name":"entry.created","handler_url":"https://0x7f.1/webhook","shared_secret":"supersecret","enabled":true}' "Bearer ${TOKEN}"
+assert_status "400" "hex loopback webhook host rejected"
+assert_contains '"code":"unsafe_handler_url"' "hex loopback policy code"
+
 request "POST" "${BASE_URL_ONE}" "/v1/content-types" '{"type_key":"stories","label":"Stories","singular_label":"Story"}' "Bearer ${TOKEN}"
 assert_status "201" "create stories content type"
 

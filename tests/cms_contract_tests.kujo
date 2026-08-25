@@ -82,6 +82,15 @@ test "list query parser bounds malformed pagination and sort input" {
 }
 
 test "config applies enterprise bootstrap defaults in production" {
+	development_placeholder_cfg := load_config({
+		"environment": "development",
+		"api_token": "change-me-in-production",
+		"allow_bootstrap_token": true,
+		"enforce_bootstrap_token_rotation": false
+	})
+	assert_equal(development_placeholder_cfg["allow_bootstrap_token"], false)
+	assert_equal(development_placeholder_cfg["enforce_bootstrap_token_rotation"], true)
+
 	production_cfg := load_config({
 		"environment": "production"
 	})
@@ -423,6 +432,29 @@ test "auth contract keeps read-open and write-guarded behavior" {
 	}, ctx, get_header, false)
 	assert_equal(write_bootstrap_auth["ok"], true)
 	assert_equal(write_bootstrap_auth["role_key"], "super_admin")
+
+	_ := db_execute_safe(
+		connection["db"],
+		"INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		[sha256("contract-editor-token-123"), "Contract Editor", "editor", 1, now(), now(), null, null]
+	)
+
+	editor_admin_auth := authorize_request({
+		"method": "POST",
+		"headers": {
+			"Authorization": "Bearer contract-editor-token-123"
+		}
+	}, ctx, get_header, "admin.auth")
+	assert_equal(editor_admin_auth["ok"], false)
+	assert_equal(editor_admin_auth["status"], 403)
+
+	bootstrap_admin_auth := authorize_request({
+		"method": "POST",
+		"headers": {
+			"Authorization": "Bearer contract-bootstrap-token-1234567890"
+		}
+	}, ctx, get_header, "admin.auth")
+	assert_equal(bootstrap_admin_auth["ok"], true)
 
 	if file_exists(db_path) {
 		delete_file(db_path)

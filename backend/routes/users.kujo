@@ -316,12 +316,12 @@ func update_social_sharing_settings(req, ctx) {
 
 export register_user_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/users", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.users")
 		if guard["ok"] == false { return guard["response"] }
 		return list_users(req, ctx)
 	})
 	server = server.route("GET", "/v1/users/:id", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.users")
 		if guard["ok"] == false { return guard["response"] }
 		cfg := ctx["cfg"]
 		id_parsed := parse_id_param(req, "id")
@@ -332,7 +332,7 @@ export register_user_routes := func(server, ctx) {
 		return ok(cfg, result["rows"][0])
 	})
 	server = server.route("GET", "/v1/users/:id/credentials", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.users")
 		if guard["ok"] == false { return guard["response"] }
 		cfg := ctx["cfg"]
 		id_parsed := parse_id_param(req, "id")
@@ -343,32 +343,32 @@ export register_user_routes := func(server, ctx) {
 		return ok(cfg, result["rows"][0])
 	})
 	server = server.route("POST", "/v1/users", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.users")
 		if guard["ok"] == false { return guard["response"] }
 		return create_user(req, ctx)
 	})
 	server = server.route("PATCH", "/v1/users/:id", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.users")
 		if guard["ok"] == false { return guard["response"] }
 		return patch_user(req, ctx)
 	})
 	server = server.route("GET", "/v1/settings/registration", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
 		return registration_settings(req, ctx)
 	})
 	server = server.route("PATCH", "/v1/settings/registration", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
 		return update_registration_settings(req, ctx)
 	})
 	server = server.route("GET", "/v1/settings/social-sharing", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
 		return social_sharing_settings(req, ctx)
 	})
 	server = server.route("PATCH", "/v1/settings/social-sharing", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
 		return update_social_sharing_settings(req, ctx)
 	})

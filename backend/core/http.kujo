@@ -827,16 +827,26 @@ export guard_request := func(req, ctx, require_write_auth) {
 	}
 
 	method := req_method(req)
-	if require_write_auth == true || is_write_method(method) {
+	requires_auth := require_write_auth == true || type(require_write_auth) == "string"
+	if requires_auth || is_write_method(method) {
 		idempotency_key := trim(to_string(get_header(req, "Idempotency-Key")))
 		if idempotency_key == "" {
 			idempotency_key = trim(to_string(get_header(req, "idempotency-key")))
 		}
-		auth_result := authorize_request(req, ctx, get_header, true)
+		auth_requirement := true
+		if type(require_write_auth) == "string" && trim(to_string(require_write_auth)) != "" {
+			auth_requirement = trim(to_string(require_write_auth))
+		}
+		auth_result := authorize_request(req, ctx, get_header, auth_requirement)
 		if auth_result["ok"] == false {
+			status_code := dict_get_or(auth_result, "status", 401)
+			response_code := "unauthorized"
+			if status_code == 403 {
+				response_code = "forbidden"
+			}
 			latency_ms := current_timestamp() - started_at_ms
 			_ := metric_increment(state, "unauthorized_total")
-			_ := metric_increment(state, "responses_401_total")
+			_ := metric_increment(state, "responses_" + to_string(status_code) + "_total")
 			_ := metric_observe_latency(state, latency_ms)
 			_ := structured_log(cfg, {
 				"event": "request.guard.deny",
@@ -844,13 +854,13 @@ export guard_request := func(req, ctx, require_write_auth) {
 				"request_id": request_id,
 				"method": method,
 				"path": req_path(req),
-				"status_code": 401,
+				"status_code": status_code,
 				"reason": dict_get_or(auth_result, "error", "unauthorized"),
 				"latency_ms": latency_ms
 			})
 			return {
 				"ok": false,
-				"response": fail(cfg, 401, "unauthorized", dict_get_or(auth_result, "error", "Missing or invalid bearer token"), {})
+				"response": fail(cfg, status_code, response_code, dict_get_or(auth_result, "error", "Missing or invalid bearer token"), {})
 			}
 		}
 

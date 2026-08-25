@@ -3,7 +3,7 @@ from backend.core.database import db_execute_safe, db_query_safe
 from backend.core.http import created, fail, get_query, guard_request, ok, parse_bounded_int, parse_id_param, parse_json_body, write_audit
 
 func generate_token_secret(label, role_key) {
-	seed := trim(label) + ":" + trim(role_key) + ":" + now() + ":" + to_string(current_timestamp())
+	seed := uuid_v4() + ":" + uuid_v4() + ":" + uuid_v4()
 	return "cms_" + substring(sha256(seed), 0, 48)
 }
 
@@ -397,7 +397,7 @@ func patch_role(req, ctx) {
 
 export register_authz_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/auth/roles", func(req) {
-		guard := guard_request(req, ctx, false)
+		guard := guard_request(req, ctx, "admin.auth")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -427,11 +427,11 @@ export register_authz_routes := func(server, ctx) {
 			return fail(cfg, 500, "db_query_failed", "Failed to load roles", {})
 		}
 
-		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "limit": limit, "offset": offset}})
+		return ok(cfg, {"items": rows, "count": len(rows), "limit": limit, "offset": offset})
 	})
 
 	server = server.route("POST", "/v1/auth/roles", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.auth")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -439,7 +439,7 @@ export register_authz_routes := func(server, ctx) {
 	})
 
 	server = server.route("PATCH", "/v1/auth/roles/:id", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.auth")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -447,7 +447,7 @@ export register_authz_routes := func(server, ctx) {
 	})
 
 	server = server.route("GET", "/v1/auth/tokens", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.auth")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -477,11 +477,11 @@ export register_authz_routes := func(server, ctx) {
 			return fail(cfg, 500, "db_query_failed", "Failed to load tokens", {})
 		}
 
-		return json_response(200, {"ok": true, "data": {"items": rows, "count": len(rows), "limit": limit, "offset": offset}})
+		return ok(cfg, {"items": rows, "count": len(rows), "limit": limit, "offset": offset})
 	})
 
 	server = server.route("POST", "/v1/auth/tokens", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.auth")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -523,8 +523,7 @@ export register_authz_routes := func(server, ctx) {
 					response = fail(cfg, 400, "invalid_label", "label must be at least 3 characters", {})
 				}
 				if type(response) == "null" && token == "" {
-					seed := trim(label) + ":" + trim(role_key) + ":" + to_string(now()) + ":" + to_string(current_timestamp())
-					token = "cms_" + substring(sha256(seed), 0, 48)
+					token = generate_token_secret(label, role_key)
 				}
 				if type(response) == "null" && len(token) < 12 {
 					response = fail(cfg, 400, "invalid_token", "token must be at least 12 characters", {})
@@ -676,7 +675,7 @@ export register_authz_routes := func(server, ctx) {
 									fallback_err = e
 								}
 							}
-							response = json_response(201, {"ok": true, "data": payload})
+							response = created(cfg, payload)
 						}
 					}
 				}
@@ -686,7 +685,7 @@ export register_authz_routes := func(server, ctx) {
 		}
 
 		if type(err) != "null" {
-			return fail(cfg, 500, "token_create_runtime_error", to_string(err), {})
+			return fail(cfg, 500, "token_create_runtime_error", "Failed to create API token", {})
 		}
 		if type(response) == "null" {
 			return fail(cfg, 500, "token_create_runtime_error", "No response generated", {})
@@ -696,7 +695,7 @@ export register_authz_routes := func(server, ctx) {
 	})
 
 	server = server.route("PATCH", "/v1/auth/tokens/:id", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.auth")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -878,14 +877,14 @@ export register_authz_routes := func(server, ctx) {
 				"token_secret": token,
 				"revealed_once": true
 			}
-			return json_response(200, {"ok": true, "data": payload})
+			return ok(cfg, payload)
 		}
 
-		return json_response(200, {"ok": true, "data": row})
+		return ok(cfg, row)
 	})
 
 	server = server.route("DELETE", "/v1/auth/tokens/:id", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.auth")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -932,7 +931,7 @@ export register_authz_routes := func(server, ctx) {
 			return fail(cfg, 500, "delete_failed", "Failed to deactivate token", {})
 		}
 
-		return json_response(200, {"ok": true, "data": {"deleted": true, "id": token_id}})
+		return ok(cfg, {"deleted": true, "id": token_id})
 	})
 
 	return server

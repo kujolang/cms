@@ -247,7 +247,7 @@ request "GET" "/v1/content-types?limit=1&offset=0&sort_by=label&sort_dir=desc"
 assert_status "200" "content type sort query"
 assert_contains '"sort_by":"label"' "content type sort metadata"
 
-request "GET" "/v1/plugins?limit=1&offset=0"
+request "GET" "/v1/plugins?limit=1&offset=0" "" "1"
 assert_status "200" "load seeded plugin for hook tests"
 PLUGIN_ID="$(json_extract 'data.items.0.id')"
 
@@ -273,7 +273,7 @@ request "GET" "/v1/menus?limit=1&offset=0"
 assert_status "200" "menu pagination"
 assert_contains '"limit":1' "menu pagination payload"
 
-request "GET" "/v1/plugins?limit=1&offset=0"
+request "GET" "/v1/plugins?limit=1&offset=0" "" "1"
 assert_status "200" "plugin pagination"
 assert_contains '"limit":1' "plugin pagination payload"
 
@@ -281,7 +281,7 @@ request "GET" "/v1/themes?limit=1&offset=0"
 assert_status "200" "theme pagination"
 assert_contains '"limit":1' "theme pagination payload"
 
-request "GET" "/v1/auth/roles?limit=1&offset=0"
+request "GET" "/v1/auth/roles?limit=1&offset=0" "" "1"
 assert_status "200" "role pagination"
 assert_contains '"limit":1' "role pagination payload"
 

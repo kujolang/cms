@@ -168,7 +168,10 @@ export authorize_request := func(req, ctx, get_header_func, require_write_auth) 
 	method := to_upper(to_string(dict_get_or(req, "method", "GET")))
 	requires_write := require_write_auth == true || method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE"
 	required_permission := "cms.read"
-	if requires_write {
+	if type(require_write_auth) == "string" && trim(to_string(require_write_auth)) != "" {
+		requires_write = true
+		required_permission = trim(to_string(require_write_auth))
+	} else if requires_write {
 		required_permission = "cms.write"
 	}
 
@@ -228,7 +231,7 @@ export authorize_request := func(req, ctx, get_header_func, require_write_auth) 
 	}
 
 	if permissions_allow(token_auth["permissions"], required_permission) == false {
-		return {"ok": false, "error": "Insufficient permissions"}
+		return {"ok": false, "error": "Insufficient permissions", "status": 403}
 	}
 
 	return token_auth

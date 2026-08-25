@@ -162,7 +162,7 @@ wait_for_health() {
 start_api
 wait_for_health
 
-request "GET" "/v1/plugins?limit=1&offset=0"
+request "GET" "/v1/plugins?limit=1&offset=0" "" "1"
 assert_status "200" "load seeded plugin"
 
 request "POST" "/v1/content-types" "{\"type_key\":\"${CONTENT_TYPE_KEY}\",\"label\":\"Background Jobs News\",\"singular_label\":\"Background Jobs News\"}" "1"

@@ -130,9 +130,9 @@ endpoints=(
 	"entries-list|/v1/entries?limit=10&offset=0|0"
 	"media-list|/v1/media?limit=10&offset=0|0"
 	"menus-list|/v1/menus?limit=10&offset=0|0"
-	"plugins-list|/v1/plugins?limit=10&offset=0|0"
+	"plugins-list|/v1/plugins?limit=10&offset=0|1"
 	"themes-list|/v1/themes?limit=10&offset=0|0"
-	"roles-list|/v1/auth/roles?limit=10&offset=0|0"
+	"roles-list|/v1/auth/roles?limit=10&offset=0|1"
 	"tokens-list|/v1/auth/tokens?limit=10&offset=0|1"
 )
 

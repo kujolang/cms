@@ -43,6 +43,9 @@ func parse_ipv4_int(ip_text) {
 		if octet_text == "" {
 			return -1
 		}
+		if len(octet_text) > 1 && starts_with(octet_text, "0") {
+			return -1
+		}
 		octet := -1
 		octet_err := null
 		try {
@@ -57,6 +60,33 @@ func parse_ipv4_int(ip_text) {
 	}
 
 	return ip_value
+}
+
+func host_is_ambiguous_numeric_ipv4(host_text) {
+	parts := split(to_lower(trim(to_string(host_text))), ".")
+	if len(parts) == 0 {
+		return false
+	}
+
+	for part_raw in parts {
+		part := trim(to_string(part_raw))
+		if part == "" {
+			return false
+		}
+		if starts_with(part, "0x") {
+			hex_text := substring(part, 2, len(part))
+			if hex_text == "" || regex_replace(hex_text, "[0-9a-f]", "") != "" {
+				return false
+			}
+		} else if regex_replace(part, "[0-9]", "") != "" {
+			return false
+		}
+	}
+
+	if len(parts) != 4 {
+		return true
+	}
+	return parse_ipv4_int(host_text) < 0
 }
 
 func host_is_private_ipv4(host_text) {
@@ -115,7 +145,7 @@ func host_is_private_ipv6(host_text) {
 	}
 	if starts_with(host, "::ffff:") {
 		mapped_ipv4 := trim(substring(host, 7, len(host)))
-		if host_is_private_ipv4(mapped_ipv4) {
+		if host_is_ambiguous_numeric_ipv4(mapped_ipv4) || host_is_private_ipv4(mapped_ipv4) {
 			return true
 		}
 	}
@@ -315,6 +345,13 @@ func validate_handler_url_policy(cfg, handler_url) {
 			"message": "handler_url host is not allowed by egress policy"
 		}
 	}
+	if host_is_ambiguous_numeric_ipv4(host) {
+		return {
+			"ok": false,
+			"code": "unsafe_handler_url",
+			"message": "handler_url host is not allowed by egress policy"
+		}
+	}
 	if host_is_private_ipv4(host) {
 		return {
 			"ok": false,
@@ -497,7 +534,7 @@ export validate_webhook_event_payload := func(event_type, payload) {
 
 export register_plugin_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/plugins", func(req) {
-		guard := guard_request(req, ctx, false)
+		guard := guard_request(req, ctx, "admin.plugins")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -546,7 +583,7 @@ export register_plugin_routes := func(server, ctx) {
 	})
 
 	server = server.route("POST", "/v1/plugins", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.plugins")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -681,7 +718,7 @@ export register_plugin_routes := func(server, ctx) {
 	})
 
 	server = server.route("PATCH", "/v1/plugins/:id", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.plugins")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -801,7 +838,7 @@ export register_plugin_routes := func(server, ctx) {
 	})
 
 	server = server.route("GET", "/v1/plugins/:id/hooks", func(req) {
-		guard := guard_request(req, ctx, false)
+		guard := guard_request(req, ctx, "admin.plugins")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -881,7 +918,7 @@ export register_plugin_routes := func(server, ctx) {
 	})
 
 	server = server.route("POST", "/v1/plugins/:id/hooks", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.plugins")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -981,7 +1018,7 @@ export register_plugin_routes := func(server, ctx) {
 	})
 
 	server = server.route("PATCH", "/v1/plugin-hooks/:id", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.plugins")
 		if guard["ok"] == false {
 			return guard["response"]
 		}
@@ -1092,7 +1129,7 @@ export register_plugin_routes := func(server, ctx) {
 	})
 
 	server = server.route("DELETE", "/v1/plugin-hooks/:id", func(req) {
-		guard := guard_request(req, ctx, true)
+		guard := guard_request(req, ctx, "admin.plugins")
 		if guard["ok"] == false {
 			return guard["response"]
 		}

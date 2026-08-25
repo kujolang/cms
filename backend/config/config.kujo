@@ -15,7 +15,7 @@ export load_config_backend_impl := func(overrides) {
 		"site_url": env_or("CMS_SITE_URL", "http://127.0.0.1:4200"),
 		"db_path": env_or("CMS_DB_PATH", "cms.db"),
 		"cors_origin": env_or("CMS_CORS_ORIGIN", "*"),
-		"api_token": env_or("CMS_API_TOKEN", "change-me-in-production"),
+		"api_token": env_or("CMS_API_TOKEN", ""),
 		"allow_bootstrap_token": bool_or(allow_bootstrap_env_raw, true),
 		"enforce_bootstrap_token_rotation": bool_or(enforce_rotation_env_raw, false),
 		"bootstrap_token_min_length": parse_positive_int_env("CMS_BOOTSTRAP_TOKEN_MIN_LENGTH", 24),
@@ -181,6 +181,10 @@ export load_config_backend_impl := func(overrides) {
 
 	cfg["allow_bootstrap_token"] := bool_or(dict_get_or(cfg, "allow_bootstrap_token", true), true)
 	cfg["enforce_bootstrap_token_rotation"] := bool_or(dict_get_or(cfg, "enforce_bootstrap_token_rotation", false), false)
+	if trim(to_string(dict_get_or(cfg, "api_token", ""))) == "change-me-in-production" {
+		cfg["allow_bootstrap_token"] := false
+		cfg["enforce_bootstrap_token_rotation"] := true
+	}
 	if dict_get_or(cfg, "bootstrap_token_min_length", 0) < 16 {
 		cfg["bootstrap_token_min_length"] := 24
 	}
@@ -193,10 +197,6 @@ export load_config_backend_impl := func(overrides) {
 			cfg["allow_bootstrap_token"] := false
 		}
 		if enforce_bootstrap_rotation_override == false && enforce_rotation_env_set == false {
-			cfg["enforce_bootstrap_token_rotation"] := true
-		}
-		if trim(to_string(dict_get_or(cfg, "api_token", ""))) == "change-me-in-production" {
-			cfg["allow_bootstrap_token"] := false
 			cfg["enforce_bootstrap_token_rotation"] := true
 		}
 	}
