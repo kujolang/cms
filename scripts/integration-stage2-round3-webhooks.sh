@@ -214,7 +214,7 @@ start_webhook_sink
 start_api
 wait_for_health
 
-request "GET" "/v1/plugins?limit=1&offset=0"
+request "GET" "/v1/plugins?limit=1&offset=0" "" "1"
 assert_status "200" "load seeded plugin"
 PLUGIN_ID="$(json_extract 'data.items.0.id')"
 
@@ -243,6 +243,8 @@ assert_sql_equals "SELECT COUNT(*) FROM webhook_outbox WHERE event_type = 'entry
 (
 	cd "${ROOT_DIR}"
 	CMS_DB_PATH="${DB_PATH}" \
+	CMS_PLUGIN_HOOK_ALLOW_HTTP="true" \
+	CMS_PLUGIN_HOOK_ALLOW_PRIVATE="true" \
 	CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" \
 	CMS_WEBHOOK_MAX_TIME_SEC="1" \
 	bash scripts/process-webhook-outbox.sh
@@ -262,6 +264,8 @@ sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET max_attempts = 1, next_attempt_a
 (
 	cd "${ROOT_DIR}"
 	CMS_DB_PATH="${DB_PATH}" \
+	CMS_PLUGIN_HOOK_ALLOW_HTTP="true" \
+	CMS_PLUGIN_HOOK_ALLOW_PRIVATE="true" \
 	CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" \
 	CMS_WEBHOOK_MAX_TIME_SEC="1" \
 	bash scripts/process-webhook-outbox.sh
@@ -282,6 +286,8 @@ assert_sql_equals "SELECT COUNT(*) FROM webhook_dead_letters WHERE outbox_id = $
 (
 	cd "${ROOT_DIR}"
 	CMS_DB_PATH="${DB_PATH}" \
+	CMS_PLUGIN_HOOK_ALLOW_HTTP="true" \
+	CMS_PLUGIN_HOOK_ALLOW_PRIVATE="true" \
 	CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" \
 	CMS_WEBHOOK_MAX_TIME_SEC="1" \
 	bash scripts/process-webhook-outbox.sh
@@ -289,5 +295,45 @@ assert_sql_equals "SELECT COUNT(*) FROM webhook_dead_letters WHERE outbox_id = $
 
 assert_sql_equals "SELECT status FROM webhook_outbox WHERE id = ${RETRY_OUTBOX_ID};" "dead_letter" "replayed row is processed again"
 assert_file_contains "${SINK_LOG}" '"x-cms-webhook-event":"entry.created"' "sink captured entry.created payload"
+
+DELIVERED_OUTBOX_ID="$(sqlite3 "${DB_PATH}" "SELECT id FROM webhook_outbox WHERE status = 'delivered' ORDER BY id ASC LIMIT 1;")"
+SINK_LINES_BEFORE="$(wc -l < "${SINK_LOG}" | tr -d ' ')"
+sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET handler_url = 'http://0177.0.0.1:${WEBHOOK_PORT}/hook', status = 'pending', attempt_count = 0, max_attempts = 1, next_attempt_at = strftime('%s','now'), last_error = NULL, delivered_at = NULL WHERE id = ${DELIVERED_OUTBOX_ID};"
+
+(
+	cd "${ROOT_DIR}"
+	CMS_DB_PATH="${DB_PATH}" \
+	CMS_PLUGIN_HOOK_ALLOW_HTTP="true" \
+	CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" \
+	CMS_WEBHOOK_MAX_TIME_SEC="1" \
+	bash scripts/process-webhook-outbox.sh
+)
+
+assert_sql_equals "SELECT last_error FROM webhook_outbox WHERE id = ${DELIVERED_OUTBOX_ID};" "egress_policy_denied" "worker rejects stored numeric loopback alias"
+SINK_LINES_AFTER="$(wc -l < "${SINK_LOG}" | tr -d ' ')"
+if [[ "${SINK_LINES_AFTER}" != "${SINK_LINES_BEFORE}" ]]; then
+	echo "[FAIL] egress-denied webhook reached the local sink"
+	exit 1
+fi
+echo "[PASS] egress-denied webhook made no network request"
+
+sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET handler_url = 'http://[64:ff9b:1::7f00:1]:${WEBHOOK_PORT}/hook', status = 'pending', attempt_count = 0, max_attempts = 1, next_attempt_at = strftime('%s','now'), last_error = NULL, delivered_at = NULL WHERE id = ${DELIVERED_OUTBOX_ID};"
+
+(
+	cd "${ROOT_DIR}"
+	CMS_DB_PATH="${DB_PATH}" \
+	CMS_PLUGIN_HOOK_ALLOW_HTTP="true" \
+	CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" \
+	CMS_WEBHOOK_MAX_TIME_SEC="1" \
+	bash scripts/process-webhook-outbox.sh
+)
+
+assert_sql_equals "SELECT last_error FROM webhook_outbox WHERE id = ${DELIVERED_OUTBOX_ID};" "egress_policy_denied" "worker rejects IPv6 translation egress alias"
+SINK_LINES_TRANSLATION="$(wc -l < "${SINK_LOG}" | tr -d ' ')"
+if [[ "${SINK_LINES_TRANSLATION}" != "${SINK_LINES_BEFORE}" ]]; then
+	echo "[FAIL] IPv6 translation alias reached the local sink"
+	exit 1
+fi
+echo "[PASS] IPv6 translation alias made no network request"
 
 echo "Stage 2 Round 3 webhook integration checks passed."

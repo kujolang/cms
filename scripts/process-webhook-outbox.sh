@@ -7,6 +7,8 @@ LIMIT="${CMS_WEBHOOK_PROCESS_LIMIT:-50}"
 RETRY_BASE_SEC="${CMS_WEBHOOK_RETRY_BASE_SEC:-30}"
 CONNECT_TIMEOUT_SEC="${CMS_WEBHOOK_CONNECT_TIMEOUT_SEC:-3}"
 MAX_TIME_SEC="${CMS_WEBHOOK_MAX_TIME_SEC:-10}"
+ALLOW_HTTP="${CMS_PLUGIN_HOOK_ALLOW_HTTP:-false}"
+ALLOW_PRIVATE="${CMS_PLUGIN_HOOK_ALLOW_PRIVATE:-false}"
 SCRIPT_LABEL="Webhook outbox processor"
 
 fail() {
@@ -34,6 +36,7 @@ if [[ ! -f "${DB_PATH}" ]]; then
 fi
 
 require_command sqlite3
+require_command python3
 
 sql_escape() {
 	printf '%s' "$1" | sed "s/'/''/g"
@@ -45,6 +48,76 @@ decode_hex() {
 
 now_epoch() {
 	date +%s
+}
+
+resolve_handler_target() {
+	local handler_url="$1"
+	python3 - "${handler_url}" "${ALLOW_HTTP}" "${ALLOW_PRIVATE}" <<'PY'
+import ipaddress
+import socket
+import sys
+from urllib.parse import urlsplit
+
+url = urlsplit(sys.argv[1])
+allow_http = sys.argv[2].strip().lower() in {"1", "true", "yes", "on"}
+allow_private = sys.argv[3].strip().lower() in {"1", "true", "yes", "on"}
+
+if url.scheme not in ({"http", "https"} if allow_http else {"https"}):
+    raise SystemExit(1)
+if not url.hostname or url.username is not None or url.password is not None:
+    raise SystemExit(1)
+
+labels = url.hostname.lower().split(".")
+numeric_alias = bool(labels)
+for label in labels:
+    if label.startswith("0x"):
+        try:
+            int(label[2:], 16)
+        except ValueError:
+            numeric_alias = False
+            break
+    elif not label.isdigit():
+        numeric_alias = False
+        break
+if numeric_alias:
+    canonical_decimal = len(labels) == 4 and all(
+        label.isdigit() and (label == "0" or not label.startswith("0")) and 0 <= int(label, 10) <= 255
+        for label in labels
+    )
+    if not canonical_decimal:
+        raise SystemExit(1)
+
+port = url.port or (443 if url.scheme == "https" else 80)
+try:
+    addresses = sorted({item[4][0] for item in socket.getaddrinfo(url.hostname, port, type=socket.SOCK_STREAM)})
+except (OSError, ValueError):
+    raise SystemExit(1)
+if not addresses:
+    raise SystemExit(1)
+
+translation_networks = (
+    ipaddress.ip_network("64:ff9b::/96"),
+    ipaddress.ip_network("64:ff9b:1::/48"),
+    ipaddress.ip_network("2001::/32"),
+    ipaddress.ip_network("2002::/16"),
+)
+for address in addresses:
+    parsed = ipaddress.ip_address(address)
+    if not allow_private and not parsed.is_global:
+        raise SystemExit(1)
+    if not allow_private and parsed.version == 6 and any(parsed in network for network in translation_networks):
+        raise SystemExit(1)
+
+selected = addresses[0]
+if ":" in selected:
+    selected = f"[{selected}]"
+try:
+    ipaddress.ip_address(url.hostname)
+    output_host = "DIRECT"
+except ValueError:
+    output_host = url.hostname
+print(f"{output_host}|{port}|{selected}")
+PY
 }
 
 rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, hook_id, event_id, event_type, hex(payload_json), hex(handler_url), hex(shared_secret), attempt_count, max_attempts FROM webhook_outbox WHERE status IN ('pending','retry') AND CAST(next_attempt_at AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER) ORDER BY id ASC LIMIT ${LIMIT};")"
@@ -69,18 +142,33 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 
 	signature="$(printf '%s' "${payload_json}.${shared_secret}" | shasum -a 256 | awk '{print $1}')"
 	response_file="$(mktemp)"
+	policy_error=""
+	resolved_target=""
+	if ! resolved_target="$(resolve_handler_target "${handler_url}")"; then
+		policy_error="egress_policy_denied"
+	fi
 
-	set +e
-	http_status="$(curl -sS -o "${response_file}" -w "%{http_code}" -X POST "${handler_url}" \
-		-H "Content-Type: application/json" \
-		-H "X-CMS-Webhook-Event: ${event_type}" \
-		-H "X-CMS-Webhook-Id: ${event_id}" \
-		-H "X-CMS-Webhook-Signature: sha256=${signature}" \
-		--connect-timeout "${CONNECT_TIMEOUT_SEC}" \
-		--max-time "${MAX_TIME_SEC}" \
-		--data "${payload_json}")"
-	curl_exit_code=$?
-	set -e
+	if [[ -n "${policy_error}" ]]; then
+		http_status="000"
+		curl_exit_code=90
+	else
+		IFS='|' read -r resolved_host resolved_port resolved_ip <<< "${resolved_target}"
+		curl_resolution_args=( --noproxy "*" )
+		if [[ "${resolved_host}" != "DIRECT" ]]; then
+			curl_resolution_args+=( --resolve "${resolved_host}:${resolved_port}:${resolved_ip}" )
+		fi
+		set +e
+		http_status="$(curl "${curl_resolution_args[@]}" -sS -o "${response_file}" -w "%{http_code}" -X POST "${handler_url}" \
+			-H "Content-Type: application/json" \
+			-H "X-CMS-Webhook-Event: ${event_type}" \
+			-H "X-CMS-Webhook-Id: ${event_id}" \
+			-H "X-CMS-Webhook-Signature: sha256=${signature}" \
+			--connect-timeout "${CONNECT_TIMEOUT_SEC}" \
+			--max-time "${MAX_TIME_SEC}" \
+			--data "${payload_json}")"
+		curl_exit_code=$?
+		set -e
+	fi
 
 	now_value="$(now_epoch)"
 	if [[ ${curl_exit_code} -eq 0 && "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
@@ -94,7 +182,9 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 
 	next_attempt_count=$((attempt_count + 1))
 	error_message=""
-	if [[ ${curl_exit_code} -ne 0 ]]; then
+	if [[ -n "${policy_error}" ]]; then
+		error_message="${policy_error}"
+	elif [[ ${curl_exit_code} -ne 0 ]]; then
 		error_message="curl_exit_${curl_exit_code}"
 	else
 		error_message="http_${http_status}"
