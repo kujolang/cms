@@ -136,6 +136,8 @@ Recommended env overrides:
 - `CMS_READINESS_CHECK_DB`
 - `CMS_METRICS_ENABLED`
 
+Bootstrap authentication has no usable default credential. Generate a unique bootstrap token for initial provisioning, then disable it and use scoped database-backed API tokens. Administrative routes require dedicated capabilities: `admin.auth`, `admin.users`, `admin.settings`, and `admin.plugins`; `cms.write` alone does not grant administrative access.
+
 User APIs:
 
 - `GET|POST /v1/users` lists or creates user records.

@@ -70,7 +70,7 @@ cd /path/to/cms
 cp .env.example .env
 ```
 
-The development defaults bind the server to `127.0.0.1:4200` and store data in `cms.db`. Before doing anything beyond local development, replace the bootstrap token and set the public site URL and CORS origin deliberately.
+The development defaults bind the server to `127.0.0.1:4200` and store data in `cms.db`. Bootstrap authentication is disabled until you deliberately configure a token. Set the public site URL and CORS origin explicitly before exposing the service.
 
 For this local walkthrough, confirm these values in `.env`:
 
@@ -79,7 +79,7 @@ CMS_API_HOST=127.0.0.1
 CMS_API_PORT=4200
 CMS_SITE_URL=http://127.0.0.1:4200
 CMS_DB_PATH=cms.db
-CMS_API_TOKEN=change-me-in-production
+CMS_API_TOKEN=
 CMS_ENV=development
 ```
 
@@ -109,7 +109,8 @@ Set a few shell variables for the remaining examples:
 
 ```bash
 export CMS_BASE="http://127.0.0.1:4200"
-export CMS_TOKEN="change-me-in-production"
+export CMS_TOKEN="$(openssl rand -hex 32)"
+export CMS_API_TOKEN="${CMS_TOKEN}"
 ```
 
 ## 4. Model the Site's Content
@@ -362,7 +363,7 @@ bash scripts/run-release-gate.sh
 For a public production deployment, also:
 
 - Set `CMS_ENV=production`.
-- Rotate `CMS_API_TOKEN` and disable the bootstrap token after provisioning.
+- Generate a unique `CMS_API_TOKEN` for initial provisioning, then disable the bootstrap token after creating a scoped administrative API token.
 - Set a specific `CMS_CORS_ORIGIN`.
 - Use durable storage and test backup and restore procedures.
 - Review rate limiting, webhook URL policy, observability, TLS, infrastructure, and secrets management.
