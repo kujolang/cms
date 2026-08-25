@@ -234,24 +234,29 @@ assert_status "201" "create entry and enqueue webhooks"
 
 (
 	cd "${ROOT_DIR}"
-	CMS_DB_PATH="${DB_PATH}" \
-	bash scripts/enqueue-webhook-outbox.sh
+	env CMS_DB_PATH="${DB_PATH}" bash scripts/enqueue-webhook-outbox.sh >"${RESULTS_DIR}/webhook_enqueue_one.log" 2>&1 &
+	enqueue_one=$!
+	env CMS_DB_PATH="${DB_PATH}" bash scripts/enqueue-webhook-outbox.sh >"${RESULTS_DIR}/webhook_enqueue_two.log" 2>&1 &
+	enqueue_two=$!
+	wait "${enqueue_one}"
+	wait "${enqueue_two}"
 )
 
 assert_sql_equals "SELECT COUNT(*) FROM webhook_outbox WHERE event_type = 'entry.created';" "2" "two outbox rows created"
 
 (
 	cd "${ROOT_DIR}"
-	CMS_DB_PATH="${DB_PATH}" \
-	CMS_PLUGIN_HOOK_ALLOW_HTTP="true" \
-	CMS_PLUGIN_HOOK_ALLOW_PRIVATE="true" \
-	CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" \
-	CMS_WEBHOOK_MAX_TIME_SEC="1" \
-	bash scripts/process-webhook-outbox.sh
+	env CMS_DB_PATH="${DB_PATH}" CMS_PLUGIN_HOOK_ALLOW_HTTP="true" CMS_PLUGIN_HOOK_ALLOW_PRIVATE="true" CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" CMS_WEBHOOK_MAX_TIME_SEC="1" bash scripts/process-webhook-outbox.sh >"${RESULTS_DIR}/webhook_worker_one.log" 2>&1 &
+	worker_one=$!
+	env CMS_DB_PATH="${DB_PATH}" CMS_PLUGIN_HOOK_ALLOW_HTTP="true" CMS_PLUGIN_HOOK_ALLOW_PRIVATE="true" CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" CMS_WEBHOOK_MAX_TIME_SEC="1" bash scripts/process-webhook-outbox.sh >"${RESULTS_DIR}/webhook_worker_two.log" 2>&1 &
+	worker_two=$!
+	wait "${worker_one}"
+	wait "${worker_two}"
 )
 
 assert_sql_equals "SELECT COUNT(*) FROM webhook_outbox WHERE status = 'delivered' AND event_type = 'entry.created';" "1" "reachable webhook delivered"
 assert_sql_equals "SELECT COUNT(*) FROM webhook_outbox WHERE status = 'retry' AND event_type = 'entry.created';" "1" "unreachable webhook moved to retry"
+assert_sql_equals "SELECT COUNT(*) FROM webhook_outbox WHERE claim_token IS NOT NULL OR claim_expires_at IS NOT NULL;" "0" "workers release all webhook claims"
 
 RETRY_OUTBOX_ID="$(sqlite3 "${DB_PATH}" "SELECT id FROM webhook_outbox WHERE status = 'retry' AND handler_url = 'http://127.0.0.1:9/unreachable' ORDER BY id DESC LIMIT 1;")"
 if [[ -z "${RETRY_OUTBOX_ID}" ]]; then

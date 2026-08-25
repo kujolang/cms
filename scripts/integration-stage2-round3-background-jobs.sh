@@ -194,14 +194,12 @@ fi
 
 (
 	cd "${ROOT_DIR}"
-	CMS_DB_PATH="${DB_PATH}" \
-	CMS_BACKGROUND_JOB_PROCESS_LIMIT="10" \
-	CMS_BACKGROUND_JOB_RETRY_BASE_SEC="1" \
-	CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" \
-	CMS_WEBHOOK_MAX_TIME_SEC="1" \
-	CMS_API_TOKEN="${TOKEN}" \
-	CMS_SITE_URL="${BASE_URL}" \
-	bash scripts/process-background-jobs.sh
+	env CMS_DB_PATH="${DB_PATH}" CMS_BACKGROUND_JOB_PROCESS_LIMIT="10" CMS_BACKGROUND_JOB_RETRY_BASE_SEC="1" CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" CMS_WEBHOOK_MAX_TIME_SEC="1" CMS_API_TOKEN="${TOKEN}" CMS_SITE_URL="${BASE_URL}" bash scripts/process-background-jobs.sh >"${RESULTS_DIR}/background_worker_one.log" 2>&1 &
+	worker_one=$!
+	env CMS_DB_PATH="${DB_PATH}" CMS_BACKGROUND_JOB_PROCESS_LIMIT="10" CMS_BACKGROUND_JOB_RETRY_BASE_SEC="1" CMS_WEBHOOK_CONNECT_TIMEOUT_SEC="1" CMS_WEBHOOK_MAX_TIME_SEC="1" CMS_API_TOKEN="${TOKEN}" CMS_SITE_URL="${BASE_URL}" bash scripts/process-background-jobs.sh >"${RESULTS_DIR}/background_worker_two.log" 2>&1 &
+	worker_two=$!
+	wait "${worker_one}"
+	wait "${worker_two}"
 )
 
 assert_sql_equals "SELECT COUNT(*) FROM background_jobs WHERE status = 'completed';" "4" "four background jobs completed"
@@ -210,6 +208,7 @@ assert_sql_equals "SELECT COUNT(*) FROM background_job_dead_letters WHERE job_id
 assert_sql_equals "SELECT CASE WHEN COALESCE((SELECT last_audit_id FROM webhook_dispatch_state WHERE id = 1), 0) > 0 THEN 1 ELSE 0 END;" "1" "webhook enqueue advanced dispatch cursor"
 assert_sql_equals "SELECT status FROM entries WHERE slug = 'scheduled-publish-entry' ORDER BY id DESC LIMIT 1;" "published" "scheduler job published overdue entry"
 assert_sql_equals "SELECT COUNT(*) FROM audit_log WHERE action = 'background.job.completed';" "4" "audit log recorded completed jobs"
+assert_sql_equals "SELECT COUNT(*) FROM background_jobs WHERE claim_token IS NOT NULL OR claim_expires_at IS NOT NULL;" "0" "workers release all job claims"
 
 (
 	cd "${ROOT_DIR}"

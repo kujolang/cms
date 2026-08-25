@@ -2,10 +2,11 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/data/cms.db}"
+DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/cms.db}"
 LIMIT="${CMS_BACKGROUND_JOB_PROCESS_LIMIT:-50}"
 RETRY_BASE_SEC="${CMS_BACKGROUND_JOB_RETRY_BASE_SEC:-20}"
 MAX_ATTEMPTS_DEFAULT="${CMS_BACKGROUND_JOB_MAX_ATTEMPTS:-5}"
+CLAIM_TTL_SEC="${CMS_BACKGROUND_JOB_CLAIM_TTL_SEC:-900}"
 SCRIPT_LABEL="Background job processor"
 
 fail() {
@@ -34,6 +35,10 @@ fi
 require_command sqlite3
 require_command node
 
+sqlite3() {
+	command sqlite3 -cmd ".timeout 5000" "$@"
+}
+
 if ! [[ "${LIMIT}" =~ ^[0-9]+$ ]] || [[ "${LIMIT}" -lt 1 ]]; then
 	LIMIT="50"
 fi
@@ -45,6 +50,12 @@ fi
 if ! [[ "${MAX_ATTEMPTS_DEFAULT}" =~ ^[0-9]+$ ]] || [[ "${MAX_ATTEMPTS_DEFAULT}" -lt 1 ]]; then
 	MAX_ATTEMPTS_DEFAULT="5"
 fi
+
+if ! [[ "${CLAIM_TTL_SEC}" =~ ^[0-9]+$ ]] || [[ "${CLAIM_TTL_SEC}" -lt 30 ]]; then
+	CLAIM_TTL_SEC="900"
+fi
+
+WORKER_TOKEN="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(16).toString("hex"))')"
 
 sql_escape() {
 	printf '%s' "$1" | sed "s/'/''/g"
@@ -195,7 +206,7 @@ run_job_by_type() {
 	return 1
 }
 
-rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, job_type, hex(payload_json), attempt_count, max_attempts FROM background_jobs WHERE status IN ('pending','retry') AND CAST(run_after AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER) ORDER BY id ASC LIMIT ${LIMIT};")"
+rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, job_type, hex(payload_json), attempt_count, max_attempts FROM background_jobs WHERE (status IN ('pending','retry') AND CAST(run_after AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) ORDER BY id ASC LIMIT ${LIMIT};")"
 
 if [[ -z "${rows}" ]]; then
 	echo "${SCRIPT_LABEL}: no due jobs"
@@ -225,19 +236,37 @@ while IFS='|' read -r job_id job_type payload_hex attempt_count max_attempts; do
 	fi
 
 	now_value="$(now_epoch)"
-	sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'running', started_at = '${now_value}', updated_at = '${now_value}' WHERE id = ${job_id} AND status IN ('pending','retry');"
-
-	current_status="$(sqlite3 "${DB_PATH}" "SELECT status FROM background_jobs WHERE id = ${job_id};")"
-	if [[ "${current_status}" != "running" ]]; then
+	claim_expires_at="$((now_value + CLAIM_TTL_SEC))"
+	claimed="$(sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'running', started_at = '${now_value}', updated_at = '${now_value}', claim_token = '${WORKER_TOKEN}', claim_expires_at = '${claim_expires_at}' WHERE id = ${job_id} AND ((status IN ('pending','retry') AND CAST(run_after AS INTEGER) <= ${now_value}) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= ${now_value})); SELECT changes();")"
+	if [[ "${claimed}" != "1" ]]; then
 		continue
 	fi
 
 	write_audit_row "background.job.started" "202" "${job_id}" "{\"job_type\":\"${job_type}\",\"attempt\":$((attempt_count + 1))}"
 
+	job_output_file="$(mktemp)"
 	set +e
-	job_output="$(run_job_by_type "${job_type}" "${payload_json}" 2>&1)"
+	run_job_by_type "${job_type}" "${payload_json}" >"${job_output_file}" 2>&1 &
+	job_pid=$!
+	set -e
+	heartbeat_interval="$((CLAIM_TTL_SEC / 3))"
+	if [[ "${heartbeat_interval}" -lt 10 ]]; then heartbeat_interval=10; fi
+	next_heartbeat="$((now_value + heartbeat_interval))"
+	while kill -0 "${job_pid}" >/dev/null 2>&1; do
+		sleep 1
+		heartbeat_now="$(now_epoch)"
+		if [[ "${heartbeat_now}" -ge "${next_heartbeat}" ]]; then
+			heartbeat_expiry="$((heartbeat_now + CLAIM_TTL_SEC))"
+			sqlite3 "${DB_PATH}" "UPDATE background_jobs SET claim_expires_at = '${heartbeat_expiry}', updated_at = '${heartbeat_now}' WHERE id = ${job_id} AND claim_token = '${WORKER_TOKEN}';" >/dev/null
+			next_heartbeat="$((heartbeat_now + heartbeat_interval))"
+		fi
+	done
+	set +e
+	wait "${job_pid}"
 	job_exit_code=$?
 	set -e
+	job_output="$(cat "${job_output_file}")"
+	rm -f "${job_output_file}"
 
 	next_attempt_count=$((attempt_count + 1))
 
@@ -245,7 +274,8 @@ while IFS='|' read -r job_id job_type payload_hex attempt_count max_attempts; do
 		result_json="$(normalize_result_json "${job_type}" "${job_output}")"
 		result_sql="$(sql_escape "${result_json}")"
 		now_value="$(now_epoch)"
-		sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'completed', attempt_count = ${next_attempt_count}, last_error = NULL, result_json = '${result_sql}', completed_at = '${now_value}', updated_at = '${now_value}' WHERE id = ${job_id};"
+		updated="$(sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'completed', attempt_count = ${next_attempt_count}, last_error = NULL, result_json = '${result_sql}', completed_at = '${now_value}', updated_at = '${now_value}', claim_token = NULL, claim_expires_at = NULL WHERE id = ${job_id} AND claim_token = '${WORKER_TOKEN}'; SELECT changes();")"
+		if [[ "${updated}" != "1" ]]; then continue; fi
 		write_audit_row "background.job.completed" "200" "${job_id}" "${result_json}"
 		completed=$((completed + 1))
 		job_status "COMPLETED" "${job_id}" "${job_type}"
@@ -260,8 +290,8 @@ while IFS='|' read -r job_id job_type payload_hex attempt_count max_attempts; do
 	now_value="$(now_epoch)"
 
 	if [[ ${next_attempt_count} -ge ${max_attempts} ]]; then
-		sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'dead_letter', attempt_count = ${next_attempt_count}, last_error = '${error_sql}', updated_at = '${now_value}' WHERE id = ${job_id};"
-		sqlite3 "${DB_PATH}" "INSERT OR REPLACE INTO background_job_dead_letters (job_id, job_type, payload_json, attempt_count, max_attempts, last_error, failed_at, created_at) SELECT id, job_type, payload_json, attempt_count, max_attempts, '${error_sql}', '${now_value}', '${now_value}' FROM background_jobs WHERE id = ${job_id};"
+		updated="$(sqlite3 "${DB_PATH}" "BEGIN IMMEDIATE; UPDATE background_jobs SET status = 'dead_letter', attempt_count = ${next_attempt_count}, last_error = '${error_sql}', updated_at = '${now_value}' WHERE id = ${job_id} AND claim_token = '${WORKER_TOKEN}'; SELECT changes(); INSERT OR REPLACE INTO background_job_dead_letters (job_id, job_type, payload_json, attempt_count, max_attempts, last_error, failed_at, created_at) SELECT id, job_type, payload_json, attempt_count, max_attempts, '${error_sql}', '${now_value}', '${now_value}' FROM background_jobs WHERE id = ${job_id} AND claim_token = '${WORKER_TOKEN}'; UPDATE background_jobs SET claim_token = NULL, claim_expires_at = NULL WHERE id = ${job_id} AND claim_token = '${WORKER_TOKEN}'; COMMIT;")"
+		if [[ "${updated}" != "1" ]]; then continue; fi
 		write_audit_row "background.job.dead_letter" "500" "${job_id}" "{\"job_type\":\"${job_type}\",\"error\":\"${error_sql}\",\"attempt\":${next_attempt_count},\"max_attempts\":${max_attempts}}"
 		dead_lettered=$((dead_lettered + 1))
 		job_status "DEAD-LETTER" "${job_id}" "${job_type}"
@@ -269,7 +299,8 @@ while IFS='|' read -r job_id job_type payload_hex attempt_count max_attempts; do
 	fi
 
 	next_run_after=$((now_value + (RETRY_BASE_SEC * next_attempt_count)))
-	sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'retry', attempt_count = ${next_attempt_count}, last_error = '${error_sql}', run_after = '${next_run_after}', updated_at = '${now_value}' WHERE id = ${job_id};"
+	updated="$(sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'retry', attempt_count = ${next_attempt_count}, last_error = '${error_sql}', run_after = '${next_run_after}', updated_at = '${now_value}', claim_token = NULL, claim_expires_at = NULL WHERE id = ${job_id} AND claim_token = '${WORKER_TOKEN}'; SELECT changes();")"
+	if [[ "${updated}" != "1" ]]; then continue; fi
 	write_audit_row "background.job.retry" "429" "${job_id}" "{\"job_type\":\"${job_type}\",\"attempt\":${next_attempt_count},\"next_run_after\":\"${next_run_after}\"}"
 	retried=$((retried + 1))
 	job_status "RETRY" "${job_id}" "${job_type}"

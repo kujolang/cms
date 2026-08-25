@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/data/cms.db}"
+DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/cms.db}"
 JOB_TYPE=""
 PAYLOAD_JSON="{}"
 RUN_AFTER=""

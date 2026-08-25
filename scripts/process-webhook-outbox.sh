@@ -2,11 +2,12 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/data/cms.db}"
+DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/cms.db}"
 LIMIT="${CMS_WEBHOOK_PROCESS_LIMIT:-50}"
 RETRY_BASE_SEC="${CMS_WEBHOOK_RETRY_BASE_SEC:-30}"
 CONNECT_TIMEOUT_SEC="${CMS_WEBHOOK_CONNECT_TIMEOUT_SEC:-3}"
 MAX_TIME_SEC="${CMS_WEBHOOK_MAX_TIME_SEC:-10}"
+CLAIM_TTL_SEC="${CMS_WEBHOOK_CLAIM_TTL_SEC:-900}"
 ALLOW_HTTP="${CMS_PLUGIN_HOOK_ALLOW_HTTP:-false}"
 ALLOW_PRIVATE="${CMS_PLUGIN_HOOK_ALLOW_PRIVATE:-false}"
 SCRIPT_LABEL="Webhook outbox processor"
@@ -38,6 +39,23 @@ fi
 require_command sqlite3
 require_command python3
 
+sqlite3() {
+	command sqlite3 -cmd ".timeout 5000" "$@"
+}
+
+if ! [[ "${CLAIM_TTL_SEC}" =~ ^[0-9]+$ ]] || [[ "${CLAIM_TTL_SEC}" -lt 30 ]]; then
+	CLAIM_TTL_SEC="900"
+fi
+if ! [[ "${MAX_TIME_SEC}" =~ ^[0-9]+$ ]] || [[ "${MAX_TIME_SEC}" -lt 1 ]]; then
+	MAX_TIME_SEC="10"
+fi
+minimum_claim_ttl="$((MAX_TIME_SEC + 30))"
+if [[ "${CLAIM_TTL_SEC}" -lt "${minimum_claim_ttl}" ]]; then
+	CLAIM_TTL_SEC="${minimum_claim_ttl}"
+fi
+
+WORKER_TOKEN="$(python3 -c 'import secrets; print(secrets.token_hex(16), end="")')"
+
 sql_escape() {
 	printf '%s' "$1" | sed "s/'/''/g"
 }
@@ -48,6 +66,21 @@ decode_hex() {
 
 now_epoch() {
 	date +%s
+}
+
+renew_claim_while_worker_alive() {
+	local outbox_id="$1"
+	local parent_pid="$2"
+	local heartbeat_interval="$((CLAIM_TTL_SEC / 3))"
+	if [[ "${heartbeat_interval}" -lt 10 ]]; then heartbeat_interval=10; fi
+	while kill -0 "${parent_pid}" >/dev/null 2>&1; do
+		sleep "${heartbeat_interval}"
+		if ! kill -0 "${parent_pid}" >/dev/null 2>&1; then break; fi
+		local heartbeat_now heartbeat_expiry
+		heartbeat_now="$(now_epoch)"
+		heartbeat_expiry="$((heartbeat_now + CLAIM_TTL_SEC))"
+		sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET claim_expires_at = '${heartbeat_expiry}', updated_at = '${heartbeat_now}' WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}';" >/dev/null
+	done
 }
 
 resolve_handler_target() {
@@ -120,7 +153,7 @@ print(f"{output_host}|{port}|{selected}")
 PY
 }
 
-rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, hook_id, event_id, event_type, hex(payload_json), hex(handler_url), hex(shared_secret), attempt_count, max_attempts FROM webhook_outbox WHERE status IN ('pending','retry') AND CAST(next_attempt_at AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER) ORDER BY id ASC LIMIT ${LIMIT};")"
+rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, hook_id, event_id, event_type, hex(payload_json), hex(handler_url), hex(shared_secret), attempt_count, max_attempts FROM webhook_outbox WHERE (status IN ('pending','retry') AND CAST(next_attempt_at AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) ORDER BY id ASC LIMIT ${LIMIT};")"
 
 if [[ -z "${rows}" ]]; then
 	echo "${SCRIPT_LABEL}: no due deliveries"
@@ -134,7 +167,15 @@ dead_lettered=0
 
 while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_url_hex shared_secret_hex attempt_count max_attempts; do
 	[[ -z "${outbox_id}" ]] && continue
+	now_value="$(now_epoch)"
+	claim_expires_at="$((now_value + CLAIM_TTL_SEC))"
+	claimed="$(sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'running', claim_token = '${WORKER_TOKEN}', claim_expires_at = '${claim_expires_at}', updated_at = '${now_value}' WHERE id = ${outbox_id} AND ((status IN ('pending','retry') AND CAST(next_attempt_at AS INTEGER) <= ${now_value}) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= ${now_value})); SELECT changes();")"
+	if [[ "${claimed}" != "1" ]]; then
+		continue
+	fi
 	processed=$((processed + 1))
+	renew_claim_while_worker_alive "${outbox_id}" "$$" &
+	heartbeat_pid=$!
 
 	payload_json="$(decode_hex "${payload_hex}")"
 	handler_url="$(decode_hex "${handler_url_hex}")"
@@ -169,11 +210,14 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 		curl_exit_code=$?
 		set -e
 	fi
+	kill "${heartbeat_pid}" >/dev/null 2>&1 || true
+	wait "${heartbeat_pid}" >/dev/null 2>&1 || true
 
 	now_value="$(now_epoch)"
 	if [[ ${curl_exit_code} -eq 0 && "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
 		next_attempt_count=$((attempt_count + 1))
-		sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'delivered', attempt_count = ${next_attempt_count}, last_error = NULL, last_status_code = ${http_status}, delivered_at = '${now_value}', updated_at = '${now_value}' WHERE id = ${outbox_id};"
+		updated="$(sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'delivered', attempt_count = ${next_attempt_count}, last_error = NULL, last_status_code = ${http_status}, delivered_at = '${now_value}', updated_at = '${now_value}', claim_token = NULL, claim_expires_at = NULL WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; SELECT changes();")"
+		if [[ "${updated}" != "1" ]]; then rm -f "${response_file}"; continue; fi
 		delivered=$((delivered + 1))
 		delivery_status "DELIVERED" "${outbox_id}" "${event_type}" "status=${http_status}"
 		rm -f "${response_file}"
@@ -192,13 +236,14 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 	escaped_error="$(sql_escape "${error_message}")"
 
 	if [[ ${next_attempt_count} -ge ${max_attempts} ]]; then
-		sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'dead_letter', attempt_count = ${next_attempt_count}, last_error = '${escaped_error}', last_status_code = ${http_status:-0}, updated_at = '${now_value}' WHERE id = ${outbox_id};"
-		sqlite3 "${DB_PATH}" "INSERT OR REPLACE INTO webhook_dead_letters (outbox_id, hook_id, event_id, event_type, payload_json, handler_url, shared_secret, attempt_count, last_error, last_status_code, failed_at, created_at) SELECT id, hook_id, event_id, event_type, payload_json, handler_url, shared_secret, attempt_count, '${escaped_error}', ${http_status:-0}, '${now_value}', '${now_value}' FROM webhook_outbox WHERE id = ${outbox_id};"
+		updated="$(sqlite3 "${DB_PATH}" "BEGIN IMMEDIATE; UPDATE webhook_outbox SET status = 'dead_letter', attempt_count = ${next_attempt_count}, last_error = '${escaped_error}', last_status_code = ${http_status:-0}, updated_at = '${now_value}' WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; SELECT changes(); INSERT OR REPLACE INTO webhook_dead_letters (outbox_id, hook_id, event_id, event_type, payload_json, handler_url, shared_secret, attempt_count, last_error, last_status_code, failed_at, created_at) SELECT id, hook_id, event_id, event_type, payload_json, handler_url, shared_secret, attempt_count, '${escaped_error}', ${http_status:-0}, '${now_value}', '${now_value}' FROM webhook_outbox WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; UPDATE webhook_outbox SET claim_token = NULL, claim_expires_at = NULL WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; COMMIT;")"
+		if [[ "${updated}" != "1" ]]; then rm -f "${response_file}"; continue; fi
 		dead_lettered=$((dead_lettered + 1))
 		delivery_status "DEAD-LETTER" "${outbox_id}" "${event_type}" "attempts=${next_attempt_count}/${max_attempts}"
 	else
 		next_attempt_at=$((now_value + (RETRY_BASE_SEC * next_attempt_count)))
-		sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'retry', attempt_count = ${next_attempt_count}, last_error = '${escaped_error}', last_status_code = ${http_status:-0}, next_attempt_at = '${next_attempt_at}', updated_at = '${now_value}' WHERE id = ${outbox_id};"
+		updated="$(sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'retry', attempt_count = ${next_attempt_count}, last_error = '${escaped_error}', last_status_code = ${http_status:-0}, next_attempt_at = '${next_attempt_at}', updated_at = '${now_value}', claim_token = NULL, claim_expires_at = NULL WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; SELECT changes();")"
+		if [[ "${updated}" != "1" ]]; then rm -f "${response_file}"; continue; fi
 		retried=$((retried + 1))
 		delivery_status "RETRY" "${outbox_id}" "${event_type}" "attempts=${next_attempt_count}/${max_attempts}"
 	fi

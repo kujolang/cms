@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/data/cms.db}"
+DB_PATH="${CMS_DB_PATH:-${ROOT_DIR}/cms.db}"
 LIMIT="${CMS_WEBHOOK_ENQUEUE_LIMIT:-200}"
 MAX_ATTEMPTS="${CMS_WEBHOOK_MAX_ATTEMPTS:-5}"
 SCRIPT_LABEL="Webhook enqueue"
@@ -25,6 +25,10 @@ fi
 
 require_command sqlite3
 require_command node
+
+sqlite3() {
+	command sqlite3 -cmd ".timeout 5000" "$@"
+}
 
 sql_escape() {
 	printf '%s' "$1" | sed "s/'/''/g"
@@ -118,11 +122,11 @@ insert_outbox_for_event() {
 
 	while IFS='|' read -r hook_id handler_url_hex shared_secret_hex; do
 		[[ -z "${hook_id}" ]] && continue
-		local handler_url shared_secret now_ts event_seed event_id payload_json
+		local handler_url shared_secret now_ts event_seed event_id payload_json inserted
 		handler_url="$(decode_hex "${handler_url_hex}")"
 		shared_secret="$(decode_hex "${shared_secret_hex}")"
 		now_ts="$(date +%s)"
-		event_seed="${event_type}:${event_action}:${entry_id}:${slug}:${audit_id}:${now_ts}:${hook_id}"
+		event_seed="${event_type}:${audit_id}:${hook_id}"
 		event_id="$(printf '%s' "${event_seed}" | shasum -a 256 | awk '{print substr($1, 1, 24)}')"
 		payload_json="$(build_payload_json "${event_id}" "${event_type}" "${event_action}" "${entry_id}" "${content_type_key}" "${slug}" "${status}" "${published_at}")"
 
@@ -131,8 +135,10 @@ insert_outbox_for_event() {
 		handler_url_sql="$(sql_escape "${handler_url}")"
 		shared_secret_sql="$(sql_escape "${shared_secret}")"
 
-		sqlite3 "${DB_PATH}" "INSERT INTO webhook_outbox (hook_id, event_id, event_type, payload_json, handler_url, shared_secret, status, attempt_count, max_attempts, next_attempt_at, last_error, last_status_code, delivered_at, created_at, updated_at) VALUES (${hook_id}, '${event_id}', '${event_type}', '${payload_sql}', '${handler_url_sql}', '${shared_secret_sql}', 'pending', 0, ${MAX_ATTEMPTS}, '${now_ts}', '', 0, '', '${now_ts}', '${now_ts}');"
-		ENQUEUED_TOTAL=$((ENQUEUED_TOTAL + 1))
+		inserted="$(sqlite3 "${DB_PATH}" "INSERT OR IGNORE INTO webhook_outbox (hook_id, source_audit_id, event_id, event_type, payload_json, handler_url, shared_secret, status, attempt_count, max_attempts, next_attempt_at, last_error, last_status_code, delivered_at, created_at, updated_at) VALUES (${hook_id}, ${audit_id}, '${event_id}', '${event_type}', '${payload_sql}', '${handler_url_sql}', '${shared_secret_sql}', 'pending', 0, ${MAX_ATTEMPTS}, '${now_ts}', '', 0, '', '${now_ts}', '${now_ts}'); SELECT changes();")"
+		if [[ "${inserted}" == "1" ]]; then
+			ENQUEUED_TOTAL=$((ENQUEUED_TOTAL + 1))
+		fi
 	done <<< "${hooks}"
 }
 
@@ -197,6 +203,6 @@ while IFS='|' read -r audit_id action target_id details_hex; do
 
 done <<< "${AUDIT_ROWS}"
 
-sqlite3 "${DB_PATH}" "UPDATE webhook_dispatch_state SET last_audit_id = ${HIGHEST_AUDIT_ID}, updated_at = strftime('%s','now') WHERE id = 1;"
+sqlite3 "${DB_PATH}" "UPDATE webhook_dispatch_state SET last_audit_id = CASE WHEN last_audit_id < ${HIGHEST_AUDIT_ID} THEN ${HIGHEST_AUDIT_ID} ELSE last_audit_id END, updated_at = strftime('%s','now') WHERE id = 1;"
 
 echo "${SCRIPT_LABEL} summary: processed=${PROCESSED_TOTAL} enqueued=${ENQUEUED_TOTAL} skipped=${SKIPPED_TOTAL} last_audit_id=${HIGHEST_AUDIT_ID}"
