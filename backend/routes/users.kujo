@@ -1,0 +1,323 @@
+from backend.core.database import db_execute_safe, db_query_safe
+from backend.core.http import created, fail, get_query, guard_request, ok, parse_bounded_int, parse_id_param, parse_json_body, write_audit
+from backend.core.utils import dict_get_or, ensure_json_text, is_valid_slug_key, trim_or
+
+func public_user_columns() {
+	return "id, user_key, email, username, display_name, first_name, last_name, bio, website_url, avatar_url, social_json, role_key, status, email_verified_at, approved_at, approved_by, last_login_at, created_at, updated_at"
+}
+
+func valid_status(status) {
+	return status == "pending" || status == "active" || status == "suspended" || status == "rejected"
+}
+
+func valid_email(email) {
+	return len(email) >= 5 && contains(email, "@") > 0 && contains(email, ".") > 0 && len(email) <= 254
+}
+
+func load_role(db, role_key) {
+	result := db_query_safe(db, "SELECT role_key, name, permissions_json FROM roles WHERE role_key = ? LIMIT 1", [role_key])
+	if result["ok"] == false {
+		return {"ok": false, "status": 500, "code": "db_query_failed", "message": "Failed to validate role"}
+	}
+	if len(result["rows"]) == 0 {
+		return {"ok": false, "status": 404, "code": "role_not_found", "message": "Unknown role_key"}
+	}
+	return {"ok": true, "role": result["rows"][0]}
+}
+
+func list_users(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+	limit_parsed := parse_bounded_int(get_query(req, "limit", "100"), "limit", 1, 200)
+	if limit_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_limit", limit_parsed["error"], {})
+	}
+	offset_parsed := parse_bounded_int(get_query(req, "offset", "0"), "offset", 0, 1000000)
+	if offset_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_offset", offset_parsed["error"], {})
+	}
+
+	email := to_lower(trim(get_query(req, "email", "")))
+	status := to_lower(trim(get_query(req, "status", "")))
+	role_key := to_lower(trim(get_query(req, "role_key", "")))
+	search := to_lower(trim(get_query(req, "search", "")))
+	where_sql := "1 = 1"
+	params := []
+	if email != "" {
+		where_sql = where_sql + " AND lower(email) = ?"
+		params = push(params, email)
+	}
+	if status != "" {
+		where_sql = where_sql + " AND status = ?"
+		params = push(params, status)
+	}
+	if role_key != "" {
+		where_sql = where_sql + " AND role_key = ?"
+		params = push(params, role_key)
+	}
+	if search != "" {
+		where_sql = where_sql + " AND (lower(display_name) LIKE ? OR lower(email) LIKE ? OR lower(username) LIKE ?)"
+		pattern := "%" + search + "%"
+		params = push(params, pattern)
+		params = push(params, pattern)
+		params = push(params, pattern)
+	}
+
+	query_params := params
+	query_params = push(query_params, limit_parsed["value"])
+	query_params = push(query_params, offset_parsed["value"])
+	result := db_query_safe(db, "SELECT " + public_user_columns() + " FROM users WHERE " + where_sql + " ORDER BY display_name ASC, id ASC LIMIT ? OFFSET ?", query_params)
+	if result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to load users", {})
+	}
+	count_result := db_query_safe(db, "SELECT COUNT(*) AS total FROM users WHERE " + where_sql, params)
+	if count_result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to count users", {})
+	}
+	total := 0
+	if len(count_result["rows"]) > 0 {
+		total = count_result["rows"][0]["total"]
+	}
+	return ok(cfg, {"items": result["rows"], "count": len(result["rows"]), "total": total, "limit": limit_parsed["value"], "offset": offset_parsed["value"]})
+}
+
+func create_user(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+	body_result := parse_json_body(req, cfg)
+	if body_result["ok"] == false {
+		return fail(cfg, 400, "invalid_body", body_result["error"], {})
+	}
+	body := body_result["data"]
+
+	email := to_lower(trim_or(dict_get_or(body, "email", ""), ""))
+	username := to_lower(trim_or(dict_get_or(body, "username", ""), ""))
+	display_name := trim_or(dict_get_or(body, "display_name", ""), "")
+	user_key := to_lower(trim_or(dict_get_or(body, "user_key", username), username))
+	role_key := to_lower(trim_or(dict_get_or(body, "role_key", "subscriber"), "subscriber"))
+	status := to_lower(trim_or(dict_get_or(body, "status", "pending"), "pending"))
+	password_hash := trim_or(dict_get_or(body, "password_hash", ""), "")
+	password_salt := trim_or(dict_get_or(body, "password_salt", ""), "")
+	password_iterations := dict_get_or(body, "password_iterations", 210000)
+
+	if valid_email(email) == false {
+		return fail(cfg, 400, "invalid_email", "email must be a valid address", {})
+	}
+	if is_valid_slug_key(username) == false || len(username) < 3 || len(username) > 64 {
+		return fail(cfg, 400, "invalid_username", "username must be 3-64 lowercase slug characters", {})
+	}
+	if is_valid_slug_key(user_key) == false || len(user_key) < 3 {
+		return fail(cfg, 400, "invalid_user_key", "user_key must be lowercase slug text", {})
+	}
+	if len(display_name) < 2 || len(display_name) > 120 {
+		return fail(cfg, 400, "invalid_display_name", "display_name must be 2-120 characters", {})
+	}
+	if valid_status(status) == false {
+		return fail(cfg, 400, "invalid_status", "status must be pending, active, suspended, or rejected", {})
+	}
+	if len(password_hash) < 32 || len(password_salt) < 16 {
+		return fail(cfg, 400, "invalid_credentials", "A derived password hash and salt are required", {})
+	}
+
+	role_result := load_role(db, role_key)
+	if role_result["ok"] == false {
+		return fail(cfg, role_result["status"], role_result["code"], role_result["message"], {})
+	}
+	now_ts := now()
+	approved_at := dict_get_or(body, "approved_at", null)
+	approved_by := trim_or(dict_get_or(body, "approved_by", ""), "")
+	if status == "active" && type(approved_at) == "null" {
+		approved_at = now_ts
+	}
+
+	insert_result := db_execute_safe(
+		db,
+		"INSERT INTO users (user_key, email, username, display_name, first_name, last_name, bio, website_url, avatar_url, social_json, role_key, status, password_hash, password_salt, password_iterations, email_verified_at, approved_at, approved_by, last_login_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		[user_key, email, username, display_name, trim_or(dict_get_or(body, "first_name", ""), ""), trim_or(dict_get_or(body, "last_name", ""), ""), trim_or(dict_get_or(body, "bio", ""), ""), trim_or(dict_get_or(body, "website_url", ""), ""), trim_or(dict_get_or(body, "avatar_url", ""), ""), ensure_json_text(dict_get_or(body, "social", {}), {}), role_key, status, password_hash, password_salt, password_iterations, dict_get_or(body, "email_verified_at", null), approved_at, approved_by, null, now_ts, now_ts]
+	)
+	if insert_result["ok"] == false {
+		return fail(cfg, 409, "create_failed", "Could not create user; email, username, or user_key already exists", {})
+	}
+	user_id := db_last_insert_id(db)
+	row_result := db_query_safe(db, "SELECT " + public_user_columns() + " FROM users WHERE id = ?", [user_id])
+	if row_result["ok"] == false || len(row_result["rows"]) == 0 {
+		return fail(cfg, 500, "load_failed", "Created user but failed to load it", {})
+	}
+	_ = write_audit(ctx, req, "user.create", 201, "user", user_id, {"email": email, "role_key": role_key, "status": status})
+	return created(cfg, row_result["rows"][0])
+}
+
+func patch_user(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+	id_parsed := parse_id_param(req, "id")
+	if id_parsed["ok"] == false {
+		return fail(cfg, 400, "invalid_user_id", id_parsed["error"], {})
+	}
+	user_id := id_parsed["value"]
+	existing_result := db_query_safe(db, "SELECT * FROM users WHERE id = ?", [user_id])
+	if existing_result["ok"] == false {
+		return fail(cfg, 500, "db_query_failed", "Failed to load user", {})
+	}
+	if len(existing_result["rows"]) == 0 {
+		return fail(cfg, 404, "not_found", "User not found", {})
+	}
+	existing := existing_result["rows"][0]
+	body_result := parse_json_body(req, cfg)
+	if body_result["ok"] == false {
+		return fail(cfg, 400, "invalid_body", body_result["error"], {})
+	}
+	body := body_result["data"]
+
+	email := to_lower(trim_or(dict_get_or(body, "email", existing["email"]), existing["email"]))
+	username := to_lower(trim_or(dict_get_or(body, "username", existing["username"]), existing["username"]))
+	display_name := trim_or(dict_get_or(body, "display_name", existing["display_name"]), existing["display_name"])
+	role_key := to_lower(trim_or(dict_get_or(body, "role_key", existing["role_key"]), existing["role_key"]))
+	status := to_lower(trim_or(dict_get_or(body, "status", existing["status"]), existing["status"]))
+	if valid_email(email) == false || is_valid_slug_key(username) == false || len(display_name) < 2 || valid_status(status) == false {
+		return fail(cfg, 400, "invalid_user", "email, username, display_name, role, or status is invalid", {})
+	}
+	role_result := load_role(db, role_key)
+	if role_result["ok"] == false {
+		return fail(cfg, role_result["status"], role_result["code"], role_result["message"], {})
+	}
+
+	password_hash := existing["password_hash"]
+	password_salt := existing["password_salt"]
+	password_iterations := existing["password_iterations"]
+	if has_key(body, "password_hash") == 1 {
+		password_hash = trim_or(body["password_hash"], "")
+		password_salt = trim_or(dict_get_or(body, "password_salt", ""), "")
+		password_iterations = dict_get_or(body, "password_iterations", 210000)
+		if len(password_hash) < 32 || len(password_salt) < 16 {
+			return fail(cfg, 400, "invalid_credentials", "A derived password hash and salt are required", {})
+		}
+	}
+	approved_at := existing["approved_at"]
+	approved_by := existing["approved_by"]
+	if status == "active" && existing["status"] != "active" {
+		approved_at = now()
+		approved_by = trim_or(dict_get_or(body, "approved_by", "system"), "system")
+	}
+	if status == "pending" {
+		approved_at = null
+		approved_by = ""
+	}
+	social_json := existing["social_json"]
+	if has_key(body, "social") == 1 {
+		social_json = ensure_json_text(body["social"], {})
+	}
+
+	update_result := db_execute_safe(
+		db,
+		"UPDATE users SET email = ?, username = ?, display_name = ?, first_name = ?, last_name = ?, bio = ?, website_url = ?, avatar_url = ?, social_json = ?, role_key = ?, status = ?, password_hash = ?, password_salt = ?, password_iterations = ?, email_verified_at = ?, approved_at = ?, approved_by = ?, last_login_at = ?, updated_at = ? WHERE id = ?",
+		[email, username, display_name, trim_or(dict_get_or(body, "first_name", existing["first_name"]), existing["first_name"]), trim_or(dict_get_or(body, "last_name", existing["last_name"]), existing["last_name"]), trim_or(dict_get_or(body, "bio", existing["bio"]), existing["bio"]), trim_or(dict_get_or(body, "website_url", existing["website_url"]), existing["website_url"]), trim_or(dict_get_or(body, "avatar_url", existing["avatar_url"]), existing["avatar_url"]), social_json, role_key, status, password_hash, password_salt, password_iterations, dict_get_or(body, "email_verified_at", existing["email_verified_at"]), approved_at, approved_by, dict_get_or(body, "last_login_at", existing["last_login_at"]), now(), user_id]
+	)
+	if update_result["ok"] == false {
+		return fail(cfg, 409, "update_failed", "Could not update user; email or username may already exist", {})
+	}
+	updated := db_query_safe(db, "SELECT " + public_user_columns() + " FROM users WHERE id = ?", [user_id])
+	if updated["ok"] == false || len(updated["rows"]) == 0 {
+		return fail(cfg, 500, "load_failed", "Updated user but failed to load it", {})
+	}
+	_ = write_audit(ctx, req, "user.update", 200, "user", user_id, {"role_key": role_key, "status": status})
+	return ok(cfg, updated["rows"][0])
+}
+
+func registration_settings(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+	result := db_query_safe(db, "SELECT setting_value, updated_at FROM settings WHERE setting_key = 'user_registration' LIMIT 1", [])
+	if result["ok"] == false || len(result["rows"]) == 0 {
+		return ok(cfg, {"mode": "approval", "default_role": "subscriber"})
+	}
+	value := {}
+	parse_err := null
+	try {
+		value = parse_json(to_string(result["rows"][0]["setting_value"]))
+	} except e {
+		parse_err = e
+	}
+	if type(parse_err) != "null" || type(value) != "dict" {
+		value = {"mode": "approval", "default_role": "subscriber"}
+	}
+	value["updated_at"] = result["rows"][0]["updated_at"]
+	return ok(cfg, value)
+}
+
+func update_registration_settings(req, ctx) {
+	cfg := ctx["cfg"]
+	db := ctx["db"]
+	body_result := parse_json_body(req, cfg)
+	if body_result["ok"] == false {
+		return fail(cfg, 400, "invalid_body", body_result["error"], {})
+	}
+	body := body_result["data"]
+	mode := to_lower(trim_or(dict_get_or(body, "mode", "approval"), "approval"))
+	default_role := to_lower(trim_or(dict_get_or(body, "default_role", "subscriber"), "subscriber"))
+	if mode != "open" && mode != "approval" && mode != "closed" {
+		return fail(cfg, 400, "invalid_registration_mode", "mode must be open, approval, or closed", {})
+	}
+	role_result := load_role(db, default_role)
+	if role_result["ok"] == false {
+		return fail(cfg, role_result["status"], role_result["code"], role_result["message"], {})
+	}
+	settings_json := to_json({"mode": mode, "default_role": default_role})
+	update_result := db_execute_safe(db, "INSERT INTO settings (setting_key, setting_value, updated_at) VALUES ('user_registration', ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at", [settings_json, now()])
+	if update_result["ok"] == false {
+		return fail(cfg, 500, "update_failed", "Failed to update registration settings", {})
+	}
+	_ = write_audit(ctx, req, "registration.update", 200, "setting", "user_registration", {"mode": mode, "default_role": default_role})
+	return ok(cfg, {"mode": mode, "default_role": default_role})
+}
+
+export register_user_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/users", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		return list_users(req, ctx)
+	})
+	server = server.route("GET", "/v1/users/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		cfg := ctx["cfg"]
+		id_parsed := parse_id_param(req, "id")
+		if id_parsed["ok"] == false { return fail(cfg, 400, "invalid_user_id", id_parsed["error"], {}) }
+		result := db_query_safe(ctx["db"], "SELECT " + public_user_columns() + " FROM users WHERE id = ?", [id_parsed["value"]])
+		if result["ok"] == false { return fail(cfg, 500, "db_query_failed", "Failed to load user", {}) }
+		if len(result["rows"]) == 0 { return fail(cfg, 404, "not_found", "User not found", {}) }
+		return ok(cfg, result["rows"][0])
+	})
+	server = server.route("GET", "/v1/users/:id/credentials", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		cfg := ctx["cfg"]
+		id_parsed := parse_id_param(req, "id")
+		if id_parsed["ok"] == false { return fail(cfg, 400, "invalid_user_id", id_parsed["error"], {}) }
+		result := db_query_safe(ctx["db"], "SELECT id, password_hash, password_salt, password_iterations FROM users WHERE id = ?", [id_parsed["value"]])
+		if result["ok"] == false { return fail(cfg, 500, "db_query_failed", "Failed to load credentials", {}) }
+		if len(result["rows"]) == 0 { return fail(cfg, 404, "not_found", "User not found", {}) }
+		return ok(cfg, result["rows"][0])
+	})
+	server = server.route("POST", "/v1/users", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		return create_user(req, ctx)
+	})
+	server = server.route("PATCH", "/v1/users/:id", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		return patch_user(req, ctx)
+	})
+	server = server.route("GET", "/v1/settings/registration", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		return registration_settings(req, ctx)
+	})
+	server = server.route("PATCH", "/v1/settings/registration", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		return update_registration_settings(req, ctx)
+	})
+	return server
+}

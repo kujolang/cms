@@ -12,6 +12,7 @@ from backend.routes.themes import register_theme_routes
 from backend.modules.authz import register_authz_routes
 from backend.routes.delivery import register_delivery_routes
 from backend.routes.tenancy import register_tenancy_routes
+from backend.routes.users import register_user_routes
 
 cfg := load_config({})
 
@@ -115,6 +116,10 @@ func register_options(server, cfg) {
 		"/v1/auth/roles/:id",
 		"/v1/auth/tokens",
 		"/v1/auth/tokens/:id",
+		"/v1/users",
+		"/v1/users/:id",
+		"/v1/users/:id/credentials",
+		"/v1/settings/registration",
 		"/v1/tenants",
 		"/v1/tenants/update",
 		"/v1/tenants/disable",
@@ -194,6 +199,10 @@ func build_api_contract(cfg, schema_version) {
 			"/v1/auth/roles/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
 			"/v1/auth/tokens": {"get": {"x-auth": "bearer", "x-query": ["limit", "offset"]}, "post": {"x-auth": "bearer"}},
 			"/v1/auth/tokens/:id": {"patch": {"x-auth": "bearer"}, "delete": {"x-auth": "bearer"}},
+			"/v1/users": {"get": {"x-auth": "bearer", "x-query": ["limit", "offset", "search", "email", "status", "role_key"]}, "post": {"x-auth": "bearer"}},
+			"/v1/users/:id": {"get": {"x-auth": "bearer"}, "patch": {"x-auth": "bearer"}},
+			"/v1/users/:id/credentials": {"get": {"x-auth": "bearer"}},
+			"/v1/settings/registration": {"get": {"x-auth": "bearer"}, "patch": {"x-auth": "bearer"}},
 			"/v1/tenants": {"get": {"x-auth": "bearer", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}},
 			"/v1/tenants/update": {"post": {"x-auth": "bearer"}},
 			"/v1/tenants/disable": {"post": {"x-auth": "bearer"}},
@@ -499,6 +508,8 @@ server = server.route("GET", "/v1", func(req) {
 			"themes": "/v1/themes",
 			"roles": "/v1/auth/roles",
 			"tokens": "/v1/auth/tokens",
+			"users": "/v1/users",
+			"registration_settings": "/v1/settings/registration",
 			"tenants": "/v1/tenants",
 			"tenant_update": "/v1/tenants/update",
 			"tenant_disable": "/v1/tenants/disable",
@@ -571,6 +582,7 @@ server = register_menu_routes(server, ctx)
 server = register_plugin_routes(server, ctx)
 server = register_theme_routes(server, ctx)
 server = register_authz_routes(server, ctx)
+server = register_user_routes(server, ctx)
 server = register_tenancy_routes(server, ctx)
 
 print_lines([
@@ -583,7 +595,7 @@ print_lines([
 	"Schema version: " + to_string(schema_version),
 	"Readiness DB checks: " + to_string(dict_get_or(cfg, "readiness_check_db", true)),
 	"Structured logs: " + to_string(dict_get_or(cfg, "structured_logs", true)),
-	"Modules: delivery, content_types, taxonomies, entries, media, menus, plugins, themes, authz, tenancy",
+	"Modules: delivery, content_types, taxonomies, entries, media, menus, plugins, themes, authz, users, tenancy",
 	"Press Ctrl+C to stop"
 ])
 

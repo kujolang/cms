@@ -111,6 +111,10 @@ func ensure_schema(db) {
 		"CREATE INDEX IF NOT EXISTS idx_rate_limit_buckets_updated_at ON rate_limit_buckets(updated_at)",
 		"CREATE TABLE IF NOT EXISTS themes (id INTEGER PRIMARY KEY AUTOINCREMENT, theme_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, version TEXT NOT NULL, status TEXT NOT NULL, config_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
 		"CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, role_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, permissions_json TEXT NOT NULL, is_system INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+		"CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, user_key TEXT NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', bio TEXT NOT NULL DEFAULT '', website_url TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '', social_json TEXT NOT NULL DEFAULT '{}', role_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, password_iterations INTEGER NOT NULL DEFAULT 210000, email_verified_at TEXT, approved_at TEXT, approved_by TEXT, last_login_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(role_key) REFERENCES roles(role_key))",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users(lower(email))",
+		"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users(lower(username))",
+		"CREATE INDEX IF NOT EXISTS idx_users_status_role ON users(status, role_key)",
 		"CREATE TABLE IF NOT EXISTS api_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL, role_key TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT, last_used_at TEXT)",
 		"CREATE TABLE IF NOT EXISTS tenants (id INTEGER PRIMARY KEY AUTOINCREMENT, tenant_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, disabled_at TEXT, archived_at TEXT)",
 		"CREATE INDEX IF NOT EXISTS idx_tenants_status ON tenants(status)",
@@ -264,6 +268,42 @@ func ensure_baseline_data(db, cfg) {
 	)
 	if seed_11["ok"] == false {
 		return seed_11
+	}
+
+	seed_author := ensure_seed_row(
+		db,
+		"roles",
+		"role_key",
+		"author",
+		"INSERT INTO roles (role_key, name, permissions_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		["author", "Author", to_json(["cms.read", "entries.create", "entries.edit_own", "entries.publish_own", "media.create"]), 1, now_ts, now_ts]
+	)
+	if seed_author["ok"] == false {
+		return seed_author
+	}
+
+	seed_subscriber := ensure_seed_row(
+		db,
+		"roles",
+		"role_key",
+		"subscriber",
+		"INSERT INTO roles (role_key, name, permissions_json, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		["subscriber", "Subscriber", to_json(["profile.read", "profile.edit_own"]), 1, now_ts, now_ts]
+	)
+	if seed_subscriber["ok"] == false {
+		return seed_subscriber
+	}
+
+	registration_seed := ensure_seed_row(
+		db,
+		"settings",
+		"setting_key",
+		"user_registration",
+		"INSERT INTO settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+		["user_registration", to_json({"mode": "approval", "default_role": "subscriber"}), now_ts]
+	)
+	if registration_seed["ok"] == false {
+		return registration_seed
 	}
 
 	bootstrap_token := trim(to_string(dict_get_or(cfg, "api_token", "")))

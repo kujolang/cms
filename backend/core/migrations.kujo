@@ -1,4 +1,4 @@
-export TARGET_SCHEMA_VERSION := 7
+export TARGET_SCHEMA_VERSION := 8
 
 func db_query_safe(sql_db, sql_text, sql_params) {
 	rows := []
@@ -307,6 +307,36 @@ export run_post_bootstrap_migrations := func(db) {
 
 		current_version = 7
 		applied = push(applied, "v7_workspace_keys_per_tenant")
+	}
+
+	if current_version < 8 {
+		users_table := db_execute_safe(
+			db,
+			"CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, user_key TEXT NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, first_name TEXT NOT NULL DEFAULT '', last_name TEXT NOT NULL DEFAULT '', bio TEXT NOT NULL DEFAULT '', website_url TEXT NOT NULL DEFAULT '', avatar_url TEXT NOT NULL DEFAULT '', social_json TEXT NOT NULL DEFAULT '{}', role_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, password_iterations INTEGER NOT NULL DEFAULT 210000, email_verified_at TEXT, approved_at TEXT, approved_by TEXT, last_login_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(role_key) REFERENCES roles(role_key))",
+			[]
+		)
+		if users_table["ok"] == false {
+			return users_table
+		}
+
+		user_indexes := [
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower ON users(lower(email))",
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users(lower(username))",
+			"CREATE INDEX IF NOT EXISTS idx_users_status_role ON users(status, role_key)"
+		]
+		for user_index_sql in user_indexes {
+			user_index := db_execute_safe(db, user_index_sql, [])
+			if user_index["ok"] == false {
+				return user_index
+			}
+		}
+
+		mark_v8 := set_schema_version(db, 8)
+		if mark_v8["ok"] == false {
+			return mark_v8
+		}
+		current_version = 8
+		applied = push(applied, "v8_cms_users")
 	}
 
 	return {
