@@ -296,6 +296,10 @@ test "database bootstrap applies schema version and auth seeds" {
 	assert_equal(registration_result["ok"], true)
 	assert_equal(len(registration_result["rows"]), 1)
 	assert_true(to_bool(contains(to_string(registration_result["rows"][0]["setting_value"]), "approval") >= 0))
+	social_result := db_query_safe(db, "SELECT setting_value FROM settings WHERE setting_key = 'social_sharing' LIMIT 1", [])
+	assert_equal(social_result["ok"], true)
+	assert_equal(len(social_result["rows"]), 1)
+	assert_true(to_bool(contains(to_string(social_result["rows"][0]["setting_value"]), "linkedin") >= 0))
 
 	tokens_result := db_query_safe(db, "SELECT COUNT(*) AS total FROM api_tokens", [])
 	assert_equal(tokens_result["ok"], true)

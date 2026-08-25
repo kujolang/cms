@@ -271,6 +271,49 @@ func update_registration_settings(req, ctx) {
 	return ok(cfg, {"mode": mode, "default_role": default_role})
 }
 
+func social_sharing_settings(req, ctx) {
+	cfg := ctx["cfg"]
+	result := db_query_safe(ctx["db"], "SELECT setting_value, updated_at FROM settings WHERE setting_key = 'social_sharing' LIMIT 1", [])
+	if result["ok"] == false || len(result["rows"]) == 0 {
+		return ok(cfg, {"networks": ["x", "linkedin", "facebook", "email"], "content_types": ["article"]})
+	}
+	value := {}
+	parse_err := null
+	try { value = parse_json(to_string(result["rows"][0]["setting_value"])) } except e { parse_err = e }
+	if type(parse_err) != "null" || type(value) != "dict" {
+		value = {"networks": ["x", "linkedin", "facebook", "email"], "content_types": ["article"]}
+	}
+	value["updated_at"] = result["rows"][0]["updated_at"]
+	return ok(cfg, value)
+}
+
+func update_social_sharing_settings(req, ctx) {
+	cfg := ctx["cfg"]
+	body_result := parse_json_body(req, cfg)
+	if body_result["ok"] == false { return fail(cfg, 400, "invalid_body", body_result["error"], {}) }
+	body := body_result["data"]
+	networks := dict_get_or(body, "networks", [])
+	content_types := dict_get_or(body, "content_types", [])
+	if type(networks) != "array" || type(content_types) != "array" {
+		return fail(cfg, 400, "invalid_social_sharing", "networks and content_types must be lists", {})
+	}
+	clean_networks := []
+	for network in networks {
+		name := to_lower(trim(to_string(network)))
+		if name == "x" || name == "linkedin" || name == "facebook" || name == "email" { clean_networks = push(clean_networks, name) }
+	}
+	clean_types := []
+	for content_type in content_types {
+		key := to_lower(trim(to_string(content_type)))
+		if is_valid_slug_key(key) { clean_types = push(clean_types, key) }
+	}
+	settings_json := to_json({"networks": clean_networks, "content_types": clean_types})
+	updated := db_execute_safe(ctx["db"], "INSERT INTO settings (setting_key, setting_value, updated_at) VALUES ('social_sharing', ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at", [settings_json, now()])
+	if updated["ok"] == false { return fail(cfg, 500, "update_failed", "Failed to update social sharing settings", {}) }
+	_ = write_audit(ctx, req, "social_sharing.update", 200, "setting", "social_sharing", {"networks": clean_networks, "content_types": clean_types})
+	return ok(cfg, {"networks": clean_networks, "content_types": clean_types})
+}
+
 export register_user_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/users", func(req) {
 		guard := guard_request(req, ctx, true)
@@ -318,6 +361,16 @@ export register_user_routes := func(server, ctx) {
 		guard := guard_request(req, ctx, true)
 		if guard["ok"] == false { return guard["response"] }
 		return update_registration_settings(req, ctx)
+	})
+	server = server.route("GET", "/v1/settings/social-sharing", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		return social_sharing_settings(req, ctx)
+	})
+	server = server.route("PATCH", "/v1/settings/social-sharing", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		return update_social_sharing_settings(req, ctx)
 	})
 	return server
 }

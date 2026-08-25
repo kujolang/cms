@@ -142,6 +142,7 @@ User APIs:
 - `GET|PATCH /v1/users/:id` reads or updates profiles, roles, and account status.
 - `GET /v1/users/:id/credentials` is a bearer-protected server-to-server credential lookup; password hashes are never included in normal user responses.
 - `GET|PATCH /v1/settings/registration` reads or changes the `open`, `approval`, or `closed` signup policy and its default role.
+- `GET|PATCH /v1/settings/social-sharing` reads or changes the allowed sharing networks and the content types that display them. This setting is bearer-protected and audited like other administration settings.
 
 The backend stores portable PBKDF2 credential material supplied by the trusted authentication layer. Public applications should terminate password handling in a trusted server, keep the CMS token out of browsers, and use a managed identity provider where appropriate.
 

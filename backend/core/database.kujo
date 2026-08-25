@@ -305,6 +305,17 @@ func ensure_baseline_data(db, cfg) {
 	if registration_seed["ok"] == false {
 		return registration_seed
 	}
+	social_sharing_seed := ensure_seed_row(
+		db,
+		"settings",
+		"setting_key",
+		"social_sharing",
+		"INSERT INTO settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
+		["social_sharing", to_json({"networks": ["x", "linkedin", "facebook", "email"], "content_types": ["article"]}), now_ts]
+	)
+	if social_sharing_seed["ok"] == false {
+		return social_sharing_seed
+	}
 
 	bootstrap_token := trim(to_string(dict_get_or(cfg, "api_token", "")))
 	if bootstrap_token != "" {
