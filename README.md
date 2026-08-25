@@ -18,7 +18,7 @@ The current codebase is intentionally backend-first. Active source lives under `
 
 - Server-first architecture with clear module ownership under `backend/`
 - Canonical runtime entrypoint at `backend/runtime/main.kujo`
-- Content-model coverage for content types, taxonomies/terms, entries, media, menus, plugins, themes, roles, API tokens, tenants, and workspaces
+- Content-model coverage for content types, taxonomies/terms, entries, media, menus, plugins, themes, users, roles, API tokens, tenants, and workspaces
 - Public delivery and discovery routes for `/.well-known/security.txt`, `/.well-known/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/sitemap-index.xml`, `/rss.xml`, `/health`, `/v1`, `/v1/contract`, and `/v1/openapi.json`
 - Auth-gated write routes, webhook delivery, background jobs, migration safety, and backup/restore
 - Release-gate automation covering contract, smoke, startup compatibility, integration, security, and optional performance checks
@@ -28,6 +28,7 @@ The current codebase is intentionally backend-first. Active source lives under `
 - Content types, taxonomies/terms, entries, media, menus
 - Plugin registry and webhook hooks
 - Theme registry and activation controls
+- Durable users and profiles with roles, account states, social links, derived credentials, and configurable open/approval/closed registration
 - Roles and API tokens with lifecycle controls
 - Tenants and workspaces with isolation controls
 - Public delivery and discovery routes (`/.well-known/security.txt`, `/.well-known/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/sitemap-index.xml`, `/rss.xml`, `/health`, `/v1`, `/v1/contract`, `/v1/openapi.json`)
@@ -134,6 +135,15 @@ Recommended env overrides:
 - `CMS_PLUGIN_HOOK_URL_DENYLIST`
 - `CMS_READINESS_CHECK_DB`
 - `CMS_METRICS_ENABLED`
+
+User APIs:
+
+- `GET|POST /v1/users` lists or creates user records.
+- `GET|PATCH /v1/users/:id` reads or updates profiles, roles, and account status.
+- `GET /v1/users/:id/credentials` is a bearer-protected server-to-server credential lookup; password hashes are never included in normal user responses.
+- `GET|PATCH /v1/settings/registration` reads or changes the `open`, `approval`, or `closed` signup policy and its default role.
+
+The backend stores portable PBKDF2 credential material supplied by the trusted authentication layer. Public applications should terminate password handling in a trusted server, keep the CMS token out of browsers, and use a managed identity provider where appropriate.
 
 ## Validation and Release Gate
 
