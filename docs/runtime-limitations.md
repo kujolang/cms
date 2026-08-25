@@ -10,27 +10,31 @@ This document tracks runtime or platform constraints that may need Kujo-level im
 - Practical workaround in this codebase: inline critical route logic in closures using runtime-native primitives (`db_query`, `db_execute`, `json_response`) where needed.
 - A runtime-level fix for closure symbol resolution would reduce boilerplate and prevent hidden production failures.
 
-2. In-memory rate limiting only
-- Current limiter state lives in-process (`ctx.state.rate`).
-- Multi-instance deployments need shared state (Redis/database/distributed limiter).
+2. HTTP requests are buffered before application body limits
+- The current Kujo HTTP server reads the full request body before CMS route code can enforce `CMS_MAX_BODY_BYTES`.
+- Production startup therefore requires `CMS_TRUSTED_INGRESS_LIMITS=true`; the trusted ingress must enforce body-size and connection/read-time limits before Kujo.
 
-3. No built-in async job/worker framework in this project baseline
-- Stage 1 avoids background processing.
-- Enterprise media processing, webhook retries, and scheduled publishing need a job system.
+3. Socket peer address is not exposed to CMS routes
+- The current request dictionary does not provide a reliable remote socket address, so application-local anonymous rate limiting collapses callers into one bucket.
+- Production startup requires `CMS_RATE_LIMIT_MODE=external`; enforce per-client limits at the trusted ingress without trusting client-supplied forwarding headers unless the ingress overwrites them.
 
-4. Request testing ergonomics are limited at contract-test level
+4. Background processing is shell-operated
+- The CMS includes leased SQLite workers for jobs and webhook retries, but they are operator-run processes rather than a first-class Kujo worker runtime.
+- Webhook delivery remains at-least-once across a crash after remote acceptance; receivers must deduplicate the stable webhook event ID.
+
+5. Request testing ergonomics are limited at contract-test level
 - Current tests cover utility and deterministic builders.
 - End-to-end HTTP integration testing tooling should be standardized for Kujo projects.
 
-5. Delivery formatting utilities are string-based
+6. Delivery formatting utilities are string-based
 - XML generation uses manual escaping and string assembly.
 - A dedicated XML/Atom helper package would improve safety and maintainability.
 
-6. Upload pipeline primitives are not yet modeled
+7. Upload pipeline primitives are not yet modeled
 - Stage 1 media route is metadata-oriented and does not handle multipart uploads.
 - Runtime/framework-level upload stream support may be needed for large media workloads.
 
-7. Nested module imports are not currently parser-compatible in `from` statements
+8. Nested module imports are not currently parser-compatible in `from` statements
 - `from backend/config/config import ...` and `from backend.config.config import ...` both fail parser validation.
 - This limits direct runtime activation of nested backend folder modules through `from` imports.
 - Practical workaround in this codebase: keep temporary root-level bridge modules while maintaining backend target-path files for migration mapping.

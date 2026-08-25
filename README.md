@@ -129,6 +129,7 @@ Recommended env overrides:
 - `CMS_DB_PATH`
 - `CMS_SITE_URL`
 - `CMS_CORS_ORIGIN`
+- `CMS_TRUSTED_INGRESS_LIMITS`
 - `CMS_RATE_LIMIT_MODE`
 - `CMS_IDEMPOTENCY_ENABLED`
 - `CMS_PLUGIN_HOOK_URL_ALLOWLIST`
@@ -137,6 +138,10 @@ Recommended env overrides:
 - `CMS_METRICS_ENABLED`
 
 Bootstrap authentication has no usable default credential. Generate a unique bootstrap token for initial provisioning, then disable it and use scoped database-backed API tokens. Administrative routes require dedicated capabilities: `admin.auth`, `admin.users`, `admin.settings`, and `admin.plugins`; `cms.write` alone does not grant administrative access.
+
+Security upgrade note: schema migration v9 deactivates all database-backed API tokens created by earlier schema versions because legacy environment-bootstrap credentials were not distinguishable from ordinary tokens after edits. Reissue the required scoped tokens after upgrading; the current environment bootstrap token remains available only when explicitly enabled and is never persisted.
+
+Production startup also requires `CMS_TRUSTED_INGRESS_LIMITS=true` and `CMS_RATE_LIMIT_MODE=external`. The trusted ingress must enforce request-body size, connection/read timeouts, and per-client rate limits before traffic reaches Kujo; the current interpreter buffers request bodies and does not expose the socket peer address to application routes.
 
 User APIs:
 
@@ -181,6 +186,8 @@ Webhook pipeline:
 bash scripts/process-webhook-outbox.sh
 bash scripts/replay-webhook-dead-letters.sh
 ```
+
+Webhook and background-job processors use renewable claim leases so overlapping workers cannot normally execute the same row. Webhook claim duration is automatically kept longer than the configured curl deadline. Receivers must still deduplicate by `X-CMS-Webhook-Id`, because a process can crash after a remote endpoint accepts a request but before local delivery state commits.
 
 Background jobs:
 

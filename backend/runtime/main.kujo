@@ -16,6 +16,17 @@ from backend.routes.users import register_user_routes
 
 cfg := load_config({})
 
+if to_lower(trim(to_string(dict_get_or(cfg, "environment", "development")))) == "production" {
+	if dict_get_or(cfg, "trusted_ingress_limits", false) != true {
+		print("[ERROR] Production requires CMS_TRUSTED_INGRESS_LIMITS=true and a trusted ingress that enforces request-body and read-time limits before Kujo.")
+		exit(1)
+	}
+	if to_lower(trim(to_string(dict_get_or(cfg, "rate_limit_mode", "memory")))) != "external" {
+		print("[ERROR] Production requires CMS_RATE_LIMIT_MODE=external until the Kujo runtime supplies a per-client socket address.")
+		exit(1)
+	}
+}
+
 if trim(to_string(dict_get_or(cfg, "api_token", ""))) == "change-me-in-production" {
 	env_name := to_lower(trim(to_string(dict_get_or(cfg, "environment", "development"))))
 	if env_name == "production" {
