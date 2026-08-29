@@ -16,23 +16,26 @@ usage() {
     '  get <namespace/name>                Inspect one ability.' \
     '  run <namespace/name> [input-json]   Execute an ability with a JSON input object.' \
     '  mcp-tools                           List MCP-ready tool descriptors.' \
+    '  webmcp                              Show the public WebMCP manifest.' \
+    '  webmcp-tools                        List public browser tool descriptors.' \
+    '  webmcp-index [limit] [offset]       Read the published-content index.' \
     '' \
     'Environment: CMS_BASE_URL and CMS_API_TOKEN.'
 }
-
-if [[ -z "${CMS_AI_TOKEN}" ]]; then
-  printf '%s\n' 'CMS_API_TOKEN is required.' >&2
-  exit 2
-fi
 
 request() {
   local method="$1"
   local path="$2"
   local body="${3:-}"
-  local args=(--fail-with-body --silent --show-error -X "${method}" -H 'Accept: application/json' -H "Authorization: Bearer ${CMS_AI_TOKEN}")
+  local args=(--fail-with-body --silent --show-error -X "${method}" -H 'Accept: application/json')
+  if [[ -n "${CMS_AI_TOKEN}" ]]; then args+=(-H "Authorization: Bearer ${CMS_AI_TOKEN}"); fi
   if [[ -n "${body}" ]]; then args+=(-H 'Content-Type: application/json' --data "${body}"); fi
   curl "${args[@]}" "${CMS_AI_BASE_URL%/}${path}"
   printf '\n'
+}
+
+require_token() {
+  if [[ -z "${CMS_AI_TOKEN}" ]]; then printf '%s\n' 'CMS_API_TOKEN is required for this command.' >&2; exit 2; fi
 }
 
 ability_path() {
@@ -44,25 +47,36 @@ ability_path() {
 command="${1:-help}"
 case "${command}" in
   help|-h|--help) usage ;;
-  status) request POST '/v1/abilities/ai/integration-status/run' '{"input":{}}' ;;
-  connectors) request GET '/v1/ai/connectors' ;;
-  categories) request GET '/v1/abilities/categories' ;;
+  status) require_token; request POST '/v1/abilities/ai/integration-status/run' '{"input":{}}' ;;
+  connectors) require_token; request GET '/v1/ai/connectors' ;;
+  categories) require_token; request GET '/v1/abilities/categories' ;;
   list)
+    require_token
     category="${2:-}"
     path='/v1/abilities'
     if [[ -n "${category}" ]]; then path="${path}?category=${category}"; fi
     request GET "${path}"
     ;;
   get)
+    require_token
     name="$(ability_path "${2:-}")"
     request GET "/v1/abilities/${name}"
     ;;
   run)
+    require_token
     name="$(ability_path "${2:-}")"
     input="${3:-}"
     if [[ -z "${input}" ]]; then input='{}'; fi
     request POST "/v1/abilities/${name}/run" "{\"input\":${input}}"
     ;;
-  mcp-tools) request GET '/v1/ai/mcp/tools' ;;
+  mcp-tools) require_token; request GET '/v1/ai/mcp/tools' ;;
+  webmcp) request GET '/v1/webmcp' ;;
+  webmcp-tools) request GET '/v1/webmcp/tools' ;;
+  webmcp-index)
+    limit="${2:-100}"
+    offset="${3:-0}"
+    if [[ ! "${limit}" =~ ^[0-9]+$ || ! "${offset}" =~ ^[0-9]+$ ]]; then usage >&2; exit 2; fi
+    request GET "/.well-known/kujo-site-index.json?limit=${limit}&offset=${offset}"
+    ;;
   *) usage >&2; exit 2 ;;
 esac

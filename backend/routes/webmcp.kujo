@@ -1,0 +1,314 @@
+from backend.core.database import db_query_safe
+from backend.core.http import api_json, api_text, fail, guard_request, ok, parse_bounded_int
+from backend.core.utils import dict_get_or
+
+func webmcp_enabled(cfg) {
+	value := dict_get_or(cfg, "webmcp_enabled", true)
+	return value == true || value == 1
+}
+
+func disabled(cfg) {
+	return fail(cfg, 404, "webmcp_disabled", "WebMCP is disabled for this CMS", {})
+}
+
+func clean_site_url(cfg) {
+	url := trim(to_string(dict_get_or(cfg, "site_url", "http://127.0.0.1:4200")))
+	if url == "" { url = "http://127.0.0.1:4200" }
+	if ends_with(url, "/") { url = substring(url, 0, len(url) - 1) }
+	return url
+}
+
+func boolish(value) {
+	if value == true || value == 1 { return true }
+	text := to_lower(trim(to_string(value)))
+	return text == "true" || text == "1" || text == "yes" || text == "on"
+}
+
+func entry_meta(row) {
+	meta := {}
+	raw := trim(to_string(dict_get_or(row, "meta_json", "")))
+	if raw == "" { return meta }
+	err := null
+	try { meta = parse_json(raw) } except e { err = e }
+	if type(err) != "null" || type(meta) != "dict" { return {} }
+	return meta
+}
+
+export webmcp_entry_allowed := func(row, for_search) {
+	if to_lower(trim(to_string(dict_get_or(row, "status", "")))) != "published" { return false }
+	meta := entry_meta(row)
+	if boolish(dict_get_or(meta, "webmcp_exclude", false)) { return false }
+	webmcp := dict_get_or(meta, "webmcp", {})
+	if type(webmcp) == "dict" && boolish(dict_get_or(webmcp, "exclude", false)) { return false }
+	if for_search == true {
+		if boolish(dict_get_or(meta, "search_exclude", false)) { return false }
+		if type(webmcp) == "dict" && boolish(dict_get_or(webmcp, "search_exclude", false)) { return false }
+	}
+	return true
+}
+
+func bounded_plain_text(value, max_chars) {
+	text := to_string(value)
+	text = regex_replace(text, "<[^>]*>", " ")
+	text = regex_replace(text, "[`#*_~>|]", " ")
+	text = regex_replace(text, "\\[([^]]+)\\]\\([^)]*\\)", "$1")
+	text = regex_replace(text, "[\\r\\n\\t ]+", " ")
+	text = trim(text)
+	if len(text) > max_chars { text = substring(text, 0, max_chars) }
+	return text
+}
+
+func entry_url(site_url, row) {
+	return clean_site_url({"site_url": site_url}) + "/" + trim(to_string(dict_get_or(row, "content_type_key", "entry"))) + "/" + trim(to_string(dict_get_or(row, "slug", "")))
+}
+
+export public_content_record := func(row, taxonomies, site_url, summary_limit) {
+	meta := entry_meta(row)
+	webmcp := dict_get_or(meta, "webmcp", {})
+	searchable := !boolish(dict_get_or(meta, "search_exclude", false))
+	if type(webmcp) == "dict" && boolish(dict_get_or(webmcp, "search_exclude", false)) { searchable = false }
+	type_key := trim(to_string(dict_get_or(row, "content_type_key", "entry")))
+	slug := trim(to_string(dict_get_or(row, "slug", "")))
+	description := bounded_plain_text(dict_get_or(row, "excerpt", ""), 320)
+	summary_source := dict_get_or(row, "body", "")
+	if trim(to_string(summary_source)) == "" { summary_source = description }
+	record := {
+		"id": type_key + ":" + slug,
+		"entry_id": dict_get_or(row, "id", 0),
+		"type": type_key,
+		"slug": slug,
+		"url": entry_url(site_url, row),
+		"title": bounded_plain_text(dict_get_or(row, "title", "Untitled"), 160),
+		"description": description,
+		"summary": bounded_plain_text(summary_source, summary_limit),
+		"language": bounded_plain_text(dict_get_or(meta, "lang", "en"), 32),
+		"searchable": searchable,
+		"taxonomies": taxonomies
+	}
+	published := trim(to_string(dict_get_or(row, "published_at", "")))
+	updated := trim(to_string(dict_get_or(row, "updated_at", "")))
+	if published != "" { record["published"] = published }
+	if updated != "" { record["updated"] = updated }
+	return record
+}
+
+export webmcp_tool_registry := func() {
+	annotations := {"readOnlyHint": true, "untrustedContentHint": true}
+	root := {"type": "object", "additionalProperties": false}
+	return [
+		{"name": "get_site_info", "title": "Get site information", "description": "Describe this public CMS site, its navigation, and available content types.", "inputSchema": {"type": root["type"], "properties": {}, "additionalProperties": root["additionalProperties"]}, "annotations": annotations},
+		{"name": "search_site", "title": "Search site", "description": "Search concise published CMS records. Use a returned ID or URL with get_content.", "inputSchema": {"type": "object", "properties": {"query": {"type": "string", "minLength": 1, "maxLength": 200}, "limit": {"type": "integer", "minimum": 1, "maximum": 10}, "content_type": {"type": "string", "minLength": 1, "maxLength": 80}}, "required": ["query"], "additionalProperties": false}, "annotations": annotations},
+		{"name": "list_content", "title": "List content", "description": "List published records from one discovered type, optionally filtered by taxonomy labels.", "inputSchema": {"type": "object", "properties": {"type": {"type": "string", "minLength": 1, "maxLength": 80}, "taxonomy": {"type": "object", "maxProperties": 3, "additionalProperties": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"type": "string", "minLength": 1, "maxLength": 128}}}, "limit": {"type": "integer", "minimum": 1, "maximum": 10}}, "required": ["type"], "additionalProperties": false}, "annotations": annotations},
+		{"name": "get_content", "title": "Get content", "description": "Retrieve one published CMS record by exact Kujo ID or same-origin URL. Returns no HTML.", "inputSchema": {"type": "object", "properties": {"id": {"type": "string", "minLength": 1, "maxLength": 256}, "url": {"type": "string", "minLength": 1, "maxLength": 2048}}, "oneOf": [{"required": ["id"]}, {"required": ["url"]}], "additionalProperties": false}, "annotations": annotations}
+	]
+}
+
+export build_webmcp_manifest := func(cfg) {
+	base := clean_site_url(cfg)
+	return {
+		"schema": "kujo-cms-webmcp/v1",
+		"enabled": webmcp_enabled(cfg),
+		"automatic": true,
+		"runtime": base + "/assets/js/kujo-webmcp.js",
+		"api": base + "/v1/webmcp",
+		"site_index": base + "/.well-known/kujo-site-index.json",
+		"script_tag": "<script src=\"/assets/js/kujo-webmcp.js\" data-kujo-webmcp data-kujo-webmcp-api=\"/v1/webmcp/\" defer></script>",
+		"tools": webmcp_tool_registry(),
+		"extension": {"registry": "backend/routes/webmcp.kujo:webmcp_tool_registry", "contract": "Add a read-only public descriptor and a bounded published-content handler; authenticated or mutating operations belong in the Abilities API."},
+		"security": {"published_only": true, "read_only": true, "same_origin": true, "untrusted_content": true, "credentials_exposed": false}
+	}
+}
+
+export build_webmcp_runtime_source := func() {
+	return join([
+		"(()=>{'use strict';const m=document.modelContext,s=document.currentScript;if(!m||typeof m.registerTool!=='function'||!s)return;const u=new URL(s.dataset.kujoWebmcpApi||'/v1/webmcp/',document.baseURI);if(u.origin!==location.origin)return;if(!u.pathname.endsWith('/'))u.pathname+='/';const E=x=>{throw Error('Kujo WebMCP: '+x)},O=x=>x&&typeof x==='object'&&!Array.isArray(x)?x:{},K=(x,a)=>{for(const k of Object.keys(x))if(!a.includes(k))E('unknown argument '+k)},L=x=>{if(x===undefined)return 5;if(!Number.isInteger(x)||x<1||x>10)E('limit must be 1 to 10');return x},S=c=>c&&c.signal instanceof AbortSignal?c.signal:undefined;",
+		"const F=async(p,q,c)=>{const x=new URL(p,u);for(const[k,v]of Object.entries(q||{}))if(v!==undefined)x.searchParams.set(k,typeof v==='string'?v:JSON.stringify(v));const r=await fetch(x.href,{headers:{Accept:'application/json'},credentials:'same-origin',signal:S(c)});const a=await r.json();if(!r.ok||!a||a.ok!==true||!a.data)E(a&&a.error&&a.error.message||'CMS request failed');return a.data};",
+		"async function I(x,c){x=O(x);K(x,[]);return F('site',{},c)}async function H(x,c){x=O(x);K(x,['query','limit','content_type']);if(typeof x.query!=='string'||x.query.trim().length<1||x.query.trim().length>200)E('query must contain 1 to 200 characters');return F('search',{q:x.query.trim(),limit:L(x.limit),content_type:x.content_type},c)}async function B(x,c){x=O(x);K(x,['type','taxonomy','limit']);if(typeof x.type!=='string'||!x.type.trim())E('type is required');return F('content',{type:x.type.trim(),taxonomy:x.taxonomy,limit:L(x.limit)},c)}async function G(x,c){x=O(x);K(x,['id','url']);const d=typeof x.id==='string'&&x.id.trim(),v=typeof x.url==='string'&&x.url.trim();if(!!d===!!v)E('provide exactly one of id or url');if(v){const y=new URL(x.url,location.href);if(y.origin!==location.origin)E('url must be same-origin')}return F('record',{id:d||undefined,url:v||undefined},c)}",
+		"const a={readOnlyHint:true,untrustedContentHint:true},e={type:'object',additionalProperties:false},t=[{name:'get_site_info',title:'Get site information',description:'Describe this public CMS site, its navigation, and available content types.',inputSchema:{...e,properties:{}},execute:I,annotations:a},{name:'search_site',title:'Search site',description:'Search concise published CMS records. Use a returned ID or URL with get_content.',inputSchema:{...e,properties:{query:{type:'string',minLength:1,maxLength:200},limit:{type:'integer',minimum:1,maximum:10},content_type:{type:'string',minLength:1,maxLength:80}},required:['query']},execute:H,annotations:a},{name:'list_content',title:'List content',description:'List published records from one discovered type, optionally filtered by taxonomy labels.',inputSchema:{...e,properties:{type:{type:'string',minLength:1,maxLength:80},taxonomy:{type:'object',maxProperties:3,additionalProperties:{type:'array',minItems:1,maxItems:5,items:{type:'string',minLength:1,maxLength:128}}},limit:{type:'integer',minimum:1,maximum:10}},required:['type']},execute:B,annotations:a},{name:'get_content',title:'Get content',description:'Retrieve one published CMS record by exact Kujo ID or same-origin URL. Returns no HTML.',inputSchema:{...e,properties:{id:{type:'string',minLength:1,maxLength:256},url:{type:'string',minLength:1,maxLength:2048}},oneOf:[{required:['id']},{required:['url']}]},execute:G,annotations:a}],r=new AbortController;addEventListener('pagehide',()=>r.abort(),{once:true});Promise.all(t.map(x=>m.registerTool(x,{signal:r.signal}))).catch(()=>{})})();",
+		""
+	], "\n")
+}
+
+func load_taxonomies(db, entry_ids) {
+	groups := {}
+	if len(entry_ids) == 0 { return groups }
+	placeholders := ""
+	params := []
+	for entry_id in entry_ids {
+		if placeholders != "" { placeholders = placeholders + "," }
+		placeholders = placeholders + "?"
+		params = push(params, entry_id)
+	}
+	result := db_query_safe(db, "SELECT et.entry_id, tx.taxonomy_key, tt.name FROM entry_terms et INNER JOIN taxonomy_terms tt ON tt.id = et.term_id INNER JOIN taxonomies tx ON tx.id = tt.taxonomy_id WHERE et.entry_id IN (" + placeholders + ") ORDER BY et.entry_id ASC, tx.taxonomy_key ASC, tt.name ASC", params)
+	if result["ok"] == false { return groups }
+	for row in result["rows"] {
+		entry_key := to_string(row["entry_id"])
+		entry_groups := dict_get_or(groups, entry_key, {})
+		taxonomy_key := to_string(row["taxonomy_key"])
+		labels := dict_get_or(entry_groups, taxonomy_key, [])
+		labels = push(labels, bounded_plain_text(row["name"], 128))
+		entry_groups[taxonomy_key] = labels
+		groups[entry_key] = entry_groups
+	}
+	return groups
+}
+
+func load_public_records(ctx, max_scan) {
+	result := db_query_safe(ctx["db"], "SELECT id, content_type_key, title, slug, status, excerpt, body, meta_json, published_at, updated_at FROM entries WHERE status = 'published' AND slug IS NOT NULL AND TRIM(slug) != '' ORDER BY content_type_key ASC, slug ASC, id ASC LIMIT ?", [max_scan + 1])
+	if result["ok"] == false { return {"ok": false, "records": [], "truncated": false} }
+	rows := result["rows"]
+	truncated := len(rows) > max_scan
+	if truncated {
+		bounded_rows := []
+		row_index := 0
+		for row in rows { if row_index < max_scan { bounded_rows = push(bounded_rows, row) }; row_index = row_index + 1 }
+		rows = bounded_rows
+	}
+	entry_ids := []
+	for row in rows { if webmcp_entry_allowed(row, false) { entry_ids = push(entry_ids, row["id"]) } }
+	taxonomies := load_taxonomies(ctx["db"], entry_ids)
+	records := []
+	for row in rows {
+		if webmcp_entry_allowed(row, false) == false { continue }
+		groups := dict_get_or(taxonomies, to_string(row["id"]), {})
+		records = push(records, public_content_record(row, groups, ctx["cfg"]["site_url"], ctx["cfg"]["webmcp_summary_max_chars"]))
+	}
+	return {"ok": true, "records": records, "truncated": truncated}
+}
+
+func content_types_from(records, cfg) {
+	counts := {}
+	taxonomies := {}
+	for record in records {
+		type_key := record["type"]
+		counts[type_key] = to_int(dict_get_or(counts, type_key, 0)) + 1
+		type_taxonomies := dict_get_or(taxonomies, type_key, {})
+		for taxonomy_key in keys(record["taxonomies"]) { type_taxonomies[taxonomy_key] = true }
+		taxonomies[type_key] = type_taxonomies
+	}
+	labels := {}
+	label_rows := db_query_safe(cfg["db"], "SELECT type_key, label FROM content_types", [])
+	if label_rows["ok"] == true { for row in label_rows["rows"] { labels[row["type_key"]] = row["label"] } }
+	items := []
+	for type_key in sort(keys(counts)) {
+		items = push(items, {"name": type_key, "title": bounded_plain_text(dict_get_or(labels, type_key, type_key), 160), "count": counts[type_key], "taxonomies": sort(keys(dict_get_or(taxonomies, type_key, {}))), "listing_url": clean_site_url(cfg["cfg"]) + "/" + type_key + "/"})
+	}
+	return items
+}
+
+func filter_taxonomies(record, requested) {
+	if type(requested) != "dict" { return true }
+	for taxonomy_key in keys(requested) {
+		wanted := requested[taxonomy_key]
+		if type(wanted) != "array" || len(wanted) < 1 || len(wanted) > 5 { return false }
+		available := dict_get_or(record["taxonomies"], taxonomy_key, [])
+		matched := false
+		for wanted_label in wanted {
+			for available_label in available { if to_lower(trim(to_string(wanted_label))) == to_lower(trim(to_string(available_label))) { matched = true } }
+		}
+		if matched == false { return false }
+	}
+	return true
+}
+
+func concise_record(record) {
+	return {"id": record["id"], "type": record["type"], "title": record["title"], "description": bounded_plain_text(record["description"], 120), "url": record["url"]}
+}
+
+func site_payload(ctx, loaded) {
+	content_types := content_types_from(loaded["records"], {"db": ctx["db"], "cfg": ctx["cfg"]})
+	navigation := []
+	for item in content_types { navigation = push(navigation, {"label": item["title"], "url": item["listing_url"]}) }
+	return {"schema": "kujo-cms-webmcp/v1", "site": {"title": ctx["cfg"]["service_name"], "tagline": "Published content from Kujo CMS", "url": clean_site_url(ctx["cfg"]), "language": "en"}, "navigation": navigation, "content_types": content_types, "truncated": loaded["truncated"]}
+}
+
+func public_guard(req, ctx) {
+	guard := guard_request(req, ctx, false)
+	if guard["ok"] == false { return guard }
+	if webmcp_enabled(ctx["cfg"]) == false { return {"ok": false, "response": disabled(ctx["cfg"])} }
+	return guard
+}
+
+export register_webmcp_routes := func(server, ctx) {
+	server = server.route("GET", "/.well-known/kujo-webmcp.json", func(req) { guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }; return api_json(200, build_webmcp_manifest(ctx["cfg"]), ctx["cfg"]) })
+	server = server.route("GET", "/assets/js/kujo-webmcp.js", func(req) {
+		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		response := api_text(200, build_webmcp_runtime_source(), ctx["cfg"])
+		response = set_header(response, "Content-Type", "application/javascript; charset=utf-8")
+		response = set_header(response, "Cache-Control", "public, max-age=3600")
+		return response
+	})
+	server = server.route("GET", "/v1/webmcp", func(req) { guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }; return ok(ctx["cfg"], build_webmcp_manifest(ctx["cfg"])) })
+	server = server.route("GET", "/v1/webmcp/tools", func(req) { guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }; tools := webmcp_tool_registry(); return ok(ctx["cfg"], {"tools": tools, "count": len(tools), "extension_registry": "backend/routes/webmcp.kujo:webmcp_tool_registry"}) })
+	server = server.route("GET", "/v1/webmcp/site", func(req) {
+		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		loaded := load_public_records(ctx, ctx["cfg"]["webmcp_max_scan_records"])
+		if loaded["ok"] == false { return fail(ctx["cfg"], 500, "webmcp_query_failed", "Failed to load public WebMCP content", {}) }
+		return ok(ctx["cfg"], site_payload(ctx, loaded))
+	})
+	server = server.route("GET", "/v1/webmcp/search", func(req) {
+		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		query := dict_get_or(req, "query", {})
+		search := trim(to_string(dict_get_or(query, "q", "")))
+		if len(search) < 1 || len(search) > 200 { return fail(ctx["cfg"], 400, "invalid_query", "q must contain 1 to 200 characters", {}) }
+		limit_result := parse_bounded_int(dict_get_or(query, "limit", "5"), "limit", 1, 10)
+		if limit_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_limit", limit_result["error"], {}) }
+		content_type := trim(to_string(dict_get_or(query, "content_type", "")))
+		loaded := load_public_records(ctx, ctx["cfg"]["webmcp_max_scan_records"])
+		if loaded["ok"] == false { return fail(ctx["cfg"], 500, "webmcp_query_failed", "Failed to search public WebMCP content", {}) }
+		needle := to_lower(search)
+		results := []
+		total_matches := 0
+		for record in loaded["records"] {
+			if record["searchable"] == false || (content_type != "" && record["type"] != content_type) { continue }
+			haystack := to_lower(record["title"] + " " + record["description"] + " " + record["summary"] + " " + to_json(record["taxonomies"]))
+			if contains(haystack, needle) == 0 { continue }
+			total_matches = total_matches + 1
+			if len(results) < limit_result["value"] { item := concise_record(record); score := 50; if to_lower(record["title"]) == needle { score = 100 }; item["score"] = score; results = push(results, item) }
+		}
+		return ok(ctx["cfg"], {"query": search, "results": results, "returned_count": len(results), "total_count": total_matches, "has_more": total_matches > len(results), "truncated": loaded["truncated"]})
+	})
+	server = server.route("GET", "/v1/webmcp/content", func(req) {
+		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		query := dict_get_or(req, "query", {})
+		type_key := trim(to_string(dict_get_or(query, "type", "")))
+		if type_key == "" || len(type_key) > 80 { return fail(ctx["cfg"], 400, "invalid_type", "type is required and must be 80 characters or fewer", {}) }
+		limit_result := parse_bounded_int(dict_get_or(query, "limit", "5"), "limit", 1, 10)
+		if limit_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_limit", limit_result["error"], {}) }
+		taxonomy_filter := {}
+		taxonomy_raw := trim(to_string(dict_get_or(query, "taxonomy", "")))
+		if taxonomy_raw != "" { err := null; try { taxonomy_filter = parse_json(taxonomy_raw) } except e { err = e }; if type(err) != "null" || type(taxonomy_filter) != "dict" || len(keys(taxonomy_filter)) > 3 { return fail(ctx["cfg"], 400, "invalid_taxonomy", "taxonomy must be an object with at most three filters", {}) } }
+		loaded := load_public_records(ctx, ctx["cfg"]["webmcp_max_scan_records"])
+		if loaded["ok"] == false { return fail(ctx["cfg"], 500, "webmcp_query_failed", "Failed to list public WebMCP content", {}) }
+		items := []; total := 0
+		for record in loaded["records"] { if record["type"] == type_key && filter_taxonomies(record, taxonomy_filter) { total = total + 1; if len(items) < limit_result["value"] { items = push(items, concise_record(record)) } } }
+		return ok(ctx["cfg"], {"type": type_key, "taxonomy": taxonomy_filter, "items": items, "returned_count": len(items), "total_count": total, "has_more": total > len(items), "truncated": loaded["truncated"]})
+	})
+	server = server.route("GET", "/v1/webmcp/record", func(req) {
+		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		query := dict_get_or(req, "query", {}); id := trim(to_string(dict_get_or(query, "id", ""))); url := trim(to_string(dict_get_or(query, "url", "")))
+		if (id == "" && url == "") || (id != "" && url != "") { return fail(ctx["cfg"], 400, "invalid_selector", "Provide exactly one of id or url", {}) }
+		if len(id) > 256 || len(url) > 2048 { return fail(ctx["cfg"], 400, "invalid_selector", "Selector exceeds its maximum length", {}) }
+		loaded := load_public_records(ctx, ctx["cfg"]["webmcp_max_scan_records"])
+		if loaded["ok"] == false { return fail(ctx["cfg"], 500, "webmcp_query_failed", "Failed to load public WebMCP content", {}) }
+		for record in loaded["records"] { if (id != "" && record["id"] == id) || (url != "" && record["url"] == url) { return ok(ctx["cfg"], record) } }
+		return fail(ctx["cfg"], 404, "webmcp_record_not_found", "Published content record not found", {})
+	})
+	server = server.route("GET", "/.well-known/kujo-site-index.json", func(req) {
+		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		query := dict_get_or(req, "query", {})
+		limit_result := parse_bounded_int(dict_get_or(query, "limit", "100"), "limit", 1, ctx["cfg"]["webmcp_index_page_size_max"])
+		offset_result := parse_bounded_int(dict_get_or(query, "offset", "0"), "offset", 0, 100000000)
+		if limit_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_limit", limit_result["error"], {}) }
+		if offset_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_offset", offset_result["error"], {}) }
+		loaded := load_public_records(ctx, ctx["cfg"]["webmcp_max_scan_records"])
+		if loaded["ok"] == false { return fail(ctx["cfg"], 500, "webmcp_query_failed", "Failed to build public WebMCP index", {}) }
+		total := len(loaded["records"]); start := offset_result["value"]; finish := start + limit_result["value"]; if finish > total { finish = total }
+		page_records := []; record_index := 0
+		for record in loaded["records"] { if record_index >= start && record_index < finish { page_records = push(page_records, record) }; record_index = record_index + 1 }
+		next_offset := null; if finish < total { next_offset = finish }
+		doc := site_payload(ctx, loaded); doc["schema"] = "kujo-cms-site-index/v1"; doc["generated_by"] = {"name": "kujo-cms", "version": ctx["cfg"]["service_version"]}; doc["items"] = page_records; doc["pagination"] = {"limit": limit_result["value"], "offset": start, "count": len(page_records), "total": total, "has_more": finish < total, "next_offset": next_offset}
+		return api_json(200, doc, ctx["cfg"])
+	})
+	return server
+}

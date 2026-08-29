@@ -45,6 +45,10 @@ export load_config_backend_impl := func(overrides) {
 		"background_job_max_attempts": parse_positive_int_env("CMS_BACKGROUND_JOB_MAX_ATTEMPTS", 5),
 		"background_job_retry_base_sec": parse_positive_int_env("CMS_BACKGROUND_JOB_RETRY_BASE_SEC", 20),
 		"background_job_process_limit": parse_positive_int_env("CMS_BACKGROUND_JOB_PROCESS_LIMIT", 50),
+		"webmcp_enabled": bool_or(env_or("CMS_WEBMCP_ENABLED", "true"), true),
+		"webmcp_max_scan_records": parse_positive_int_env("CMS_WEBMCP_MAX_SCAN_RECORDS", 10000),
+		"webmcp_index_page_size_max": parse_positive_int_env("CMS_WEBMCP_INDEX_PAGE_SIZE_MAX", 500),
+		"webmcp_summary_max_chars": parse_positive_int_env("CMS_WEBMCP_SUMMARY_MAX_CHARS", 600),
 		"ai_sdk_endpoint": env_or("CMS_AI_SDK_ENDPOINT", ""),
 		"agents_sdk_endpoint": env_or("CMS_AGENTS_SDK_ENDPOINT", ""),
 		"mcp_endpoint": env_or("CMS_MCP_ENDPOINT", ""),
@@ -107,6 +111,10 @@ export load_config_backend_impl := func(overrides) {
 			"background_job_max_attempts",
 			"background_job_retry_base_sec",
 			"background_job_process_limit",
+			"webmcp_enabled",
+			"webmcp_max_scan_records",
+			"webmcp_index_page_size_max",
+			"webmcp_summary_max_chars",
 			"ai_sdk_endpoint",
 			"agents_sdk_endpoint",
 			"mcp_endpoint",
@@ -204,6 +212,13 @@ export load_config_backend_impl := func(overrides) {
 	if dict_get_or(cfg, "background_job_process_limit", 0) < 1 {
 		cfg["background_job_process_limit"] := 50
 	}
+	cfg["webmcp_enabled"] := bool_or(dict_get_or(cfg, "webmcp_enabled", true), true)
+	if dict_get_or(cfg, "webmcp_max_scan_records", 0) < 100 { cfg["webmcp_max_scan_records"] := 100 }
+	if cfg["webmcp_max_scan_records"] > 50000 { cfg["webmcp_max_scan_records"] := 50000 }
+	if dict_get_or(cfg, "webmcp_index_page_size_max", 0) < 10 { cfg["webmcp_index_page_size_max"] := 10 }
+	if cfg["webmcp_index_page_size_max"] > 1000 { cfg["webmcp_index_page_size_max"] := 1000 }
+	if dict_get_or(cfg, "webmcp_summary_max_chars", 0) < 100 { cfg["webmcp_summary_max_chars"] := 100 }
+	if cfg["webmcp_summary_max_chars"] > 2000 { cfg["webmcp_summary_max_chars"] := 2000 }
 
 	cfg["allow_bootstrap_token"] := bool_or(dict_get_or(cfg, "allow_bootstrap_token", true), true)
 	cfg["enforce_bootstrap_token_rotation"] := bool_or(dict_get_or(cfg, "enforce_bootstrap_token_rotation", false), false)

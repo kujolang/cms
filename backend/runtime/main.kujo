@@ -14,6 +14,7 @@ from backend.routes.delivery import register_delivery_routes
 from backend.routes.tenancy import register_tenancy_routes
 from backend.routes.users import register_user_routes
 from backend.routes.abilities import register_ability_routes
+from backend.routes.webmcp import register_webmcp_routes
 
 cfg := load_config({})
 
@@ -81,6 +82,9 @@ func register_options(server, cfg) {
 		"/llms.txt",
 		"/.well-known/llms.txt",
 		"/.well-known/security.txt",
+		"/.well-known/kujo-webmcp.json",
+		"/.well-known/kujo-site-index.json",
+		"/assets/js/kujo-webmcp.js",
 		"/sitemap.xml",
 		"/sitemap-index.xml",
 		"/sitemaps/content-types.xml",
@@ -99,6 +103,12 @@ func register_options(server, cfg) {
 		"/v1/abilities/:namespace/:ability/run",
 		"/v1/ai/connectors",
 		"/v1/ai/mcp/tools",
+		"/v1/webmcp",
+		"/v1/webmcp/tools",
+		"/v1/webmcp/site",
+		"/v1/webmcp/search",
+		"/v1/webmcp/content",
+		"/v1/webmcp/record",
 		"/v1/content-types",
 		"/v1/content-types/:id",
 		"/v1/taxonomies",
@@ -233,6 +243,15 @@ func build_api_contract(cfg, schema_version) {
 			"/v1/abilities/:namespace/:ability/run": {"post": {"x-auth": "bearer:ability.permission"}},
 			"/v1/ai/connectors": {"get": {"x-auth": "bearer:admin.settings"}},
 			"/v1/ai/mcp/tools": {"get": {"x-auth": "bearer:cms.read"}},
+			"/.well-known/kujo-webmcp.json": {"get": {"summary": "WebMCP discovery manifest", "x-auth": "public"}},
+			"/.well-known/kujo-site-index.json": {"get": {"summary": "Paginated published-content index", "x-auth": "public", "x-query": ["limit", "offset"]}},
+			"/assets/js/kujo-webmcp.js": {"get": {"summary": "Same-origin WebMCP browser adapter", "x-auth": "public"}},
+			"/v1/webmcp": {"get": {"summary": "WebMCP manifest API", "x-auth": "public"}},
+			"/v1/webmcp/tools": {"get": {"summary": "WebMCP tool descriptors", "x-auth": "public"}},
+			"/v1/webmcp/site": {"get": {"summary": "WebMCP site information", "x-auth": "public"}},
+			"/v1/webmcp/search": {"get": {"summary": "Search published WebMCP content", "x-auth": "public", "x-query": ["q", "limit", "content_type"]}},
+			"/v1/webmcp/content": {"get": {"summary": "List published WebMCP content", "x-auth": "public", "x-query": ["type", "taxonomy", "limit"]}},
+			"/v1/webmcp/record": {"get": {"summary": "Read one published WebMCP record", "x-auth": "public", "x-query": ["id", "url"]}},
 			"/v1/tenants": {"get": {"x-auth": "bearer", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}},
 			"/v1/tenants/update": {"post": {"x-auth": "bearer"}},
 			"/v1/tenants/disable": {"post": {"x-auth": "bearer"}},
@@ -344,7 +363,8 @@ server = server.route("GET", "/", func(req) {
 			"plugins",
 			"themes",
 			"authz",
-			"tenancy"
+			"tenancy",
+			"webmcp"
 		],
 		"docs": {
 			"health": "GET /health",
@@ -360,7 +380,9 @@ server = server.route("GET", "/", func(req) {
 			"rss_content_type": "GET /rss/content-type/:content_type_key",
 			"rss_taxonomy": "GET /rss/taxonomy/:taxonomy_key/:term_slug",
 			"llms": "GET /llms.txt",
-			"security_txt": "GET /.well-known/security.txt"
+			"security_txt": "GET /.well-known/security.txt",
+			"webmcp_manifest": "GET /.well-known/kujo-webmcp.json",
+			"webmcp_runtime": "GET /assets/js/kujo-webmcp.js"
 		}
 	})
 })
@@ -544,6 +566,9 @@ server = server.route("GET", "/v1", func(req) {
 			"ability_categories": "/v1/abilities/categories",
 			"ai_connectors": "/v1/ai/connectors",
 			"mcp_tools": "/v1/ai/mcp/tools",
+			"webmcp": "/v1/webmcp",
+			"webmcp_tools": "/v1/webmcp/tools",
+			"webmcp_site_index": "/.well-known/kujo-site-index.json",
 			"tenants": "/v1/tenants",
 			"tenant_update": "/v1/tenants/update",
 			"tenant_disable": "/v1/tenants/disable",
@@ -557,7 +582,8 @@ server = server.route("GET", "/v1", func(req) {
 		"extension_points": {
 			"plugin_hooks": "/v1/plugins/:id/hooks",
 			"theme_activation": "/v1/themes/:id/activate",
-			"entry_taxonomy_assignment": "/v1/entries/:id/terms"
+			"entry_taxonomy_assignment": "/v1/entries/:id/terms",
+			"webmcp_tool_registry": "backend/routes/webmcp.kujo:webmcp_tool_registry"
 		}
 	})
 })
@@ -611,6 +637,7 @@ server = register_content_type_routes(server, ctx)
 server = register_taxonomy_routes(server, ctx)
 server = register_entry_routes(server, ctx)
 server = register_delivery_routes(server, ctx)
+server = register_webmcp_routes(server, ctx)
 server = register_media_routes(server, ctx)
 server = register_menu_routes(server, ctx)
 server = register_plugin_routes(server, ctx)
@@ -630,7 +657,7 @@ print_lines([
 	"Schema version: " + to_string(schema_version),
 	"Readiness DB checks: " + to_string(dict_get_or(cfg, "readiness_check_db", true)),
 	"Structured logs: " + to_string(dict_get_or(cfg, "structured_logs", true)),
-	"Modules: delivery, content_types, taxonomies, entries, media, menus, plugins, themes, authz, users, tenancy, abilities, ai_connectors",
+	"Modules: delivery, webmcp, content_types, taxonomies, entries, media, menus, plugins, themes, authz, users, tenancy, abilities, ai_connectors",
 	"Press Ctrl+C to stop"
 ])
 
