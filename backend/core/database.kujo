@@ -312,7 +312,7 @@ func ensure_baseline_data(db, cfg) {
 		"setting_key",
 		"social_sharing",
 		"INSERT INTO settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?)",
-		["social_sharing", to_json({"networks": ["x", "linkedin", "facebook", "email"], "content_types": ["article"]}), now_ts]
+		["social_sharing", to_json({"networks": ["x", "linkedin", "facebook", "bluesky", "reddit", "whatsapp", "email"], "content_types": ["article"], "accounts": {"x": "", "bluesky": ""}}), now_ts]
 	)
 	if social_sharing_seed["ok"] == false {
 		return social_sharing_seed
