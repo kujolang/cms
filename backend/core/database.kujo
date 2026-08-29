@@ -95,7 +95,6 @@ func ensure_schema(db) {
 		"CREATE INDEX IF NOT EXISTS idx_webhook_outbox_status_next_attempt ON webhook_outbox(status, next_attempt_at)",
 		"CREATE INDEX IF NOT EXISTS idx_webhook_outbox_event_type ON webhook_outbox(event_type)",
 		"CREATE INDEX IF NOT EXISTS idx_webhook_outbox_hook_id ON webhook_outbox(hook_id)",
-		"CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_outbox_source_hook_event ON webhook_outbox(source_audit_id, hook_id, event_type) WHERE source_audit_id IS NOT NULL",
 		"CREATE TABLE IF NOT EXISTS webhook_dead_letters (id INTEGER PRIMARY KEY AUTOINCREMENT, outbox_id INTEGER NOT NULL, hook_id INTEGER NOT NULL, event_id TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL, handler_url TEXT NOT NULL, shared_secret TEXT NOT NULL, attempt_count INTEGER NOT NULL, last_error TEXT, last_status_code INTEGER, failed_at TEXT NOT NULL, created_at TEXT NOT NULL, FOREIGN KEY(outbox_id) REFERENCES webhook_outbox(id) ON DELETE CASCADE, FOREIGN KEY(hook_id) REFERENCES plugin_hooks(id) ON DELETE CASCADE)",
 		"CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_dead_letters_outbox_id ON webhook_dead_letters(outbox_id)",
 		"CREATE INDEX IF NOT EXISTS idx_webhook_dead_letters_failed_at ON webhook_dead_letters(failed_at)",
