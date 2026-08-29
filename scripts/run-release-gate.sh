@@ -57,6 +57,9 @@ run_step() {
 
 cd "${ROOT_DIR}"
 
+run_step "Brand isolation" \
+	bash scripts/check-brand-isolation.sh
+
 run_step "Contract tests" \
 	"${KUJO_BIN_PATH}" test-run tests/cms_contract_tests.kujo
 

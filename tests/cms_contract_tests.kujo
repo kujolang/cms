@@ -11,6 +11,35 @@ test_setup {
 	from backend.routes.plugins import list_webhook_event_schemas, validate_webhook_event_payload, webhook_schema_for
 	from backend.routes.abilities import ability_categories, ability_registry, connector_registry, find_ability, mcp_tool_descriptors
 	from backend.routes.webmcp import build_webmcp_manifest, build_webmcp_runtime_source, public_content_record, webmcp_entry_allowed, webmcp_tool_registry
+	from backend.routes.extensions import extension_contracts, validate_plugin_manifest, validate_theme_manifest
+}
+
+test "portable theme manifests are strict, distributable, and secret-free" {
+	manifest := {"schema": "kujo.theme/v1", "key": "field_notes", "name": "Field Notes", "version": "1.2.0", "description": "Portable frontend", "license": "MIT", "author": {"name": "Kujo", "url": "https://kujo.dev"}, "compatibility": {"cms": ">=1.0.0"}, "entrypoints": {"web": "app/layout.tsx"}, "templates": {"single": "app/articles/page.tsx"}, "assets": {"styles": ["app/globals.css"], "scripts": [], "images": []}, "settings_schema": {"type": "object", "additionalProperties": false}, "defaults": {}, "supports": ["menus", "webmcp"], "content_types": ["article"], "menu_locations": ["header"], "distribution": {"homepage": "https://kujo.dev", "repository": "https://github.com/kujolang/cms", "package_url": "", "integrity": ""}}
+	result := validate_theme_manifest(manifest)
+	assert_equal(result["ok"], true)
+	assert_equal(result["manifest"]["key"], "field_notes")
+	assert_equal(has_key(result["manifest"], "secrets") == 1, false)
+	manifest["unexpected"] = true
+	assert_equal(validate_theme_manifest(manifest)["code"], "unknown_manifest_fields")
+	manifest = result["manifest"]
+	manifest["entrypoints"] = {"web": "../private/config"}
+	assert_equal(validate_theme_manifest(manifest)["code"], "invalid_entrypoint")
+}
+
+test "portable plugin manifests declare bounded external runtimes" {
+	manifest := {"schema": "kujo.plugin/v1", "key": "content_notifier", "name": "Content Notifier", "version": "1.0.0", "description": "Notification connector", "license": "MIT", "author": {"name": "Kujo", "url": "https://kujo.dev"}, "compatibility": {"cms": ">=1.0.0"}, "runtime": "webhook", "capabilities": ["events.receive"], "events": ["entry.published"], "abilities": [], "settings_schema": {"type": "object"}, "defaults": {}, "distribution": {"homepage": "", "repository": "", "package_url": "", "integrity": ""}}
+	result := validate_plugin_manifest(manifest)
+	assert_equal(result["ok"], true)
+	assert_equal(result["manifest"]["runtime"], "webhook")
+	manifest["runtime"] = "embedded_server_code"
+	assert_equal(validate_plugin_manifest(manifest)["code"], "invalid_runtime")
+	manifest["runtime"] = "connector"
+	manifest["defaults"] = {"api_key": "must-not-live-in-manifest"}
+	assert_equal(validate_plugin_manifest(manifest)["code"], "invalid_settings")
+	contracts := extension_contracts()
+	assert_equal(contracts["security"]["remote_code_downloaded"], false)
+	assert_equal(contracts["security"]["secrets_exported"], false)
 }
 
 test "WebMCP ships enabled with four bounded read-only browser tools" {

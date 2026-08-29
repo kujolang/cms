@@ -158,6 +158,50 @@ assert_status "200" "robots"
 request "GET" "/.well-known/security.txt"
 assert_status "200" "security.txt"
 
+request "GET" "/v1/extensions/contracts"
+assert_status "200" "extension package contracts"
+assert_contains '"schema":"kujo.theme/v1"' "theme package contract"
+assert_contains '"schema":"kujo.plugin/v1"' "plugin package contract"
+
+THEME_MANIFEST="$(jq -c . "${ROOT_DIR}/examples/extensions/starter-theme/kujo-theme.json")"
+PLUGIN_MANIFEST="$(jq -c . "${ROOT_DIR}/examples/extensions/starter-plugin/kujo-plugin.json")"
+request "POST" "/v1/themes/validate" "${THEME_MANIFEST}" "1"
+assert_status "200" "validate portable theme manifest"
+assert_contains '"valid":true' "theme manifest valid"
+
+request "POST" "/v1/plugins/validate" "${PLUGIN_MANIFEST}" "1"
+assert_status "200" "validate portable plugin manifest"
+assert_contains '"valid":true' "plugin manifest valid"
+
+request "POST" "/v1/themes/install" "{\"manifest\":${THEME_MANIFEST},\"activate\":true,\"settings\":{\"site_title\":\"Smoke Publication\",\"accent_color\":\"#224466\"}}" "1"
+assert_status "200" "install and activate portable theme"
+assert_contains '"installed":true' "theme package installed"
+THEME_PACKAGE_ID="$(jq -r '.data.theme.id' <<<"${BODY}")"
+
+request "POST" "/v1/themes/install" "{\"manifest\":${THEME_MANIFEST},\"activate\":false}" "1"
+assert_status "200" "update installed theme package"
+assert_contains '"status":"active"' "theme update preserves activation"
+assert_contains '#224466' "theme update preserves configured settings"
+
+request "POST" "/v1/plugins/install" "{\"manifest\":${PLUGIN_MANIFEST},\"activate\":false}" "1"
+assert_status "200" "install portable plugin"
+assert_contains '"installed":true' "plugin package installed"
+PLUGIN_PACKAGE_ID="$(jq -r '.data.plugin.id' <<<"${BODY}")"
+
+request "GET" "/v1/themes/${THEME_PACKAGE_ID}/export"
+assert_status "200" "export portable theme"
+assert_contains '"secrets_included":false' "theme export excludes secrets"
+assert_not_contains '"settings"' "theme export excludes installed settings"
+
+request "GET" "/v1/plugins/${PLUGIN_PACKAGE_ID}/export" '' "1"
+assert_status "200" "export portable plugin"
+assert_contains '"secrets_included":false' "plugin export excludes secrets"
+assert_not_contains 'shared_secret' "plugin export excludes hook secrets"
+
+request "GET" "/v1/extensions/catalog"
+assert_status "200" "extension package catalog"
+assert_contains '"key":"starter_web"' "catalog includes installed theme"
+
 request "GET" "/.well-known/kujo-webmcp.json"
 assert_status "200" "WebMCP manifest"
 assert_contains '"automatic":true' "WebMCP automatic availability"

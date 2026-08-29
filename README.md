@@ -29,6 +29,7 @@ The current codebase is intentionally backend-first. Active source lives under `
 - Content types, taxonomies/terms, entries, media, menus
 - Plugin registry and webhook hooks
 - Theme registry and activation controls
+- Portable, versioned theme and plugin manifests with validation, installation, export, discovery, settings schemas, compatibility declarations, and distribution metadata
 - Durable users and profiles with roles, account states, social links, derived credentials, and configurable open/approval/closed registration
 - Roles and API tokens with lifecycle controls
 - Tenants and workspaces with isolation controls
@@ -160,6 +161,14 @@ User APIs:
 
 Agent and terminal workflows can use `bash scripts/cms-seo.sh help` for report, single-entry update, bulk update, and social-sharing settings commands.
 
+Portable extension workflows:
+
+- `GET /v1/extensions/contracts` describes the `kujo.theme/v1` and `kujo.plugin/v1` package contracts; `GET /v1/extensions/catalog` discovers installed themes and active plugins.
+- Theme and plugin manifests can be validated, installed or updated, activated, and exported through versioned API routes without exposing package settings or secrets.
+- Theme packages describe framework-neutral frontend entrypoints, templates, assets, settings, content types, and menu locations. Plugin packages declare connector, webhook, browser, or hybrid runtimes with explicit capabilities and events.
+- The CMS records manifests but never downloads or executes package code. Deployment tools verify and build theme artifacts separately; webhook secrets and provider credentials are configured through protected operational surfaces.
+- `bash scripts/cms-extensions.sh help` provides API-equivalent terminal commands. Canonical manifests live under `examples/extensions/` and the authoring contract is documented in [`docs/extensions.md`](docs/extensions.md).
+
 AI and agent interoperability:
 
 - `GET /v1/abilities` and `GET /v1/abilities/categories` provide authenticated discovery; `GET /v1/abilities/:namespace/:ability` returns one contract.
@@ -244,6 +253,7 @@ Key docs:
 - `docs/high-sla-failure-drills.md`
 - `docs/runtime-limitations.md`
 - `docs/webmcp.md`
+- `docs/extensions.md`
 
 ## Contribution
 
