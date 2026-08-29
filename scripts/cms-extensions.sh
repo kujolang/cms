@@ -12,6 +12,8 @@ usage() {
     'Commands:' \
     '  contracts                         Show portable extension contracts.' \
     '  catalog                           List installed themes and active plugins.' \
+    '  navigation                        List active admin-sidebar contributions.' \
+    '  ai                                List active plugin AI contributions.' \
     '  theme:validate <manifest>         Validate kujo-theme.json.' \
     '  theme:install <manifest> [active] Install or update a theme package.' \
     '  theme:install-zip <archive> [active] Verify and install a theme ZIP.' \
@@ -69,6 +71,8 @@ case "${command}" in
   help|-h|--help) usage ;;
   contracts) request GET '/v1/extensions/contracts' ;;
   catalog) request GET '/v1/extensions/catalog' ;;
+  navigation) require_token; request GET '/v1/extensions/navigation' ;;
+  ai) require_token; request GET '/v1/extensions/ai' ;;
   theme:validate) require_token; require_file "${2:-}"; request POST '/v1/themes/validate' "${2}" ;;
   theme:install) require_token; require_file "${2:-}"; request POST '/v1/themes/install' '' "$(install_payload "${2}" "${3:-false}")" ;;
   theme:install-zip) require_token; require_file "${2:-}"; request POST '/v1/themes/install' '' "$(install_zip_payload "${2}" "${3:-false}")" ;;

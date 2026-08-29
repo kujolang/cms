@@ -165,7 +165,7 @@ Portable extension workflows:
 
 - `GET /v1/extensions/contracts` describes the `kujo.theme/v1` and `kujo.plugin/v1` package contracts; `GET /v1/extensions/catalog` discovers installed themes and active plugins.
 - Theme and plugin manifests can be validated, installed or updated, activated, and exported through versioned API routes without exposing package settings or secrets. Verified ZIP receipts bind an install to its filename, SHA-256 digest, manifest path, file count, and bounded expanded size.
-- Theme packages describe framework-neutral frontend entrypoints, templates, assets, settings, content types, and menu locations. Plugin packages declare connector, webhook, browser, or hybrid runtimes with explicit capabilities and events.
+- Theme packages describe framework-neutral frontend entrypoints, templates, assets, settings, content types, menu locations, branded administration artwork, and ordered sidebar contributions. Plugin packages declare connector, webhook, browser, or hybrid runtimes with explicit capabilities, events, administration links, abilities, and connector descriptors.
 - The CMS records manifests but never downloads or executes package code. Deployment tools verify and build theme artifacts separately; webhook secrets and provider credentials are configured through protected operational surfaces.
 - `bash scripts/cms-extensions.sh help` provides API-equivalent terminal commands. Canonical manifests live under `examples/extensions/` and the authoring contract is documented in [`docs/extensions.md`](docs/extensions.md).
 - Field Notes has its own forkable home in the independent `cms-field-notes-theme` repository and is bundled as the showcase default. The independent `cms-contact-form` repository demonstrates a hybrid plugin with a browser component, durable submission API, moderation CLI, discoverable abilities, signed notification delivery, and production safety controls.
@@ -173,11 +173,12 @@ Portable extension workflows:
 
 AI and agent interoperability:
 
-- `GET /v1/abilities` and `GET /v1/abilities/categories` provide authenticated discovery; `GET /v1/abilities/:namespace/:ability` returns one contract.
+- `GET /v1/abilities` and `GET /v1/abilities/categories` provide authenticated discovery; `GET|PATCH /v1/abilities/:namespace/:ability` reads or administratively enables/disables one contract.
 - `POST /v1/abilities/:namespace/:ability/run` executes the registered handler through its declared permission. Mutating abilities require `confirmed: true` inside the input and write an audit event.
-- `GET /v1/ai/connectors` reports Kujo integration availability and configuration status without returning endpoint values or secrets.
+- `GET /v1/ai/connectors` reports Kujo integration availability and configuration status without returning endpoint values or secrets; `PATCH /v1/ai/connectors/:key` activates or deactivates a configured connector.
+- Active plugins can contribute secret-free ability and connector descriptors to those same discovery APIs. They remain plugin-managed, execute through their declared runtime, and appear in `/v1/extensions/ai` for raw package-level discovery.
 - `GET /v1/ai/mcp/tools` translates the same registry into MCP-ready tool descriptors, keeping REST, CLI, and agent surfaces on one source of truth.
-- `bash scripts/cms-ai.sh help` exposes status, connector, discovery, inspection, execution, and MCP descriptor commands for terminal agents.
+- `bash scripts/cms-ai.sh help` exposes status, connector, discovery, enable/disable, inspection, execution, and MCP descriptor commands for terminal agents. Disabled abilities cannot execute and are omitted from MCP descriptors.
 
 Connector environment variables identify trusted server-side adapters only. Provider credentials remain in the connector or gateway process; they are not stored in CMS settings or sent to the Studio browser. Production MCP deployments still need authenticated transport, TLS, ingress rate limits, and connector-specific health checks.
 

@@ -16,6 +16,8 @@
   "capabilities": ["events.receive"],
   "events": ["entry.published"],
   "abilities": [],
+  "connectors": [],
+  "admin": {"icon": "", "navigation": []},
   "settings_schema": {
     "type": "object",
     "properties": {

@@ -9,7 +9,7 @@ test_setup {
 	from backend.routes.entries import build_seo_audit_item, can_read_entry_status
 	from backend.routes.media import parse_media_size_bytes
 	from backend.routes.plugins import list_webhook_event_schemas, validate_webhook_event_payload, webhook_schema_for
-	from backend.routes.abilities import ability_categories, ability_registry, connector_registry, find_ability, mcp_tool_descriptors
+	from backend.routes.abilities import ability_categories, ability_registry, connector_registry, find_ability, mcp_tool_descriptors, resolved_ability_registry, resolved_connector_registry
 	from backend.routes.webmcp import build_webmcp_manifest, build_webmcp_runtime_source, public_content_record, webmcp_entry_allowed, webmcp_tool_registry
 	from backend.routes.extensions import extension_contracts, validate_package_receipt, validate_plugin_manifest, validate_theme_manifest
 }
@@ -27,17 +27,21 @@ test "extension package receipts are bounded and tied to their manifest type" {
 }
 
 test "portable theme manifests are strict, distributable, and secret-free" {
-	manifest := {"schema": "kujo.theme/v1", "key": "field_notes", "name": "Field Notes", "version": "1.2.0", "description": "Portable frontend", "license": "MIT", "author": {"name": "Kujo", "url": "https://kujo.dev"}, "compatibility": {"cms": ">=1.0.0"}, "entrypoints": {"web": "app/layout.tsx"}, "templates": {"single": "app/articles/page.tsx"}, "assets": {"styles": ["app/globals.css"], "scripts": [], "images": []}, "settings_schema": {"type": "object", "additionalProperties": false}, "defaults": {}, "supports": ["menus", "webmcp"], "content_types": ["article"], "menu_locations": ["header"], "distribution": {"homepage": "https://kujo.dev", "repository": "https://github.com/kujolang/cms", "package_url": "", "integrity": ""}}
+	manifest := {"schema": "kujo.theme/v1", "key": "field_notes", "name": "Field Notes", "version": "1.2.0", "description": "Portable frontend", "license": "MIT", "author": {"name": "Kujo", "url": "https://kujo.dev"}, "compatibility": {"cms": ">=1.0.0"}, "entrypoints": {"web": "app/layout.tsx"}, "templates": {"single": "app/articles/page.tsx"}, "assets": {"styles": ["app/globals.css"], "scripts": [], "images": []}, "settings_schema": {"type": "object", "additionalProperties": false}, "defaults": {}, "supports": ["menus", "webmcp"], "content_types": ["article"], "menu_locations": ["header"], "distribution": {"homepage": "https://kujo.dev", "repository": "https://github.com/kujolang/cms", "package_url": "", "integrity": ""}, "admin": {"icon": "/images/field-notes.webp", "navigation": [{"key": "theme_docs", "label": "Theme docs", "href": "/cms/themes", "order": 650, "capability": "manage_extensions", "icon": ""}]}}
 	result := validate_theme_manifest(manifest)
 	assert_equal(result["ok"], true)
 	assert_equal(result["manifest"]["key"], "field_notes")
 	assert_equal(result["manifest"]["name"], "Field Notes")
+	assert_equal(result["manifest"]["admin"]["navigation"][0]["order"], 650)
 	assert_equal(has_key(result["manifest"], "secrets") == 1, false)
 	manifest["unexpected"] = true
 	assert_equal(validate_theme_manifest(manifest)["code"], "unknown_manifest_fields")
 	manifest = result["manifest"]
 	manifest["entrypoints"] = {"web": "../private/config"}
 	assert_equal(validate_theme_manifest(manifest)["code"], "invalid_entrypoint")
+	manifest = result["manifest"]
+	manifest["admin"] = {"icon": "/images/field-notes.webp", "navigation": [{"key": "theme_docs", "label": "Theme docs", "href": "https://outside.example.test", "order": 650, "capability": "manage_extensions", "icon": ""}]}
+	assert_equal(validate_theme_manifest(manifest)["code"], "invalid_admin_navigation_href")
 }
 
 test "portable plugin manifests declare bounded external runtimes" {
@@ -458,6 +462,16 @@ test "database bootstrap applies schema version and auth seeds" {
 	version_result := get_schema_version(db)
 	assert_equal(version_result["ok"], true)
 	assert_true(to_bool(version_result["version"] >= TARGET_SCHEMA_VERSION))
+
+	plugin_manifest := {"schema": "kujo.plugin/v1", "key": "test_agent_plugin", "name": "Test Agent Plugin", "abilities": [{"name": "test.records.list", "label": "List test records", "description": "List records", "method": "GET", "path": "/v1/records", "permission": "cms.read"}], "connectors": [{"key": "records", "label": "Records", "purpose": "Test connector", "mode": "plugin_runtime"}], "admin": {"icon": "", "navigation": []}}
+	plugin_insert := db_execute_safe(db, "INSERT INTO plugins (plugin_key, name, version, status, capabilities_json, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ["test_agent_plugin", "Test Agent Plugin", "1.0.0", "active", "[]", to_json({"package_manifest": plugin_manifest}), now(), now()])
+	assert_equal(plugin_insert["ok"], true)
+	resolved_abilities := resolved_ability_registry({"db": db, "cfg": cfg})
+	assert_true(to_bool(len(resolved_abilities) > len(ability_registry())))
+	assert_equal(resolved_abilities[len(resolved_abilities) - 1]["name"], "test/records-list")
+	resolved_connectors := resolved_connector_registry({"db": db, "cfg": cfg})
+	assert_equal(resolved_connectors[len(resolved_connectors) - 1]["key"], "test_agent_plugin-records")
+	assert_equal(resolved_connectors[len(resolved_connectors) - 1]["manageable"], false)
 
 	if file_exists(db_path) {
 		delete_file(db_path)

@@ -23,7 +23,7 @@ Lifecycle:
 
 The Field Notes frontend is a complete reusable theme package in the independent [`cms-field-notes-theme`](https://github.com/kujolang/cms-field-notes-theme) repository. The CMS showcase bundles it as the default, but the standalone repository contains only the public theme so creators can fork, remix, package, and distribute it without the administration application.
 
-The `cms-example` administration frontend adds **Themes & plugins**, where an administrator can drag in or choose a ZIP, install it, optionally activate it immediately, and manage installed extensions. Its server adapter rejects encrypted archives, traversal paths, unsupported compression, duplicate manifests, oversized packages, excessive expanded size, and CRC failures before calling the CMS install API. The CMS stores the normalized manifest and a bounded receipt containing the package digest and archive facts; it does not execute uploaded code.
+The `cms-example` administration frontend provides separate **Themes** and **Plugins** screens, where an administrator can drag in or choose a ZIP, install it, optionally activate it immediately, and manage installed extensions. Its server adapter rejects encrypted archives, traversal paths, unsupported compression, duplicate manifests, oversized packages, excessive expanded size, and CRC failures before calling the CMS install API. The CMS stores the normalized manifest and a bounded receipt containing the package digest and archive facts; it does not execute uploaded code.
 
 ## Plugin packages
 
@@ -44,9 +44,19 @@ Installing a newer manifest for an existing package preserves its current activa
 
 [`cms-contact-form`](https://github.com/kujolang/cms-contact-form) is the full plugin showcase. It combines a framework-neutral contact-form web component with a standalone SQLite-backed connector, protected moderation API, matching CLI, OpenAPI discovery, declared agent abilities, origin policy, rate limiting, honeypot filtering, hashed client addresses, and signed notification delivery for email or automation adapters.
 
+## Administration extensions
+
+Both manifest types accept an optional `admin` object. `admin.icon` supplies an HTTPS, root-relative, or package-relative branded image for the Themes or Plugins card. `author.url` makes the creator name link to its verified HTTPS destination.
+
+`admin.navigation` contains at most 20 ordered, capability-scoped links. Each item declares `key`, `label`, an internal `/cms` path, numeric `order`, capability, and optional icon image. An item whose key matches a built-in navigation item may change only its order in Studio; it cannot replace the built-in destination or access policy. New keys add extension-owned links. Only the active theme and active plugins contribute links.
+
+The resolved surface is available to applications and agents at `GET /v1/extensions/navigation` and through `bash scripts/cms-extensions.sh navigation`. This keeps the visual Studio sidebar, REST API, and terminal discovery on the same manifest source of truth.
+
+Plugin manifests may also declare bounded, secret-free `abilities` and `connectors`. Active contributions are merged into `GET /v1/abilities` and `GET /v1/ai/connectors`, and their raw package descriptors remain discoverable at `GET /v1/extensions/ai` and `bash scripts/cms-extensions.sh ai`. Their execution and secret handling stay in the plugin’s declared runtime, so CMS marks them plugin-managed and does not claim they are native MCP tools. Activating or deactivating the plugin controls whether these contributions are published.
+
 ## Contracts and API
 
-`GET /v1/extensions/contracts` returns the current filenames, schemas, routes, portability model, and security boundary. `GET /v1/extensions/catalog` returns installed theme manifests and active plugin manifests for discovery.
+`GET /v1/extensions/contracts` returns the current filenames, schemas, routes, portability model, and security boundary. `GET /v1/extensions/catalog` returns installed theme manifests and active plugin manifests for discovery. `GET /v1/extensions/navigation` and `GET /v1/extensions/ai` return the active administration and AI contributions.
 
 | Operation | Theme | Plugin |
 | --- | --- | --- |

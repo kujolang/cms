@@ -1,7 +1,8 @@
-from backend.core.database import db_query_safe
+from backend.core.database import db_execute_safe, db_query_safe
 from backend.core.http import fail, guard_request, ok, parse_json_body, write_audit
 from backend.core.utils import dict_get_or
 from backend.routes.entries import apply_seo_changes, normalize_seo_changes
+from backend.routes.extensions import extension_ai_registry
 
 export ability_categories := func() {
 	return [
@@ -53,9 +54,59 @@ export ability_registry := func() {
 	]
 }
 
+func feature_state(db, feature_type, feature_key, default_enabled) {
+	setting_key := "ai." + feature_type + "." + feature_key + ".enabled"
+	result := db_query_safe(db, "SELECT setting_value FROM settings WHERE setting_key = ? LIMIT 1", [setting_key])
+	if result["ok"] == false || len(result["rows"]) == 0 { return default_enabled }
+	return to_lower(trim(to_string(result["rows"][0]["setting_value"]))) == "true"
+}
+
+func set_feature_state(db, feature_type, feature_key, enabled) {
+	setting_key := "ai." + feature_type + "." + feature_key + ".enabled"
+	value := "false"; if enabled == true { value = "true" }
+	return db_execute_safe(db, "INSERT INTO settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?) ON CONFLICT(setting_key) DO UPDATE SET setting_value = excluded.setting_value, updated_at = excluded.updated_at", [setting_key, value, now()])
+}
+
+export resolved_ability_registry := func(ctx) {
+	items := []
+	for ability in ability_registry() {
+		ability["enabled"] := feature_state(ctx["db"], "ability", ability["name"], true)
+		ability["source"] := "core"
+		ability["manageable"] := true
+		items = push(items, ability)
+	}
+	registry := extension_ai_registry(ctx["db"])
+	for raw in registry["abilities"] {
+		raw_name := to_lower(trim(to_string(dict_get_or(raw, "name", "plugin.ability"))))
+		name_parts := split(raw_name, ".")
+		namespace := regex_replace(name_parts[0], "[^a-z0-9_-]", "-")
+		external_name := regex_replace(regex_replace(raw_name, "^[^.]+\\.", ""), "[^a-z0-9_-]", "-")
+		method := to_upper(trim(to_string(dict_get_or(raw, "method", "GET"))))
+		readonly := method == "GET"
+		items = push(items, {
+			"name": namespace + "/" + external_name, "label": trim(to_string(dict_get_or(raw, "label", raw_name))),
+			"description": trim(to_string(dict_get_or(raw, "description", "Provided by an active plugin runtime."))),
+			"category": "plugin", "permission": trim(to_string(dict_get_or(raw, "permission", "admin.plugins"))),
+			"input_schema": dict_get_or(raw, "input_schema", {"type": "object"}), "output_schema": dict_get_or(raw, "output_schema", {"type": "object"}),
+			"annotations": {"readonly": readonly, "destructive": false, "idempotent": false, "requires_confirmation": readonly == false},
+			"enabled": true, "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": false,
+			"external_execution": {"method": method, "path": trim(to_string(dict_get_or(raw, "path", ""))), "runtime": "plugin"}
+		})
+	}
+	return items
+}
+
 export find_ability := func(namespace, ability_name) {
 	qualified_name := trim(to_string(namespace)) + "/" + trim(to_string(ability_name))
 	for ability in ability_registry() {
+		if ability["name"] == qualified_name { return ability }
+	}
+	return null
+}
+
+func find_resolved_ability(ctx, namespace, ability_name) {
+	qualified_name := trim(to_string(namespace)) + "/" + trim(to_string(ability_name))
+	for ability in resolved_ability_registry(ctx) {
 		if ability["name"] == qualified_name { return ability }
 	}
 	return null
@@ -92,6 +143,30 @@ export connector_registry := func(cfg) {
 	]
 }
 
+export resolved_connector_registry := func(ctx) {
+	items := []
+	for item in connector_registry(ctx["cfg"]) {
+		item["enabled"] := feature_state(ctx["db"], "connector", item["key"], item["configured"])
+		item["source"] := "core"
+		item["manageable"] := true
+		if item["enabled"] == true { item["status"] := "active" }
+		if item["configured"] == true && item["enabled"] == false { item["status"] := "inactive" }
+		items = push(items, item)
+	}
+	registry := extension_ai_registry(ctx["db"])
+	for raw in registry["connectors"] {
+		items = push(items, {
+			"key": raw["source_key"] + "-" + trim(to_string(dict_get_or(raw, "key", "connector"))),
+			"label": trim(to_string(dict_get_or(raw, "label", "Plugin connector"))),
+			"purpose": trim(to_string(dict_get_or(raw, "purpose", "Provided by an active plugin runtime."))),
+			"mode": trim(to_string(dict_get_or(raw, "mode", "plugin_runtime"))), "available": true, "configured": true,
+			"enabled": true, "status": "active", "endpoint_configured": true, "approval_required": dict_get_or(raw, "approval_required", false),
+			"secret_storage": "plugin runtime", "health": "plugin_managed", "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": false
+		})
+	}
+	return items
+}
+
 export mcp_tool_descriptors := func() {
 	tools := []
 	for ability in ability_registry() {
@@ -105,6 +180,21 @@ export mcp_tool_descriptors := func() {
 			"ability": ability["name"],
 			"execution": "/v1/abilities/" + parts[0] + "/" + parts[1] + "/run"
 		})
+	}
+	return tools
+}
+
+func resolved_mcp_tool_descriptors(ctx) {
+	tools := []
+	for ability in resolved_ability_registry(ctx) {
+		if ability["enabled"] == true && ability["source"] == "core" {
+			parts := split(ability["name"], "/")
+			tools = push(tools, {
+				"name": parts[0] + "__" + parts[1], "title": ability["label"], "description": ability["description"],
+				"inputSchema": ability["input_schema"], "annotations": ability["annotations"], "ability": ability["name"],
+				"execution": "/v1/abilities/" + parts[0] + "/" + parts[1] + "/run"
+			})
+		}
 	}
 	return tools
 }
@@ -161,14 +251,15 @@ func run_seo_summary(ctx, input) {
 
 func execute_ability(req, ctx, ability, input) {
 	name := ability["name"]
+	if ability["source"] == "plugin" { return {"ok": false, "status": 501, "code": "plugin_runtime_required", "message": "This ability executes through its active plugin runtime"} }
 	if name == "cms/site-info" { return {"ok": true, "result": run_site_info(ctx)} }
 	if name == "content/list" { return {"ok": true, "result": run_content_list(ctx, input)} }
 	if name == "seo/audit-summary" { return {"ok": true, "result": run_seo_summary(ctx, input)} }
 	if name == "ai/integration-status" {
-		connectors := connector_registry(ctx["cfg"])
+		connectors := resolved_connector_registry(ctx)
 		configured := 0
 		for item in connectors { if item["configured"] == true { configured = configured + 1 } }
-		return {"ok": true, "result": {"connectors": connectors, "configured_count": configured, "ability_count": len(ability_registry()), "mcp_tool_count": len(mcp_tool_descriptors()), "secrets_exposed": false}}
+		return {"ok": true, "result": {"connectors": connectors, "configured_count": configured, "ability_count": len(resolved_ability_registry(ctx)), "mcp_tool_count": len(resolved_mcp_tool_descriptors(ctx)), "secrets_exposed": false}}
 	}
 	if name == "seo/update-entry" {
 		if dict_get_or(input, "confirmed", false) != true { return {"ok": false, "status": 409, "code": "confirmation_required", "message": "This ability requires confirmed=true"} }
@@ -215,12 +306,12 @@ export register_ability_routes := func(server, ctx) {
 		query := dict_get_or(req, "query", {})
 		category := trim(to_string(dict_get_or(query, "category", "")))
 		items := []
-		for ability in ability_registry() { if category == "" || ability["category"] == category { items = push(items, ability) } }
+		for ability in resolved_ability_registry(ctx) { if category == "" || ability["category"] == category { items = push(items, ability) } }
 		return ok(ctx["cfg"], {"items": items, "count": len(items), "categories": ability_categories()})
 	})
 	server = server.route("GET", "/v1/abilities/:namespace/:ability", func(req) {
 		params := dict_get_or(req, "params", {})
-		ability := find_ability(dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
+		ability := find_resolved_ability(ctx, dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
 		if type(ability) == "null" { return fail(ctx["cfg"], 404, "ability_not_found", "Ability not found", {}) }
 		guard := guard_request(req, ctx, ability["permission"])
 		if guard["ok"] == false { return guard["response"] }
@@ -228,8 +319,9 @@ export register_ability_routes := func(server, ctx) {
 	})
 	server = server.route("POST", "/v1/abilities/:namespace/:ability/run", func(req) {
 		params := dict_get_or(req, "params", {})
-		ability := find_ability(dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
+		ability := find_resolved_ability(ctx, dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
 		if type(ability) == "null" { return fail(ctx["cfg"], 404, "ability_not_found", "Ability not found", {}) }
+		if ability["enabled"] != true { return fail(ctx["cfg"], 409, "ability_disabled", "Ability is disabled by an administrator", {}) }
 		guard := guard_request(req, ctx, ability["permission"])
 		if guard["ok"] == false { return guard["response"] }
 		body_result := parse_json_body(req, ctx["cfg"])
@@ -241,16 +333,54 @@ export register_ability_routes := func(server, ctx) {
 		_ = write_audit(ctx, req, "ability.execute", 200, "ability", ability["name"], {"readonly": ability["annotations"]["readonly"], "confirmed": dict_get_or(input, "confirmed", false)})
 		return ok(ctx["cfg"], {"ability": ability["name"], "result": result["result"]})
 	})
+	server = server.route("PATCH", "/v1/abilities/:namespace/:ability", func(req) {
+		guard := guard_request(req, ctx, "admin.settings")
+		if guard["ok"] == false { return guard["response"] }
+		params := dict_get_or(req, "params", {})
+		ability := find_resolved_ability(ctx, dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
+		if type(ability) == "null" { return fail(ctx["cfg"], 404, "ability_not_found", "Ability not found", {}) }
+		if ability["manageable"] != true { return fail(ctx["cfg"], 409, "plugin_managed", "Activate or deactivate the plugin to change this ability", {}) }
+		body_result := parse_json_body(req, ctx["cfg"])
+		if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
+		body := body_result["data"]
+		if type(body) != "dict" || type(dict_get_or(body, "enabled", null)) != "bool" { return fail(ctx["cfg"], 400, "invalid_enabled", "enabled must be a boolean", {}) }
+		enabled := body["enabled"]
+		write_result := set_feature_state(ctx["db"], "ability", ability["name"], enabled)
+		if write_result["ok"] == false { return fail(ctx["cfg"], 500, "ability_state_failed", "Could not update ability state", {}) }
+		_ = write_audit(ctx, req, "ability.state.update", 200, "ability", ability["name"], {"enabled": enabled})
+		updated := find_resolved_ability(ctx, dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
+		return ok(ctx["cfg"], updated)
+	})
 	server = server.route("GET", "/v1/ai/connectors", func(req) {
 		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
-		items := connector_registry(ctx["cfg"])
+		items := resolved_connector_registry(ctx)
 		return ok(ctx["cfg"], {"items": items, "count": len(items), "secrets_exposed": false})
+	})
+	server = server.route("PATCH", "/v1/ai/connectors/:key", func(req) {
+		guard := guard_request(req, ctx, "admin.settings")
+		if guard["ok"] == false { return guard["response"] }
+		connector_key := trim(to_string(dict_get_or(dict_get_or(req, "params", {}), "key", "")))
+		selected := null
+		for item in resolved_connector_registry(ctx) { if item["key"] == connector_key { selected = item } }
+		if type(selected) == "null" { return fail(ctx["cfg"], 404, "connector_not_found", "Connector not found", {}) }
+		if selected["manageable"] != true { return fail(ctx["cfg"], 409, "plugin_managed", "Activate or deactivate the plugin to change this connector", {}) }
+		body_result := parse_json_body(req, ctx["cfg"])
+		if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
+		body := body_result["data"]
+		if type(body) != "dict" || type(dict_get_or(body, "enabled", null)) != "bool" { return fail(ctx["cfg"], 400, "invalid_enabled", "enabled must be a boolean", {}) }
+		enabled := body["enabled"]
+		if enabled == true && selected["configured"] != true { return fail(ctx["cfg"], 409, "connector_not_configured", "Configure the connector endpoint before activating it", {}) }
+		write_result := set_feature_state(ctx["db"], "connector", connector_key, enabled)
+		if write_result["ok"] == false { return fail(ctx["cfg"], 500, "connector_state_failed", "Could not update connector state", {}) }
+		_ = write_audit(ctx, req, "connector.state.update", 200, "connector", connector_key, {"enabled": enabled})
+		updated := null; for item in resolved_connector_registry(ctx) { if item["key"] == connector_key { updated = item } }
+		return ok(ctx["cfg"], updated)
 	})
 	server = server.route("GET", "/v1/ai/mcp/tools", func(req) {
 		guard := guard_request(req, ctx, "cms.read")
 		if guard["ok"] == false { return guard["response"] }
-		tools := mcp_tool_descriptors()
+		tools := resolved_mcp_tool_descriptors(ctx)
 		return ok(ctx["cfg"], {"tools": tools, "count": len(tools), "protocol": "mcp-ready", "transport": "CMS REST abilities"})
 	})
 	return server

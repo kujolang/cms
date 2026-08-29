@@ -89,6 +89,46 @@ func validate_author(raw) {
 	return {"ok": true, "value": {"name": author_name, "url": url}}
 }
 
+func valid_asset_reference(value, allow_empty) {
+	text := trim(to_string(value))
+	if text == "" { return allow_empty }
+	if starts_with(to_lower(text), "https://") { return len(text) <= 2048 }
+	if starts_with(text, "/") { return len(text) <= 512 && starts_with(text, "//") == false && contains(text, "..") == 0 && contains(text, "\\") == 0 }
+	return valid_relative_path(text)
+}
+
+func validate_admin(raw) {
+	if type(raw) != "dict" { return failure("invalid_admin", "admin must be an object", {}) }
+	unknown := unknown_keys(raw, ["icon", "navigation"])
+	if len(unknown) > 0 { return failure("unknown_admin_fields", "admin contains unsupported fields", {"fields": unknown}) }
+	icon := trim(to_string(dict_get_or(raw, "icon", "")))
+	if valid_asset_reference(icon, true) == false { return failure("invalid_admin_icon", "admin.icon must be an HTTPS URL or package-relative asset path", {}) }
+	navigation := dict_get_or(raw, "navigation", [])
+	if type(navigation) != "array" || len(navigation) > 20 { return failure("invalid_admin_navigation", "admin.navigation must contain at most 20 links", {}) }
+	normalized_navigation := []
+	seen := {}
+	for item in navigation {
+		if type(item) != "dict" { return failure("invalid_admin_navigation_item", "Each admin navigation item must be an object", {}) }
+		item_unknown := unknown_keys(item, ["key", "label", "href", "order", "capability", "icon"])
+		if len(item_unknown) > 0 { return failure("unknown_admin_navigation_fields", "Admin navigation item contains unsupported fields", {"fields": item_unknown}) }
+		nav_key := trim(to_string(dict_get_or(item, "key", "")))
+		label := trim(to_string(dict_get_or(item, "label", "")))
+		href := trim(to_string(dict_get_or(item, "href", "")))
+		capability := trim(to_string(dict_get_or(item, "capability", "view_content")))
+		item_icon := trim(to_string(dict_get_or(item, "icon", "")))
+		order := to_int(dict_get_or(item, "order", 500))
+		if is_valid_slug_key(nav_key) == false || len(nav_key) > 80 || bounded_string(label, 2, 80) == false { return failure("invalid_admin_navigation_identity", "Navigation key or label is invalid", {}) }
+		if href != "/cms" && starts_with(href, "/cms/") == false { return failure("invalid_admin_navigation_href", "Navigation href must stay within /cms", {"href": href}) }
+		if len(href) > 240 || contains(href, "..") == 1 || contains(href, "?") == 1 || contains(href, "#") == 1 { return failure("invalid_admin_navigation_href", "Navigation href is invalid", {"href": href}) }
+		if is_valid_slug_key(capability) == false || len(capability) > 80 || order < 0 || order > 10000 { return failure("invalid_admin_navigation_policy", "Navigation capability or order is invalid", {}) }
+		if valid_asset_reference(item_icon, true) == false { return failure("invalid_admin_navigation_icon", "Navigation icon must be an HTTPS URL or package-relative asset path", {}) }
+		if has_key(seen, nav_key) == 1 { return failure("duplicate_admin_navigation_key", "Navigation keys must be unique", {"key": nav_key}) }
+		seen[nav_key] := true
+		normalized_navigation = push(normalized_navigation, {"key": nav_key, "label": label, "href": href, "order": order, "capability": capability, "icon": item_icon})
+	}
+	return {"ok": true, "value": {"icon": icon, "navigation": normalized_navigation}}
+}
+
 export validate_package_receipt := func(raw, kind) {
 	if type(raw) == "null" { return {"ok": true, "value": null} }
 	if type(raw) != "dict" { return failure("invalid_package", "package must be an object", {}) }
@@ -111,7 +151,7 @@ export validate_package_receipt := func(raw, kind) {
 
 export validate_theme_manifest := func(raw) {
 	if type(raw) != "dict" { return failure("invalid_manifest", "Theme manifest must be an object", {}) }
-	allowed := ["schema", "key", "name", "version", "description", "license", "author", "compatibility", "entrypoints", "templates", "assets", "settings_schema", "defaults", "supports", "content_types", "menu_locations", "distribution"]
+	allowed := ["schema", "key", "name", "version", "description", "license", "author", "compatibility", "entrypoints", "templates", "assets", "settings_schema", "defaults", "supports", "content_types", "menu_locations", "distribution", "admin"]
 	unknown := unknown_keys(raw, allowed)
 	if len(unknown) > 0 { return failure("unknown_manifest_fields", "Theme manifest contains unsupported fields", {"fields": unknown}) }
 	if trim(to_string(dict_get_or(raw, "schema", ""))) != "kujo.theme/v1" { return failure("invalid_schema", "schema must be kujo.theme/v1", {}) }
@@ -143,13 +183,14 @@ export validate_theme_manifest := func(raw) {
 	content_result := validate_string_array(dict_get_or(raw, "content_types", []), "content_types", 50, 80, false); if content_result["ok"] == false { return content_result }
 	menu_result := validate_string_array(dict_get_or(raw, "menu_locations", []), "menu_locations", 20, 80, false); if menu_result["ok"] == false { return menu_result }
 	distribution_result := validate_distribution(dict_get_or(raw, "distribution", {})); if distribution_result["ok"] == false { return distribution_result }
-	normalized := {"schema": "kujo.theme/v1", "key": key, "name": theme_name, "version": version, "description": description, "license": license, "author": author_result["value"], "compatibility": compatibility, "entrypoints": entrypoints, "templates": templates, "assets": assets, "settings_schema": settings_schema, "defaults": defaults, "supports": supports_result["value"], "content_types": content_result["value"], "menu_locations": menu_result["value"], "distribution": distribution_result["value"]}
+	admin_result := validate_admin(dict_get_or(raw, "admin", {})); if admin_result["ok"] == false { return admin_result }
+	normalized := {"schema": "kujo.theme/v1", "key": key, "name": theme_name, "version": version, "description": description, "license": license, "author": author_result["value"], "compatibility": compatibility, "entrypoints": entrypoints, "templates": templates, "assets": assets, "settings_schema": settings_schema, "defaults": defaults, "supports": supports_result["value"], "content_types": content_result["value"], "menu_locations": menu_result["value"], "distribution": distribution_result["value"], "admin": admin_result["value"]}
 	return {"ok": true, "manifest": normalized}
 }
 
 export validate_plugin_manifest := func(raw) {
 	if type(raw) != "dict" { return failure("invalid_manifest", "Plugin manifest must be an object", {}) }
-	allowed := ["schema", "key", "name", "version", "description", "license", "author", "compatibility", "runtime", "capabilities", "events", "abilities", "settings_schema", "defaults", "distribution"]
+	allowed := ["schema", "key", "name", "version", "description", "license", "author", "compatibility", "runtime", "capabilities", "events", "abilities", "settings_schema", "defaults", "distribution", "admin", "connectors"]
 	unknown := unknown_keys(raw, allowed)
 	if len(unknown) > 0 { return failure("unknown_manifest_fields", "Plugin manifest contains unsupported fields", {"fields": unknown}) }
 	if trim(to_string(dict_get_or(raw, "schema", ""))) != "kujo.plugin/v1" { return failure("invalid_schema", "schema must be kujo.plugin/v1", {}) }
@@ -167,10 +208,14 @@ export validate_plugin_manifest := func(raw) {
 	abilities := dict_get_or(raw, "abilities", [])
 	if type(abilities) != "array" || len(abilities) > 50 { return failure("invalid_abilities", "abilities must be an array with at most 50 descriptors", {}) }
 	for ability in abilities { if type(ability) != "dict" || len(keys(ability)) > 8 || len(to_json(ability)) > 8192 || contains_sensitive_keys(ability) || bounded_string(dict_get_or(ability, "name", ""), 3, 160) == false { return failure("invalid_ability", "ability descriptors must be bounded secret-free objects with a name", {}) } }
+	connectors := dict_get_or(raw, "connectors", [])
+	if type(connectors) != "array" || len(connectors) > 20 { return failure("invalid_connectors", "connectors must be an array with at most 20 descriptors", {}) }
+	for connector_item in connectors { if type(connector_item) != "dict" || len(keys(connector_item)) > 8 || len(to_json(connector_item)) > 4096 || contains_sensitive_keys(connector_item) || bounded_string(dict_get_or(connector_item, "key", ""), 2, 80) == false || bounded_string(dict_get_or(connector_item, "label", ""), 2, 160) == false { return failure("invalid_connector", "connector descriptors must be bounded secret-free objects with a key and label", {}) } }
 	settings_schema := dict_get_or(raw, "settings_schema", {"type": "object", "additionalProperties": false}); defaults := dict_get_or(raw, "defaults", {})
 	if type(settings_schema) != "dict" || type(defaults) != "dict" || len(to_json(settings_schema)) > 65536 || len(to_json(defaults)) > 65536 || contains_sensitive_keys(settings_schema) || contains_sensitive_keys(defaults) { return failure("invalid_settings", "settings_schema and defaults must be bounded secret-free objects", {}) }
 	distribution_result := validate_distribution(dict_get_or(raw, "distribution", {})); if distribution_result["ok"] == false { return distribution_result }
-	normalized := {"schema": "kujo.plugin/v1", "key": key, "name": plugin_name, "version": version, "description": description, "license": license, "author": author_result["value"], "compatibility": compatibility, "runtime": runtime, "capabilities": capabilities_result["value"], "events": events_result["value"], "abilities": abilities, "settings_schema": settings_schema, "defaults": defaults, "distribution": distribution_result["value"]}
+	admin_result := validate_admin(dict_get_or(raw, "admin", {})); if admin_result["ok"] == false { return admin_result }
+	normalized := {"schema": "kujo.plugin/v1", "key": key, "name": plugin_name, "version": version, "description": description, "license": license, "author": author_result["value"], "compatibility": compatibility, "runtime": runtime, "capabilities": capabilities_result["value"], "events": events_result["value"], "abilities": abilities, "connectors": connectors, "settings_schema": settings_schema, "defaults": defaults, "distribution": distribution_result["value"], "admin": admin_result["value"]}
 	return {"ok": true, "manifest": normalized}
 }
 
@@ -186,7 +231,7 @@ func theme_manifest_from_row(row) {
 	config := parse_json_object(dict_get_or(row, "config_json", "{}"), {})
 	manifest := dict_get_or(config, "package_manifest", null)
 	if type(manifest) == "dict" { return manifest }
-	return {"schema": "kujo.theme/v1", "key": row["theme_key"], "name": row["name"], "version": row["version"], "description": "", "license": "UNLICENSED", "author": {"name": "Unknown", "url": ""}, "compatibility": {"cms": ">=1.0.0"}, "entrypoints": {"web": "app/layout"}, "templates": {}, "assets": {"styles": [], "scripts": [], "images": []}, "settings_schema": {"type": "object"}, "defaults": {}, "supports": [], "content_types": [], "menu_locations": [], "distribution": {"homepage": "", "repository": "", "package_url": "", "integrity": ""}}
+	return {"schema": "kujo.theme/v1", "key": row["theme_key"], "name": row["name"], "version": row["version"], "description": "", "license": "UNLICENSED", "author": {"name": "Unknown", "url": ""}, "compatibility": {"cms": ">=1.0.0"}, "entrypoints": {"web": "app/layout"}, "templates": {}, "assets": {"styles": [], "scripts": [], "images": []}, "settings_schema": {"type": "object"}, "defaults": {}, "supports": [], "content_types": [], "menu_locations": [], "distribution": {"homepage": "", "repository": "", "package_url": "", "integrity": ""}, "admin": {"icon": "", "navigation": []}}
 }
 
 func plugin_manifest_from_row(row) {
@@ -196,7 +241,7 @@ func plugin_manifest_from_row(row) {
 	capabilities := []; err := null
 	try { capabilities = parse_json(to_string(dict_get_or(row, "capabilities_json", "[]"))) } except e { err = e }
 	if type(err) != "null" || type(capabilities) != "array" { capabilities = [] }
-	return {"schema": "kujo.plugin/v1", "key": row["plugin_key"], "name": row["name"], "version": row["version"], "description": "", "license": "UNLICENSED", "author": {"name": "Unknown", "url": ""}, "compatibility": {"cms": ">=1.0.0"}, "runtime": "connector", "capabilities": capabilities, "events": [], "abilities": [], "settings_schema": {"type": "object"}, "defaults": {}, "distribution": {"homepage": "", "repository": "", "package_url": "", "integrity": ""}}
+	return {"schema": "kujo.plugin/v1", "key": row["plugin_key"], "name": row["name"], "version": row["version"], "description": "", "license": "UNLICENSED", "author": {"name": "Unknown", "url": ""}, "compatibility": {"cms": ">=1.0.0"}, "runtime": "connector", "capabilities": capabilities, "events": [], "abilities": [], "connectors": [], "settings_schema": {"type": "object"}, "defaults": {}, "distribution": {"homepage": "", "repository": "", "package_url": "", "integrity": ""}, "admin": {"icon": "", "navigation": []}}
 }
 
 func installed_package_state(db, kind, key, defaults) {
@@ -208,11 +253,44 @@ func installed_package_state(db, kind, key, defaults) {
 }
 
 export extension_contracts := func() {
-	return {"schema": "kujo.extensions/v1", "theme": {"schema": "kujo.theme/v1", "manifest_file": "kujo-theme.json", "install": "POST /v1/themes/install", "validate": "POST /v1/themes/validate", "export": "GET /v1/themes/:id/export", "activation": "POST /v1/themes/:id/activate"}, "plugin": {"schema": "kujo.plugin/v1", "manifest_file": "kujo-plugin.json", "install": "POST /v1/plugins/install", "validate": "POST /v1/plugins/validate", "export": "GET /v1/plugins/:id/export", "activation": "PATCH /v1/plugins/:id"}, "package": {"format": "zip", "max_archive_bytes": 16777216, "max_uncompressed_bytes": 67108864, "max_files": 2000, "digest": "sha256", "browser_upload": "administration adapter extracts and verifies the manifest before calling install"}, "security": {"remote_code_downloaded": false, "secrets_exported": false, "install_default": "inactive", "plugin_hooks_require_server_secret": true}, "portability": {"theme_runtime": "headless frontend package", "plugin_runtime": "declared external connector, webhook, browser module, or hybrid", "distribution": "HTTPS package metadata with optional sha256 integrity"}}
+	return {"schema": "kujo.extensions/v1", "theme": {"schema": "kujo.theme/v1", "manifest_file": "kujo-theme.json", "install": "POST /v1/themes/install", "validate": "POST /v1/themes/validate", "export": "GET /v1/themes/:id/export", "activation": "POST /v1/themes/:id/activate"}, "plugin": {"schema": "kujo.plugin/v1", "manifest_file": "kujo-plugin.json", "install": "POST /v1/plugins/install", "validate": "POST /v1/plugins/validate", "export": "GET /v1/plugins/:id/export", "activation": "PATCH /v1/plugins/:id"}, "admin": {"icon": "HTTPS or package-relative branded image", "navigation": "ordered, capability-scoped /cms links from the active theme and active plugins", "navigation_endpoint": "GET /v1/extensions/navigation", "ai_endpoint": "GET /v1/extensions/ai"}, "package": {"format": "zip", "max_archive_bytes": 16777216, "max_uncompressed_bytes": 67108864, "max_files": 2000, "digest": "sha256", "browser_upload": "administration adapter extracts and verifies the manifest before calling install"}, "security": {"remote_code_downloaded": false, "secrets_exported": false, "install_default": "inactive", "plugin_hooks_require_server_secret": true}, "portability": {"theme_runtime": "headless frontend package", "plugin_runtime": "declared external connector, webhook, browser module, or hybrid", "distribution": "HTTPS package metadata with optional sha256 integrity"}}
+}
+
+export extension_navigation := func(db) {
+	items := []
+	theme_rows := db_query_safe(db, "SELECT * FROM themes WHERE status = 'active' ORDER BY name ASC", [])
+	plugin_rows := db_query_safe(db, "SELECT * FROM plugins WHERE status = 'active' ORDER BY name ASC", [])
+	if theme_rows["ok"] == true {
+		for row in theme_rows["rows"] {
+			manifest := theme_manifest_from_row(row); admin := dict_get_or(manifest, "admin", {})
+			for item in dict_get_or(admin, "navigation", []) { item["source"] := "theme"; item["source_key"] := manifest["key"]; item["source_icon"] := dict_get_or(admin, "icon", ""); items = push(items, item) }
+		}
+	}
+	if plugin_rows["ok"] == true {
+		for row in plugin_rows["rows"] {
+			manifest := plugin_manifest_from_row(row); admin := dict_get_or(manifest, "admin", {})
+			for item in dict_get_or(admin, "navigation", []) { item["source"] := "plugin"; item["source_key"] := manifest["key"]; item["source_icon"] := dict_get_or(admin, "icon", ""); items = push(items, item) }
+		}
+	}
+	return items
+}
+
+export extension_ai_registry := func(db) {
+	abilities := []; connectors := []
+	rows := db_query_safe(db, "SELECT * FROM plugins WHERE status = 'active' ORDER BY name ASC", [])
+	if rows["ok"] == false { return {"abilities": abilities, "connectors": connectors} }
+	for row in rows["rows"] {
+		manifest := plugin_manifest_from_row(row)
+		for ability in dict_get_or(manifest, "abilities", []) { ability["source"] := "plugin"; ability["source_key"] := manifest["key"]; ability["source_name"] := manifest["name"]; ability["enabled"] := true; ability["manageable"] := false; abilities = push(abilities, ability) }
+		for connector_item in dict_get_or(manifest, "connectors", []) { connector_item["source"] := "plugin"; connector_item["source_key"] := manifest["key"]; connector_item["source_name"] := manifest["name"]; connector_item["enabled"] := true; connector_item["manageable"] := false; connectors = push(connectors, connector_item) }
+	}
+	return {"abilities": abilities, "connectors": connectors}
 }
 
 export register_extension_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/extensions/contracts", func(req) { guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }; return ok(ctx["cfg"], extension_contracts()) })
+	server = server.route("GET", "/v1/extensions/navigation", func(req) { guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }; items := extension_navigation(ctx["db"]); return ok(ctx["cfg"], {"items": items, "count": len(items)}) })
+	server = server.route("GET", "/v1/extensions/ai", func(req) { guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }; registry := extension_ai_registry(ctx["db"]); return ok(ctx["cfg"], {"abilities": registry["abilities"], "connectors": registry["connectors"], "counts": {"abilities": len(registry["abilities"]), "connectors": len(registry["connectors"])}}) })
 	server = server.route("POST", "/v1/themes/validate", func(req) {
 		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
 		body := null; err := null; try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { err = e }

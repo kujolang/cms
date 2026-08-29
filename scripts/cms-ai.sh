@@ -11,6 +11,10 @@ usage() {
     'Commands:' \
     '  status                              Show connector and interoperability status.' \
     '  connectors                          List Kujo connectors without secret values.' \
+    '  ability:enable <namespace/name>      Enable a built-in ability.' \
+    '  ability:disable <namespace/name>     Disable a built-in ability.' \
+    '  connector:enable <key>              Activate a configured connector.' \
+    '  connector:disable <key>             Deactivate a connector.' \
     '  categories                          List ability categories.' \
     '  list [category]                     List abilities, optionally by category.' \
     '  get <namespace/name>                Inspect one ability.' \
@@ -49,6 +53,21 @@ case "${command}" in
   help|-h|--help) usage ;;
   status) require_token; request POST '/v1/abilities/ai/integration-status/run' '{"input":{}}' ;;
   connectors) require_token; request GET '/v1/ai/connectors' ;;
+  ability:enable|ability:disable)
+    require_token
+    name="$(ability_path "${2:-}")"
+    enabled=false
+    if [[ "${command}" == 'ability:enable' ]]; then enabled=true; fi
+    request PATCH "/v1/abilities/${name}" "{\"enabled\":${enabled}}"
+    ;;
+  connector:enable|connector:disable)
+    require_token
+    key="${2:-}"
+    if [[ ! "${key}" =~ ^[a-z0-9_-]+$ ]]; then usage >&2; exit 2; fi
+    enabled=false
+    if [[ "${command}" == 'connector:enable' ]]; then enabled=true; fi
+    request PATCH "/v1/ai/connectors/${key}" "{\"enabled\":${enabled}}"
+    ;;
   categories) require_token; request GET '/v1/abilities/categories' ;;
   list)
     require_token
