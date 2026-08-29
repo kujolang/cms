@@ -149,7 +149,7 @@ User APIs:
 - `GET|PATCH /v1/users/:id` reads or updates profiles, roles, and account status.
 - `GET /v1/users/:id/credentials` is a bearer-protected server-to-server credential lookup; password hashes are never included in normal user responses.
 - `GET|PATCH /v1/settings/registration` reads or changes the `open`, `approval`, or `closed` signup policy and its default role.
-- `GET|PATCH /v1/settings/social-sharing` reads or changes the allowed sharing networks and the content types that display them. This setting is bearer-protected and audited like other administration settings.
+- `GET|PATCH /v1/settings/social-sharing` reads or changes the allowed sharing networks, per-network account attribution, and the content types that display them. This setting is bearer-protected and audited like other administration settings.
 - `GET /v1/seo/entries` returns a filterable, paginated SEO inventory with scores, issue codes, metadata lengths, taxonomy counts, and content signals.
 - `PATCH /v1/entries/:id/seo` performs a focused SEO update without replacing other entry metadata; `POST /v1/seo/entries/bulk` applies the same supported fields to as many as 200 selected entries.
 

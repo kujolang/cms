@@ -273,17 +273,23 @@ func update_registration_settings(req, ctx) {
 
 func social_sharing_settings(req, ctx) {
 	cfg := ctx["cfg"]
+	default_accounts := {"x": "", "linkedin": "", "facebook": "", "bluesky": "", "reddit": "", "whatsapp": "", "email": "", "pinterest": ""}
 	result := db_query_safe(ctx["db"], "SELECT setting_value, updated_at FROM settings WHERE setting_key = 'social_sharing' LIMIT 1", [])
 	if result["ok"] == false || len(result["rows"]) == 0 {
-		return ok(cfg, {"networks": ["x", "linkedin", "facebook", "bluesky", "reddit", "whatsapp", "email"], "content_types": ["article"], "accounts": {"x": "", "bluesky": ""}})
+		return ok(cfg, {"networks": ["x", "linkedin", "facebook", "bluesky", "reddit", "whatsapp", "email", "pinterest"], "content_types": ["article"], "accounts": default_accounts})
 	}
 	value := {}
 	parse_err := null
 	try { value = parse_json(to_string(result["rows"][0]["setting_value"])) } except e { parse_err = e }
 	if type(parse_err) != "null" || type(value) != "dict" {
-		value = {"networks": ["x", "linkedin", "facebook", "bluesky", "reddit", "whatsapp", "email"], "content_types": ["article"], "accounts": {"x": "", "bluesky": ""}}
+		value = {"networks": ["x", "linkedin", "facebook", "bluesky", "reddit", "whatsapp", "email", "pinterest"], "content_types": ["article"], "accounts": default_accounts}
 	}
-	if has_key(value, "accounts") == 0 || type(value["accounts"]) != "dict" { value["accounts"] = {"x": "", "bluesky": ""} }
+	normalized_accounts := dict_get_or(value, "accounts", {})
+	if type(normalized_accounts) != "dict" { normalized_accounts = {} }
+	for account_key in ["x", "linkedin", "facebook", "bluesky", "reddit", "whatsapp", "email", "pinterest"] {
+		if has_key(normalized_accounts, account_key) == 0 { normalized_accounts[account_key] = "" }
+	}
+	value["accounts"] = normalized_accounts
 	value["updated_at"] = result["rows"][0]["updated_at"]
 	return ok(cfg, value)
 }
@@ -302,7 +308,7 @@ func update_social_sharing_settings(req, ctx) {
 	clean_networks := []
 	for network in networks {
 		name := to_lower(trim(to_string(network)))
-		if name == "x" || name == "linkedin" || name == "facebook" || name == "bluesky" || name == "reddit" || name == "whatsapp" || name == "email" { clean_networks = push(clean_networks, name) }
+		if name == "x" || name == "linkedin" || name == "facebook" || name == "bluesky" || name == "reddit" || name == "whatsapp" || name == "email" || name == "pinterest" { clean_networks = push(clean_networks, name) }
 	}
 	clean_types := []
 	for content_type in content_types {
@@ -310,10 +316,12 @@ func update_social_sharing_settings(req, ctx) {
 		if is_valid_slug_key(key) { clean_types = push(clean_types, key) }
 	}
 	clean_accounts := {}
-	for account_key in ["x", "bluesky"] {
+	for account_key in ["x", "linkedin", "facebook", "bluesky", "reddit", "whatsapp", "email", "pinterest"] {
 		account_value := trim(to_string(dict_get_or(accounts, account_key, "")))
-		account_value = regex_replace(account_value, "^@+", "")
-		if len(account_value) > 64 { return fail(cfg, 400, "invalid_social_account", account_key + " account must be 64 characters or fewer", {}) }
+		if account_key == "x" || account_key == "bluesky" || account_key == "pinterest" { account_value = regex_replace(account_value, "^@+", "") }
+		if account_key == "reddit" { account_value = regex_replace(account_value, "^[uU]/", "") }
+		if account_key == "whatsapp" { account_value = regex_replace(account_value, "^\\++", "") }
+		if len(account_value) > 254 { return fail(cfg, 400, "invalid_social_account", account_key + " account must be 254 characters or fewer", {}) }
 		clean_accounts[account_key] = account_value
 	}
 	settings_json := to_json({"networks": clean_networks, "content_types": clean_types, "accounts": clean_accounts})
