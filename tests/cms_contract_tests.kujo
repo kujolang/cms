@@ -11,7 +11,19 @@ test_setup {
 	from backend.routes.plugins import list_webhook_event_schemas, validate_webhook_event_payload, webhook_schema_for
 	from backend.routes.abilities import ability_categories, ability_registry, connector_registry, find_ability, mcp_tool_descriptors
 	from backend.routes.webmcp import build_webmcp_manifest, build_webmcp_runtime_source, public_content_record, webmcp_entry_allowed, webmcp_tool_registry
-	from backend.routes.extensions import extension_contracts, validate_plugin_manifest, validate_theme_manifest
+	from backend.routes.extensions import extension_contracts, validate_package_receipt, validate_plugin_manifest, validate_theme_manifest
+}
+
+test "extension package receipts are bounded and tied to their manifest type" {
+	receipt := {"format": "zip", "filename": "field-notes-1.0.2.zip", "size_bytes": 240000, "uncompressed_bytes": 920000, "file_count": 74, "manifest_path": "field-notes/kujo-theme.json", "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}
+	assert_equal(validate_package_receipt(receipt, "theme")["ok"], true)
+	receipt["manifest_path"] = "field-notes/kujo-plugin.json"
+	assert_equal(validate_package_receipt(receipt, "theme")["code"], "invalid_package_manifest_path")
+	receipt["manifest_path"] = "../kujo-theme.json"
+	assert_equal(validate_package_receipt(receipt, "theme")["code"], "invalid_package_manifest_path")
+	receipt["manifest_path"] = "field-notes/kujo-theme.json"
+	receipt["uncompressed_bytes"] = 70000000
+	assert_equal(validate_package_receipt(receipt, "theme")["code"], "invalid_package_limits")
 }
 
 test "portable theme manifests are strict, distributable, and secret-free" {
@@ -19,6 +31,7 @@ test "portable theme manifests are strict, distributable, and secret-free" {
 	result := validate_theme_manifest(manifest)
 	assert_equal(result["ok"], true)
 	assert_equal(result["manifest"]["key"], "field_notes")
+	assert_equal(result["manifest"]["name"], "Field Notes")
 	assert_equal(has_key(result["manifest"], "secrets") == 1, false)
 	manifest["unexpected"] = true
 	assert_equal(validate_theme_manifest(manifest)["code"], "unknown_manifest_fields")
@@ -32,6 +45,7 @@ test "portable plugin manifests declare bounded external runtimes" {
 	result := validate_plugin_manifest(manifest)
 	assert_equal(result["ok"], true)
 	assert_equal(result["manifest"]["runtime"], "webhook")
+	assert_equal(result["manifest"]["name"], "Content Notifier")
 	manifest["runtime"] = "embedded_server_code"
 	assert_equal(validate_plugin_manifest(manifest)["code"], "invalid_runtime")
 	manifest["runtime"] = "connector"
@@ -510,6 +524,27 @@ test "workspace keys are unique within a tenant instead of globally" {
 	if file_exists(db_path + "-shm") {
 		delete_file(db_path + "-shm")
 	}
+}
+
+test "schema v8 webhook outbox upgrades before new-column indexes are created" {
+	if path_exists("results") == false { create_dir("results") }
+	db_path := "./results/test_webhook_v8_upgrade.db"
+	if file_exists(db_path) { delete_file(db_path) }
+	pre_migration_db := db_connect("sqlite", db_path)
+	_ = db_execute(pre_migration_db, "CREATE TABLE webhook_outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, hook_id INTEGER NOT NULL, event_id TEXT NOT NULL, event_type TEXT NOT NULL, payload_json TEXT NOT NULL, handler_url TEXT NOT NULL, shared_secret TEXT NOT NULL, status TEXT NOT NULL, attempt_count INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 5, next_attempt_at TEXT NOT NULL, last_error TEXT, last_status_code INTEGER, delivered_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)", [])
+	_ = db_execute(pre_migration_db, "CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL, updated_at TEXT NOT NULL)", [])
+	_ = db_execute(pre_migration_db, "INSERT INTO schema_version (id, version, updated_at) VALUES (1, 8, ?)", [now()])
+	connection := connect_database(load_config({"db_path": db_path, "api_token": "webhook-upgrade-contract-token", "audit_log": false}))
+	assert_equal(connection["ok"], true)
+	assert_equal(connection["schema_version"], TARGET_SCHEMA_VERSION)
+	db := connection["db"]
+	columns := db_query_safe(db, "PRAGMA table_info(webhook_outbox)", [])
+	assert_true(to_bool(contains(to_json(columns["rows"]), "source_audit_id") >= 0))
+	indexes := db_query_safe(db, "PRAGMA index_list(webhook_outbox)", [])
+	assert_true(to_bool(contains(to_json(indexes["rows"]), "idx_webhook_outbox_source_hook_event") >= 0))
+	if file_exists(db_path) { delete_file(db_path) }
+	if file_exists(db_path + "-wal") { delete_file(db_path + "-wal") }
+	if file_exists(db_path + "-shm") { delete_file(db_path + "-shm") }
 }
 
 test "auth contract keeps read-open and write-guarded behavior" {

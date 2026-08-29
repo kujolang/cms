@@ -3,6 +3,7 @@ set -euo pipefail
 
 CMS_EXT_BASE_URL="${CMS_BASE_URL:-http://127.0.0.1:4200}"
 CMS_EXT_TOKEN="${CMS_API_TOKEN:-}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
   printf '%s\n' \
@@ -13,10 +14,12 @@ usage() {
     '  catalog                           List installed themes and active plugins.' \
     '  theme:validate <manifest>         Validate kujo-theme.json.' \
     '  theme:install <manifest> [active] Install or update a theme package.' \
+    '  theme:install-zip <archive> [active] Verify and install a theme ZIP.' \
     '  theme:export <id>                 Export a secret-free theme manifest.' \
     '  theme:activate <id>               Activate an installed theme.' \
     '  plugin:validate <manifest>        Validate kujo-plugin.json.' \
     '  plugin:install <manifest> [active] Install or update a plugin package.' \
+    '  plugin:install-zip <archive> [active] Verify and install a plugin ZIP.' \
     '  plugin:export <id>                Export a secret-free plugin manifest.' \
     '' \
     'Environment: CMS_BASE_URL and CMS_API_TOKEN. Contracts, catalog, and theme export are public.'
@@ -54,6 +57,13 @@ install_payload() {
   jq -c --argjson active "${active}" '{manifest:.,activate:$active}' "${manifest}"
 }
 
+install_zip_payload() {
+  local archive_path="$1"
+  local active_value="${2:-false}"
+  if [[ "${active_value}" == "active" || "${active_value}" == "true" ]]; then active_value=true; else active_value=false; fi
+  node "${ROOT_DIR}/scripts/read-extension-package.mjs" "${archive_path}" | jq -c --argjson activate "${active_value}" '. + {activate: $activate}'
+}
+
 command="${1:-help}"
 case "${command}" in
   help|-h|--help) usage ;;
@@ -61,10 +71,12 @@ case "${command}" in
   catalog) request GET '/v1/extensions/catalog' ;;
   theme:validate) require_token; require_file "${2:-}"; request POST '/v1/themes/validate' "${2}" ;;
   theme:install) require_token; require_file "${2:-}"; request POST '/v1/themes/install' '' "$(install_payload "${2}" "${3:-false}")" ;;
+  theme:install-zip) require_token; require_file "${2:-}"; request POST '/v1/themes/install' '' "$(install_zip_payload "${2}" "${3:-false}")" ;;
   theme:export) require_id "${2:-}"; request GET "/v1/themes/${2}/export" ;;
   theme:activate) require_token; require_id "${2:-}"; request POST "/v1/themes/${2}/activate" ;;
   plugin:validate) require_token; require_file "${2:-}"; request POST '/v1/plugins/validate' "${2}" ;;
   plugin:install) require_token; require_file "${2:-}"; request POST '/v1/plugins/install' '' "$(install_payload "${2}" "${3:-false}")" ;;
+  plugin:install-zip) require_token; require_file "${2:-}"; request POST '/v1/plugins/install' '' "$(install_zip_payload "${2}" "${3:-false}")" ;;
   plugin:export) require_token; require_id "${2:-}"; request GET "/v1/plugins/${2}/export" ;;
   *) usage >&2; exit 2 ;;
 esac

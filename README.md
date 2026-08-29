@@ -164,11 +164,12 @@ Agent and terminal workflows can use `bash scripts/cms-seo.sh help` for report, 
 Portable extension workflows:
 
 - `GET /v1/extensions/contracts` describes the `kujo.theme/v1` and `kujo.plugin/v1` package contracts; `GET /v1/extensions/catalog` discovers installed themes and active plugins.
-- Theme and plugin manifests can be validated, installed or updated, activated, and exported through versioned API routes without exposing package settings or secrets.
+- Theme and plugin manifests can be validated, installed or updated, activated, and exported through versioned API routes without exposing package settings or secrets. Verified ZIP receipts bind an install to its filename, SHA-256 digest, manifest path, file count, and bounded expanded size.
 - Theme packages describe framework-neutral frontend entrypoints, templates, assets, settings, content types, and menu locations. Plugin packages declare connector, webhook, browser, or hybrid runtimes with explicit capabilities and events.
 - The CMS records manifests but never downloads or executes package code. Deployment tools verify and build theme artifacts separately; webhook secrets and provider credentials are configured through protected operational surfaces.
 - `bash scripts/cms-extensions.sh help` provides API-equivalent terminal commands. Canonical manifests live under `examples/extensions/` and the authoring contract is documented in [`docs/extensions.md`](docs/extensions.md).
-- Field Notes is packaged in the independent `cms-example` repository. The independent `cms-contact-form` repository demonstrates a hybrid plugin with a browser component, durable submission API, moderation CLI, discoverable abilities, signed notification delivery, and production safety controls.
+- Field Notes has its own forkable home in the independent `cms-field-notes-theme` repository and is bundled as the showcase default. The independent `cms-contact-form` repository demonstrates a hybrid plugin with a browser component, durable submission API, moderation CLI, discoverable abilities, signed notification delivery, and production safety controls.
+- CMS Studio in `cms-example` provides a nontechnical **Themes & plugins** screen with guarded ZIP upload, install-and-activate controls, installed-package status, source links, and plugin activation toggles.
 
 AI and agent interoperability:
 

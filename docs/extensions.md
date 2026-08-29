@@ -21,7 +21,9 @@ Lifecycle:
 
 [`examples/extensions/starter-theme/kujo-theme.json`](../examples/extensions/starter-theme/kujo-theme.json) is the canonical starter.
 
-The Field Notes frontend is a complete reusable theme package in the independent [`cms-example`](https://github.com/kujolang/cms-example) repository. Its root manifest maps the real templates, assets, content types, menu locations, settings, and administration entrypoint used by the showcase.
+The Field Notes frontend is a complete reusable theme package in the independent [`cms-field-notes-theme`](https://github.com/kujolang/cms-field-notes-theme) repository. The CMS showcase bundles it as the default, but the standalone repository contains only the public theme so creators can fork, remix, package, and distribute it without the administration application.
+
+The `cms-example` administration frontend adds **Themes & plugins**, where an administrator can drag in or choose a ZIP, install it, optionally activate it immediately, and manage installed extensions. Its server adapter rejects encrypted archives, traversal paths, unsupported compression, duplicate manifests, oversized packages, excessive expanded size, and CRC failures before calling the CMS install API. The CMS stores the normalized manifest and a bounded receipt containing the package digest and archive facts; it does not execute uploaded code.
 
 ## Plugin packages
 
@@ -54,6 +56,8 @@ Installing a newer manifest for an existing package preserves its current activa
 | Activate | `POST /v1/themes/:id/activate` | `PATCH /v1/plugins/:id` |
 
 Validation endpoints require an authenticated CMS reader and are rate-limited. Theme installation requires `admin.settings`; plugin installation and export require `admin.plugins`. Theme exports are public because frontend manifests are distributable metadata. Every export is curated and excludes stored settings, hook secrets, credentials, and connector endpoints.
+
+Install APIs accept an optional verified `package` receipt with ZIP filename, compressed and expanded sizes, file count, manifest path, and SHA-256 digest. `GET /v1/extensions/manage` gives authenticated administration adapters an all-installed catalog without exposing extension settings. Terminal users can install the same archive with `theme:install-zip` or `plugin:install-zip`; the CLI performs the archive checks locally before sending the receipt.
 
 ## Compatibility policy
 

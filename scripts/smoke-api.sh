@@ -188,6 +188,10 @@ assert_status "200" "install portable plugin"
 assert_contains '"installed":true' "plugin package installed"
 PLUGIN_PACKAGE_ID="$(jq -r '.data.plugin.id' <<<"${BODY}")"
 
+request "GET" "/v1/extensions/manage" "" "1"
+assert_status "200" "extension management catalog"
+assert_contains '"schema":"kujo.extensions.manage/v1"' "management catalog schema"
+
 request "GET" "/v1/themes/${THEME_PACKAGE_ID}/export"
 assert_status "200" "export portable theme"
 assert_contains '"secrets_included":false' "theme export excludes secrets"
