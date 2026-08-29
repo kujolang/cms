@@ -1,0 +1,256 @@
+from backend.core.database import db_execute_safe, db_query_safe
+from backend.core.http import fail, guard_request, ok, write_audit
+from backend.core.utils import bool_or, dict_get_or, is_valid_slug_key
+
+func failure(code, message, details) {
+	return {"ok": false, "code": code, "message": message, "details": details}
+}
+
+func valid_version(value) {
+	text := trim(to_string(value))
+	if len(text) < 5 || len(text) > 64 { return false }
+	return regex_replace(text, "[0-9A-Za-z\\.\\+\\-]", "") == ""
+}
+
+func valid_https_url(value, allow_empty) {
+	text := trim(to_string(value))
+	if text == "" { return allow_empty }
+	return len(text) <= 2048 && starts_with(to_lower(text), "https://")
+}
+
+func valid_relative_path(value) {
+	path := trim(to_string(value))
+	if path == "" || len(path) > 512 || starts_with(path, "/") || starts_with(path, "\\") { return false }
+	if contains(path, "..") == 1 || contains(path, ":") == 1 || contains(path, "\\") == 1 { return false }
+	return regex_replace(path, "[A-Za-z0-9_@()\\[\\]\\-\\./]", "") == ""
+}
+
+func bounded_string(value, minimum, maximum) {
+	text := trim(to_string(value))
+	return len(text) >= minimum && len(text) <= maximum
+}
+
+func unknown_keys(value, allowed) {
+	unknown := []
+	if type(value) != "dict" { return unknown }
+	for key in keys(value) {
+		found := false
+		for allowed_key in allowed { if key == allowed_key { found = true } }
+		if found == false { unknown = push(unknown, key) }
+	}
+	return unknown
+}
+
+func contains_sensitive_keys(value) {
+	if type(value) == "dict" {
+		for key in keys(value) {
+			name := to_lower(trim(to_string(key)))
+			if name == "secret" || name == "shared_secret" || name == "password" || name == "token" || name == "api_key" || name == "private_key" || name == "credential" || ends_with(name, "_secret") || ends_with(name, "_password") || ends_with(name, "_token") || ends_with(name, "_api_key") { return true }
+			if contains_sensitive_keys(value[key]) { return true }
+		}
+	}
+	if type(value) == "array" { for item in value { if contains_sensitive_keys(item) { return true } } }
+	return false
+}
+
+func validate_string_array(value, field, maximum_items, maximum_length, path_mode) {
+	if type(value) != "array" || len(value) > maximum_items { return failure("invalid_" + field, field + " must be an array with at most " + to_string(maximum_items) + " items", {}) }
+	normalized := []
+	for raw in value {
+		text := trim(to_string(raw))
+		valid := bounded_string(text, 1, maximum_length)
+		if path_mode == true { valid = valid_relative_path(text) }
+		if valid == false { return failure("invalid_" + field, field + " contains an invalid value", {"value": text}) }
+		normalized = push(normalized, text)
+	}
+	return {"ok": true, "value": normalized}
+}
+
+func validate_distribution(raw) {
+	if type(raw) != "dict" { return failure("invalid_distribution", "distribution must be an object", {}) }
+	unknown := unknown_keys(raw, ["homepage", "repository", "package_url", "integrity"])
+	if len(unknown) > 0 { return failure("unknown_distribution_fields", "distribution contains unsupported fields", {"fields": unknown}) }
+	for key in ["homepage", "repository", "package_url"] {
+		if valid_https_url(dict_get_or(raw, key, ""), true) == false { return failure("invalid_distribution_url", key + " must be an https URL", {"field": key}) }
+	}
+	integrity := trim(to_string(dict_get_or(raw, "integrity", "")))
+	if integrity != "" && (len(integrity) < 16 || len(integrity) > 256 || starts_with(integrity, "sha256-") == false) { return failure("invalid_integrity", "integrity must use a sha256- digest", {}) }
+	return {"ok": true, "value": {"homepage": trim(to_string(dict_get_or(raw, "homepage", ""))), "repository": trim(to_string(dict_get_or(raw, "repository", ""))), "package_url": trim(to_string(dict_get_or(raw, "package_url", ""))), "integrity": integrity}}
+}
+
+func validate_author(raw) {
+	if type(raw) != "dict" { return failure("invalid_author", "author must be an object", {}) }
+	unknown := unknown_keys(raw, ["name", "url"])
+	if len(unknown) > 0 { return failure("unknown_author_fields", "author contains unsupported fields", {"fields": unknown}) }
+	name := trim(to_string(dict_get_or(raw, "name", "")))
+	url := trim(to_string(dict_get_or(raw, "url", "")))
+	if bounded_string(name, 2, 160) == false { return failure("invalid_author_name", "author.name must contain 2 to 160 characters", {}) }
+	if valid_https_url(url, true) == false { return failure("invalid_author_url", "author.url must be an https URL", {}) }
+	return {"ok": true, "value": {"name": name, "url": url}}
+}
+
+export validate_theme_manifest := func(raw) {
+	if type(raw) != "dict" { return failure("invalid_manifest", "Theme manifest must be an object", {}) }
+	allowed := ["schema", "key", "name", "version", "description", "license", "author", "compatibility", "entrypoints", "templates", "assets", "settings_schema", "defaults", "supports", "content_types", "menu_locations", "distribution"]
+	unknown := unknown_keys(raw, allowed)
+	if len(unknown) > 0 { return failure("unknown_manifest_fields", "Theme manifest contains unsupported fields", {"fields": unknown}) }
+	if trim(to_string(dict_get_or(raw, "schema", ""))) != "kujo.theme/v1" { return failure("invalid_schema", "schema must be kujo.theme/v1", {}) }
+	key := trim(to_string(dict_get_or(raw, "key", "")))
+	name := trim(to_string(dict_get_or(raw, "name", "")))
+	version := trim(to_string(dict_get_or(raw, "version", "")))
+	if is_valid_slug_key(key) == false || len(key) > 64 { return failure("invalid_theme_key", "key must be lowercase slug text", {}) }
+	if bounded_string(name, 2, 160) == false { return failure("invalid_name", "name must contain 2 to 160 characters", {}) }
+	if valid_version(version) == false { return failure("invalid_version", "version must be a portable version identifier", {}) }
+	description := trim(to_string(dict_get_or(raw, "description", "")))
+	license := trim(to_string(dict_get_or(raw, "license", "")))
+	if len(description) > 1000 || bounded_string(license, 2, 80) == false { return failure("invalid_metadata", "description or license is invalid", {}) }
+	author_result := validate_author(dict_get_or(raw, "author", {})); if author_result["ok"] == false { return author_result }
+	compatibility := dict_get_or(raw, "compatibility", {})
+	if type(compatibility) != "dict" || len(keys(compatibility)) > 4 || len(to_json(compatibility)) > 4096 || contains_sensitive_keys(compatibility) { return failure("invalid_compatibility", "compatibility must be a small secret-free object", {}) }
+	entrypoints := dict_get_or(raw, "entrypoints", {})
+	if type(entrypoints) != "dict" || len(keys(entrypoints)) == 0 || len(keys(entrypoints)) > 8 { return failure("invalid_entrypoints", "entrypoints must define 1 to 8 relative paths", {}) }
+	for entrypoint_key in keys(entrypoints) { if is_valid_slug_key(entrypoint_key) == false || valid_relative_path(entrypoints[entrypoint_key]) == false { return failure("invalid_entrypoint", "entrypoints must use slug keys and relative paths", {"entrypoint": entrypoint_key}) } }
+	templates := dict_get_or(raw, "templates", {})
+	if type(templates) != "dict" || len(keys(templates)) > 50 { return failure("invalid_templates", "templates must be an object with at most 50 paths", {}) }
+	for template_key in keys(templates) { if is_valid_slug_key(template_key) == false || valid_relative_path(templates[template_key]) == false { return failure("invalid_template", "templates must use slug keys and relative paths", {"template": template_key}) } }
+	assets := dict_get_or(raw, "assets", {})
+	if type(assets) != "dict" || len(unknown_keys(assets, ["styles", "scripts", "images"])) > 0 { return failure("invalid_assets", "assets may contain styles, scripts, and images", {}) }
+	for asset_key in ["styles", "scripts", "images"] { asset_result := validate_string_array(dict_get_or(assets, asset_key, []), "assets_" + asset_key, 100, 512, true); if asset_result["ok"] == false { return asset_result } }
+	settings_schema := dict_get_or(raw, "settings_schema", {"type": "object", "additionalProperties": false})
+	defaults := dict_get_or(raw, "defaults", {})
+	if type(settings_schema) != "dict" || type(defaults) != "dict" || len(to_json(settings_schema)) > 65536 || len(to_json(defaults)) > 65536 || contains_sensitive_keys(settings_schema) || contains_sensitive_keys(defaults) { return failure("invalid_settings", "settings_schema and defaults must be bounded secret-free objects", {}) }
+	supports_result := validate_string_array(dict_get_or(raw, "supports", []), "supports", 50, 80, false); if supports_result["ok"] == false { return supports_result }
+	content_result := validate_string_array(dict_get_or(raw, "content_types", []), "content_types", 50, 80, false); if content_result["ok"] == false { return content_result }
+	menu_result := validate_string_array(dict_get_or(raw, "menu_locations", []), "menu_locations", 20, 80, false); if menu_result["ok"] == false { return menu_result }
+	distribution_result := validate_distribution(dict_get_or(raw, "distribution", {})); if distribution_result["ok"] == false { return distribution_result }
+	normalized := {"schema": "kujo.theme/v1", "key": key, "name": name, "version": version, "description": description, "license": license, "author": author_result["value"], "compatibility": compatibility, "entrypoints": entrypoints, "templates": templates, "assets": assets, "settings_schema": settings_schema, "defaults": defaults, "supports": supports_result["value"], "content_types": content_result["value"], "menu_locations": menu_result["value"], "distribution": distribution_result["value"]}
+	return {"ok": true, "manifest": normalized}
+}
+
+export validate_plugin_manifest := func(raw) {
+	if type(raw) != "dict" { return failure("invalid_manifest", "Plugin manifest must be an object", {}) }
+	allowed := ["schema", "key", "name", "version", "description", "license", "author", "compatibility", "runtime", "capabilities", "events", "abilities", "settings_schema", "defaults", "distribution"]
+	unknown := unknown_keys(raw, allowed)
+	if len(unknown) > 0 { return failure("unknown_manifest_fields", "Plugin manifest contains unsupported fields", {"fields": unknown}) }
+	if trim(to_string(dict_get_or(raw, "schema", ""))) != "kujo.plugin/v1" { return failure("invalid_schema", "schema must be kujo.plugin/v1", {}) }
+	key := trim(to_string(dict_get_or(raw, "key", ""))); name := trim(to_string(dict_get_or(raw, "name", ""))); version := trim(to_string(dict_get_or(raw, "version", "")))
+	if is_valid_slug_key(key) == false || len(key) > 64 { return failure("invalid_plugin_key", "key must be lowercase slug text", {}) }
+	if bounded_string(name, 2, 160) == false || valid_version(version) == false { return failure("invalid_identity", "name or version is invalid", {}) }
+	description := trim(to_string(dict_get_or(raw, "description", ""))); license := trim(to_string(dict_get_or(raw, "license", "")))
+	if len(description) > 1000 || bounded_string(license, 2, 80) == false { return failure("invalid_metadata", "description or license is invalid", {}) }
+	author_result := validate_author(dict_get_or(raw, "author", {})); if author_result["ok"] == false { return author_result }
+	compatibility := dict_get_or(raw, "compatibility", {}); if type(compatibility) != "dict" || len(keys(compatibility)) > 4 || len(to_json(compatibility)) > 4096 || contains_sensitive_keys(compatibility) { return failure("invalid_compatibility", "compatibility must be a small secret-free object", {}) }
+	runtime := to_lower(trim(to_string(dict_get_or(raw, "runtime", "connector"))))
+	if runtime != "connector" && runtime != "webhook" && runtime != "browser" && runtime != "hybrid" { return failure("invalid_runtime", "runtime must be connector, webhook, browser, or hybrid", {}) }
+	capabilities_result := validate_string_array(dict_get_or(raw, "capabilities", []), "capabilities", 100, 128, false); if capabilities_result["ok"] == false { return capabilities_result }
+	events_result := validate_string_array(dict_get_or(raw, "events", []), "events", 100, 128, false); if events_result["ok"] == false { return events_result }
+	abilities := dict_get_or(raw, "abilities", [])
+	if type(abilities) != "array" || len(abilities) > 50 { return failure("invalid_abilities", "abilities must be an array with at most 50 descriptors", {}) }
+	for ability in abilities { if type(ability) != "dict" || len(keys(ability)) > 8 || len(to_json(ability)) > 8192 || contains_sensitive_keys(ability) || bounded_string(dict_get_or(ability, "name", ""), 3, 160) == false { return failure("invalid_ability", "ability descriptors must be bounded secret-free objects with a name", {}) } }
+	settings_schema := dict_get_or(raw, "settings_schema", {"type": "object", "additionalProperties": false}); defaults := dict_get_or(raw, "defaults", {})
+	if type(settings_schema) != "dict" || type(defaults) != "dict" || len(to_json(settings_schema)) > 65536 || len(to_json(defaults)) > 65536 || contains_sensitive_keys(settings_schema) || contains_sensitive_keys(defaults) { return failure("invalid_settings", "settings_schema and defaults must be bounded secret-free objects", {}) }
+	distribution_result := validate_distribution(dict_get_or(raw, "distribution", {})); if distribution_result["ok"] == false { return distribution_result }
+	normalized := {"schema": "kujo.plugin/v1", "key": key, "name": name, "version": version, "description": description, "license": license, "author": author_result["value"], "compatibility": compatibility, "runtime": runtime, "capabilities": capabilities_result["value"], "events": events_result["value"], "abilities": abilities, "settings_schema": settings_schema, "defaults": defaults, "distribution": distribution_result["value"]}
+	return {"ok": true, "manifest": normalized}
+}
+
+func parse_json_object(value, fallback) {
+	if type(value) == "dict" { return value }
+	parsed := fallback; err := null
+	try { parsed = parse_json(to_string(value)) } except e { err = e }
+	if type(err) != "null" || type(parsed) != "dict" { return fallback }
+	return parsed
+}
+
+func theme_manifest_from_row(row) {
+	config := parse_json_object(dict_get_or(row, "config_json", "{}"), {})
+	manifest := dict_get_or(config, "package_manifest", null)
+	if type(manifest) == "dict" { return manifest }
+	return {"schema": "kujo.theme/v1", "key": row["theme_key"], "name": row["name"], "version": row["version"], "description": "", "license": "UNLICENSED", "author": {"name": "Unknown", "url": ""}, "compatibility": {"cms": ">=1.0.0"}, "entrypoints": {"web": "app/layout"}, "templates": {}, "assets": {"styles": [], "scripts": [], "images": []}, "settings_schema": {"type": "object"}, "defaults": {}, "supports": [], "content_types": [], "menu_locations": [], "distribution": {"homepage": "", "repository": "", "package_url": "", "integrity": ""}}
+}
+
+func plugin_manifest_from_row(row) {
+	config := parse_json_object(dict_get_or(row, "config_json", "{}"), {})
+	manifest := dict_get_or(config, "package_manifest", null)
+	if type(manifest) == "dict" { return manifest }
+	capabilities := []; err := null
+	try { capabilities = parse_json(to_string(dict_get_or(row, "capabilities_json", "[]"))) } except e { err = e }
+	if type(err) != "null" || type(capabilities) != "array" { capabilities = [] }
+	return {"schema": "kujo.plugin/v1", "key": row["plugin_key"], "name": row["name"], "version": row["version"], "description": "", "license": "UNLICENSED", "author": {"name": "Unknown", "url": ""}, "compatibility": {"cms": ">=1.0.0"}, "runtime": "connector", "capabilities": capabilities, "events": [], "abilities": [], "settings_schema": {"type": "object"}, "defaults": {}, "distribution": {"homepage": "", "repository": "", "package_url": "", "integrity": ""}}
+}
+
+func installed_package_state(db, kind, key, defaults) {
+	result := null
+	if kind == "theme" { result = db_query_safe(db, "SELECT id, status, config_json FROM themes WHERE theme_key = ? LIMIT 1", [key]) } else { result = db_query_safe(db, "SELECT id, status, config_json FROM plugins WHERE plugin_key = ? LIMIT 1", [key]) }
+	if result["ok"] == false || len(result["rows"]) == 0 { return {"exists": false, "id": 0, "status": "inactive", "settings": defaults} }
+	row := result["rows"][0]; config := parse_json_object(dict_get_or(row, "config_json", "{}"), {}); settings := dict_get_or(config, "settings", defaults); if type(settings) != "dict" { settings = defaults }
+	return {"exists": true, "id": row["id"], "status": row["status"], "settings": settings}
+}
+
+export extension_contracts := func() {
+	return {"schema": "kujo.extensions/v1", "theme": {"schema": "kujo.theme/v1", "manifest_file": "kujo-theme.json", "install": "POST /v1/themes/install", "validate": "POST /v1/themes/validate", "export": "GET /v1/themes/:id/export", "activation": "POST /v1/themes/:id/activate"}, "plugin": {"schema": "kujo.plugin/v1", "manifest_file": "kujo-plugin.json", "install": "POST /v1/plugins/install", "validate": "POST /v1/plugins/validate", "export": "GET /v1/plugins/:id/export", "activation": "PATCH /v1/plugins/:id"}, "security": {"remote_code_downloaded": false, "secrets_exported": false, "install_default": "inactive", "plugin_hooks_require_server_secret": true}, "portability": {"theme_runtime": "headless frontend package", "plugin_runtime": "declared external connector, webhook, browser module, or hybrid", "distribution": "HTTPS package metadata with optional sha256 integrity"}}
+}
+
+export register_extension_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/extensions/contracts", func(req) { guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }; return ok(ctx["cfg"], extension_contracts()) })
+	server = server.route("POST", "/v1/themes/validate", func(req) {
+		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
+		body := null; err := null; try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { err = e }
+		if type(err) != "null" { return fail(ctx["cfg"], 400, "invalid_body", "Invalid JSON body", {}) }
+		result := validate_theme_manifest(body); if result["ok"] == false { return fail(ctx["cfg"], 400, result["code"], result["message"], result["details"]) }
+		return ok(ctx["cfg"], {"valid": true, "manifest": result["manifest"]})
+	})
+	server = server.route("POST", "/v1/plugins/validate", func(req) {
+		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
+		body := null; err := null; try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { err = e }
+		if type(err) != "null" { return fail(ctx["cfg"], 400, "invalid_body", "Invalid JSON body", {}) }
+		result := validate_plugin_manifest(body); if result["ok"] == false { return fail(ctx["cfg"], 400, result["code"], result["message"], result["details"]) }
+		return ok(ctx["cfg"], {"valid": true, "manifest": result["manifest"]})
+	})
+	server = server.route("POST", "/v1/themes/install", func(req) {
+		guard := guard_request(req, ctx, "admin.settings"); if guard["ok"] == false { return guard["response"] }
+		body := null; err := null; try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { err = e }
+		if type(err) != "null" || type(body) != "dict" { return fail(ctx["cfg"], 400, "invalid_body", "Invalid JSON body", {}) }
+		manifest_raw := dict_get_or(body, "manifest", body); result := validate_theme_manifest(manifest_raw); if result["ok"] == false { return fail(ctx["cfg"], 400, result["code"], result["message"], result["details"]) }
+		manifest := result["manifest"]; package_state := installed_package_state(ctx["db"], "theme", manifest["key"], manifest["defaults"]); activate := bool_or(dict_get_or(body, "activate", false), false); settings := package_state["settings"]; if has_key(body, "settings") == 1 { settings = body["settings"] }
+		if type(settings) != "dict" || len(to_json(settings)) > 65536 || contains_sensitive_keys(settings) { return fail(ctx["cfg"], 400, "invalid_settings", "settings must be a bounded secret-free object", {}) }
+		config_json := to_json({"package_manifest": manifest, "settings": settings}); status := package_state["status"]; if activate { status = "active" }
+		transaction := db_execute_safe(ctx["db"], "BEGIN IMMEDIATE", []); if transaction["ok"] == false { return fail(ctx["cfg"], 500, "install_failed", "Could not start theme installation", {}) }
+		install_err := null
+		try { if activate { db_execute(ctx["db"], "UPDATE themes SET status = 'inactive', updated_at = ?", [now()]) }; if package_state["exists"] == false { db_execute(ctx["db"], "INSERT INTO themes (theme_key, name, version, status, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)", [manifest["key"], manifest["name"], manifest["version"], status, config_json, now(), now()]) } else { db_execute(ctx["db"], "UPDATE themes SET name = ?, version = ?, status = ?, config_json = ?, updated_at = ? WHERE id = ?", [manifest["name"], manifest["version"], status, config_json, now(), package_state["id"]]) }; db_execute(ctx["db"], "COMMIT", []) } except e { install_err = e }
+		if type(install_err) != "null" { _ = db_execute_safe(ctx["db"], "ROLLBACK", []); return fail(ctx["cfg"], 409, "install_failed", "Could not install theme package", {}) }
+		rows := db_query(ctx["db"], "SELECT * FROM themes WHERE theme_key = ? LIMIT 1", [manifest["key"]]); is_active := rows[0]["status"] == "active"; _ = write_audit(ctx, req, "theme.package.install", 200, "theme", rows[0]["id"], {"theme_key": manifest["key"], "version": manifest["version"], "active": is_active})
+		return ok(ctx["cfg"], {"theme": rows[0], "manifest": manifest, "installed": true, "active": is_active})
+	})
+	server = server.route("POST", "/v1/plugins/install", func(req) {
+		guard := guard_request(req, ctx, "admin.plugins"); if guard["ok"] == false { return guard["response"] }
+		body := null; err := null; try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { err = e }
+		if type(err) != "null" || type(body) != "dict" { return fail(ctx["cfg"], 400, "invalid_body", "Invalid JSON body", {}) }
+		manifest_raw := dict_get_or(body, "manifest", body); result := validate_plugin_manifest(manifest_raw); if result["ok"] == false { return fail(ctx["cfg"], 400, result["code"], result["message"], result["details"]) }
+		manifest := result["manifest"]; package_state := installed_package_state(ctx["db"], "plugin", manifest["key"], manifest["defaults"]); activate := bool_or(dict_get_or(body, "activate", false), false); settings := package_state["settings"]; if has_key(body, "settings") == 1 { settings = body["settings"] }
+		if type(settings) != "dict" || len(to_json(settings)) > 65536 || contains_sensitive_keys(settings) { return fail(ctx["cfg"], 400, "invalid_settings", "settings must be a bounded secret-free object", {}) }
+		status := package_state["status"]; if activate { status = "active" }; config_json := to_json({"package_manifest": manifest, "settings": settings}); write_result := null
+		if package_state["exists"] == false { write_result = db_execute_safe(ctx["db"], "INSERT INTO plugins (plugin_key, name, version, status, capabilities_json, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [manifest["key"], manifest["name"], manifest["version"], status, to_json(manifest["capabilities"]), config_json, now(), now()]) } else { write_result = db_execute_safe(ctx["db"], "UPDATE plugins SET name = ?, version = ?, status = ?, capabilities_json = ?, config_json = ?, updated_at = ? WHERE id = ?", [manifest["name"], manifest["version"], status, to_json(manifest["capabilities"]), config_json, now(), package_state["id"]]) }
+		if write_result["ok"] == false { return fail(ctx["cfg"], 409, "install_failed", "Could not install plugin package", {}) }
+		installed := db_query(ctx["db"], "SELECT * FROM plugins WHERE plugin_key = ? LIMIT 1", [manifest["key"]]); is_active := installed[0]["status"] == "active"; _ = write_audit(ctx, req, "plugin.package.install", 200, "plugin", installed[0]["id"], {"plugin_key": manifest["key"], "version": manifest["version"], "active": is_active})
+		return ok(ctx["cfg"], {"plugin": installed[0], "manifest": manifest, "installed": true, "active": is_active})
+	})
+	server = server.route("GET", "/v1/themes/:id/export", func(req) {
+		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }; id := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if id <= 0 { return fail(ctx["cfg"], 400, "invalid_theme_id", "id must be positive", {}) }
+		rows := db_query_safe(ctx["db"], "SELECT * FROM themes WHERE id = ? LIMIT 1", [id]); if rows["ok"] == false { return fail(ctx["cfg"], 500, "export_failed", "Could not export theme", {}) }; if len(rows["rows"]) == 0 { return fail(ctx["cfg"], 404, "not_found", "Theme not found", {}) }
+		return ok(ctx["cfg"], {"filename": rows["rows"][0]["theme_key"] + ".kujo-theme.json", "manifest": theme_manifest_from_row(rows["rows"][0]), "secrets_included": false})
+	})
+	server = server.route("GET", "/v1/plugins/:id/export", func(req) {
+		guard := guard_request(req, ctx, "admin.plugins"); if guard["ok"] == false { return guard["response"] }; id := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if id <= 0 { return fail(ctx["cfg"], 400, "invalid_plugin_id", "id must be positive", {}) }
+		rows := db_query_safe(ctx["db"], "SELECT * FROM plugins WHERE id = ? LIMIT 1", [id]); if rows["ok"] == false { return fail(ctx["cfg"], 500, "export_failed", "Could not export plugin", {}) }; if len(rows["rows"]) == 0 { return fail(ctx["cfg"], 404, "not_found", "Plugin not found", {}) }
+		return ok(ctx["cfg"], {"filename": rows["rows"][0]["plugin_key"] + ".kujo-plugin.json", "manifest": plugin_manifest_from_row(rows["rows"][0]), "secrets_included": false})
+	})
+	server = server.route("GET", "/v1/extensions/catalog", func(req) {
+		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
+		theme_rows := db_query_safe(ctx["db"], "SELECT * FROM themes ORDER BY status ASC, name ASC", []); plugin_rows := db_query_safe(ctx["db"], "SELECT * FROM plugins WHERE status = 'active' ORDER BY name ASC", [])
+		if theme_rows["ok"] == false || plugin_rows["ok"] == false { return fail(ctx["cfg"], 500, "catalog_failed", "Could not build extension catalog", {}) }
+		themes := []; plugins := []; for row in theme_rows["rows"] { themes = push(themes, {"id": row["id"], "status": row["status"], "manifest": theme_manifest_from_row(row)}) }; for row in plugin_rows["rows"] { plugins = push(plugins, {"id": row["id"], "status": row["status"], "manifest": plugin_manifest_from_row(row)}) }
+		return ok(ctx["cfg"], {"schema": "kujo.extensions.catalog/v1", "themes": themes, "plugins": plugins, "counts": {"themes": len(themes), "plugins": len(plugins)}})
+	})
+	return server
+}

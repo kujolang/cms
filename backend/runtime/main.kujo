@@ -15,6 +15,7 @@ from backend.routes.tenancy import register_tenancy_routes
 from backend.routes.users import register_user_routes
 from backend.routes.abilities import register_ability_routes
 from backend.routes.webmcp import register_webmcp_routes
+from backend.routes.extensions import register_extension_routes
 
 cfg := load_config({})
 
@@ -103,6 +104,14 @@ func register_options(server, cfg) {
 		"/v1/abilities/:namespace/:ability/run",
 		"/v1/ai/connectors",
 		"/v1/ai/mcp/tools",
+		"/v1/extensions/contracts",
+		"/v1/extensions/catalog",
+		"/v1/themes/validate",
+		"/v1/themes/install",
+		"/v1/themes/:id/export",
+		"/v1/plugins/validate",
+		"/v1/plugins/install",
+		"/v1/plugins/:id/export",
 		"/v1/webmcp",
 		"/v1/webmcp/tools",
 		"/v1/webmcp/site",
@@ -243,6 +252,14 @@ func build_api_contract(cfg, schema_version) {
 			"/v1/abilities/:namespace/:ability/run": {"post": {"x-auth": "bearer:ability.permission"}},
 			"/v1/ai/connectors": {"get": {"x-auth": "bearer:admin.settings"}},
 			"/v1/ai/mcp/tools": {"get": {"x-auth": "bearer:cms.read"}},
+			"/v1/extensions/contracts": {"get": {"summary": "Portable theme and plugin contracts", "x-auth": "public"}},
+			"/v1/extensions/catalog": {"get": {"summary": "Installed theme and active plugin catalog", "x-auth": "public"}},
+			"/v1/themes/validate": {"post": {"summary": "Validate a portable theme manifest", "x-auth": "bearer:cms.read"}},
+			"/v1/themes/install": {"post": {"summary": "Install or update a theme manifest", "x-auth": "bearer:admin.settings"}},
+			"/v1/themes/:id/export": {"get": {"summary": "Export a secret-free theme manifest", "x-auth": "public"}},
+			"/v1/plugins/validate": {"post": {"summary": "Validate a portable plugin manifest", "x-auth": "bearer:cms.read"}},
+			"/v1/plugins/install": {"post": {"summary": "Install or update a plugin manifest", "x-auth": "bearer:admin.plugins"}},
+			"/v1/plugins/:id/export": {"get": {"summary": "Export a secret-free plugin manifest", "x-auth": "bearer:admin.plugins"}},
 			"/.well-known/kujo-webmcp.json": {"get": {"summary": "WebMCP discovery manifest", "x-auth": "public"}},
 			"/.well-known/kujo-site-index.json": {"get": {"summary": "Paginated published-content index", "x-auth": "public", "x-query": ["limit", "offset"]}},
 			"/assets/js/kujo-webmcp.js": {"get": {"summary": "Same-origin WebMCP browser adapter", "x-auth": "public"}},
@@ -569,6 +586,10 @@ server = server.route("GET", "/v1", func(req) {
 			"webmcp": "/v1/webmcp",
 			"webmcp_tools": "/v1/webmcp/tools",
 			"webmcp_site_index": "/.well-known/kujo-site-index.json",
+			"extension_contracts": "/v1/extensions/contracts",
+			"extension_catalog": "/v1/extensions/catalog",
+			"theme_install": "/v1/themes/install",
+			"plugin_install": "/v1/plugins/install",
 			"tenants": "/v1/tenants",
 			"tenant_update": "/v1/tenants/update",
 			"tenant_disable": "/v1/tenants/disable",
@@ -583,7 +604,8 @@ server = server.route("GET", "/v1", func(req) {
 			"plugin_hooks": "/v1/plugins/:id/hooks",
 			"theme_activation": "/v1/themes/:id/activate",
 			"entry_taxonomy_assignment": "/v1/entries/:id/terms",
-			"webmcp_tool_registry": "backend/routes/webmcp.kujo:webmcp_tool_registry"
+			"webmcp_tool_registry": "backend/routes/webmcp.kujo:webmcp_tool_registry",
+			"portable_packages": "/v1/extensions/contracts"
 		}
 	})
 })
@@ -642,6 +664,7 @@ server = register_media_routes(server, ctx)
 server = register_menu_routes(server, ctx)
 server = register_plugin_routes(server, ctx)
 server = register_theme_routes(server, ctx)
+server = register_extension_routes(server, ctx)
 server = register_authz_routes(server, ctx)
 server = register_user_routes(server, ctx)
 server = register_ability_routes(server, ctx)
@@ -657,7 +680,7 @@ print_lines([
 	"Schema version: " + to_string(schema_version),
 	"Readiness DB checks: " + to_string(dict_get_or(cfg, "readiness_check_db", true)),
 	"Structured logs: " + to_string(dict_get_or(cfg, "structured_logs", true)),
-	"Modules: delivery, webmcp, content_types, taxonomies, entries, media, menus, plugins, themes, authz, users, tenancy, abilities, ai_connectors",
+	"Modules: delivery, webmcp, content_types, taxonomies, entries, media, menus, plugins, themes, extension_packages, authz, users, tenancy, abilities, ai_connectors",
 	"Press Ctrl+C to stop"
 ])
 

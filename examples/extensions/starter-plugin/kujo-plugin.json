@@ -1,0 +1,35 @@
+{
+  "schema": "kujo.plugin/v1",
+  "key": "content_notifier",
+  "name": "Content Notifier",
+  "version": "1.0.0",
+  "description": "Example external plugin contract for published-content notifications.",
+  "license": "MIT",
+  "author": {
+    "name": "Kujo",
+    "url": "https://kujo.dev"
+  },
+  "compatibility": {
+    "cms": ">=1.0.0"
+  },
+  "runtime": "webhook",
+  "capabilities": ["events.receive"],
+  "events": ["entry.published"],
+  "abilities": [],
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "channel": {"type": "string", "maxLength": 120}
+    },
+    "additionalProperties": false
+  },
+  "defaults": {
+    "channel": "editorial"
+  },
+  "distribution": {
+    "homepage": "https://kujo.dev",
+    "repository": "https://github.com/kujolang/cms",
+    "package_url": "",
+    "integrity": ""
+  }
+}

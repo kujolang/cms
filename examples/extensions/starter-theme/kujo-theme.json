@@ -1,0 +1,51 @@
+{
+  "schema": "kujo.theme/v1",
+  "key": "starter_web",
+  "name": "Starter Web Theme",
+  "version": "1.0.0",
+  "description": "Portable headless frontend contract for a Kujo CMS publication.",
+  "license": "MIT",
+  "author": {
+    "name": "Kujo",
+    "url": "https://kujo.dev"
+  },
+  "compatibility": {
+    "cms": ">=1.0.0",
+    "webmcp": "kujo-cms-webmcp/v1"
+  },
+  "entrypoints": {
+    "web": "app/layout.tsx",
+    "preview": "app/page.tsx"
+  },
+  "templates": {
+    "home": "app/page.tsx",
+    "archive": "app/articles/page.tsx",
+    "single": "app/articles/[slug]/page.tsx"
+  },
+  "assets": {
+    "styles": ["app/globals.css"],
+    "scripts": [],
+    "images": []
+  },
+  "settings_schema": {
+    "type": "object",
+    "properties": {
+      "site_title": {"type": "string", "maxLength": 120},
+      "accent_color": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}
+    },
+    "additionalProperties": false
+  },
+  "defaults": {
+    "site_title": "Kujo Publication",
+    "accent_color": "#111111"
+  },
+  "supports": ["menus", "seo", "social_sharing", "webmcp"],
+  "content_types": ["article", "page"],
+  "menu_locations": ["header", "footer"],
+  "distribution": {
+    "homepage": "https://kujo.dev",
+    "repository": "https://github.com/kujolang/cms",
+    "package_url": "",
+    "integrity": ""
+  }
+}
