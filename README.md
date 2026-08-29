@@ -20,6 +20,7 @@ The current codebase is intentionally backend-first. Active source lives under `
 - Canonical runtime entrypoint at `backend/runtime/main.kujo`
 - Content-model coverage for content types, taxonomies/terms, entries, media, menus, plugins, themes, users, roles, API tokens, tenants, and workspaces
 - Public delivery and discovery routes for `/.well-known/security.txt`, `/.well-known/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/sitemap-index.xml`, `/rss.xml`, `/health`, `/v1`, `/v1/contract`, and `/v1/openapi.json`
+- WebMCP enabled by default with a discovery manifest, same-origin browser adapter, published-content index, and four read-only content tools
 - Auth-gated write routes, webhook delivery, background jobs, migration safety, and backup/restore
 - Release-gate automation covering contract, smoke, startup compatibility, integration, security, and optional performance checks
 
@@ -34,6 +35,7 @@ The current codebase is intentionally backend-first. Active source lives under `
 - Public delivery and discovery routes (`/.well-known/security.txt`, `/.well-known/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/sitemap-index.xml`, `/rss.xml`, `/health`, `/v1`, `/v1/contract`, `/v1/openapi.json`)
 - Scheduler, revisions, rollback, and entry locking
 - A namespaced Abilities API with JSON Schema contracts, permission-scoped execution, confirmation-gated mutations, audit receipts, MCP-ready tool descriptors, and a secret-safe Kujo connector registry
+- Built-in WebMCP discovery and browser tools for site information, search, content listing, and exact published-record retrieval
 
 ## Showcase Positioning
 
@@ -138,6 +140,7 @@ Recommended env overrides:
 - `CMS_READINESS_CHECK_DB`
 - `CMS_METRICS_ENABLED`
 - `CMS_AI_SDK_ENDPOINT`, `CMS_AGENTS_SDK_ENDPOINT`, `CMS_MCP_ENDPOINT`, `CMS_DISPATCH_ENDPOINT`, `CMS_RAG_ENDPOINT`, `CMS_REDACT_ENDPOINT`, `CMS_WATCHDOG_ENDPOINT`, `CMS_CONTENTGRAPH_ENDPOINT`, `CMS_SEARCHBRIDGE_ENDPOINT`, `CMS_BLUEPENCIL_ENDPOINT`, `CMS_PRESSWIRE_ENDPOINT`, `CMS_READERSIGNAL_ENDPOINT`
+- `CMS_WEBMCP_ENABLED`, `CMS_WEBMCP_MAX_SCAN_RECORDS`, `CMS_WEBMCP_INDEX_PAGE_SIZE_MAX`, `CMS_WEBMCP_SUMMARY_MAX_CHARS`
 
 Bootstrap authentication has no usable default credential. Generate a unique bootstrap token for initial provisioning, then disable it and use scoped database-backed API tokens. Administrative routes require dedicated capabilities: `admin.auth`, `admin.users`, `admin.settings`, and `admin.plugins`; `cms.write` alone does not grant administrative access.
 
@@ -166,6 +169,12 @@ AI and agent interoperability:
 - `bash scripts/cms-ai.sh help` exposes status, connector, discovery, inspection, execution, and MCP descriptor commands for terminal agents.
 
 Connector environment variables identify trusted server-side adapters only. Provider credentials remain in the connector or gateway process; they are not stored in CMS settings or sent to the Studio browser. Production MCP deployments still need authenticated transport, TLS, ingress rate limits, and connector-specific health checks.
+
+WebMCP is baked into every CMS instance and enabled by default. `GET /.well-known/kujo-webmcp.json` publishes the machine-readable manifest and copyable script tag; `/assets/js/kujo-webmcp.js` registers `get_site_info`, `search_site`, `list_content`, and `get_content` through `document.modelContext.registerTool()`. The adapter calls only same-origin, read-only routes under `/v1/webmcp`, and `/.well-known/kujo-site-index.json` provides a paginated live index. Headless frontends include the manifest's script tag in their page shell; reverse proxies should serve the CMS routes on the same origin.
+
+Only published records are exposed. Returned content is plain text, size-bounded, and stripped of arbitrary entry metadata. Set `meta.webmcp_exclude` (or `meta.webmcp.exclude`) to remove a record entirely, or `meta.search_exclude` (or `meta.webmcp.search_exclude`) to keep exact/list access while excluding search. Large repositories are capped by `CMS_WEBMCP_MAX_SCAN_RECORDS` and report `truncated: true` instead of silently implying a complete result. Set `CMS_WEBMCP_ENABLED=false` for an explicit opt-out.
+
+Extend the public tool set at `backend/routes/webmcp.kujo:webmcp_tool_registry` and add a matching bounded, published-content handler. Keep authenticated or mutating agent operations in the Abilities API. Terminal agents can inspect the surface with `bash scripts/cms-ai.sh webmcp`, `webmcp-tools`, and `webmcp-index` without a CMS token. See [`docs/webmcp.md`](docs/webmcp.md) for the full extension and deployment contract.
 
 The backend stores portable PBKDF2 credential material supplied by the trusted authentication layer. Public applications should terminate password handling in a trusted server, keep the CMS token out of browsers, and use a managed identity provider where appropriate.
 
@@ -234,6 +243,7 @@ Key docs:
 - `docs/error-codes.md`
 - `docs/high-sla-failure-drills.md`
 - `docs/runtime-limitations.md`
+- `docs/webmcp.md`
 
 ## Contribution
 

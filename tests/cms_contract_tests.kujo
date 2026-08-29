@@ -10,6 +10,41 @@ test_setup {
 	from backend.routes.media import parse_media_size_bytes
 	from backend.routes.plugins import list_webhook_event_schemas, validate_webhook_event_payload, webhook_schema_for
 	from backend.routes.abilities import ability_categories, ability_registry, connector_registry, find_ability, mcp_tool_descriptors
+	from backend.routes.webmcp import build_webmcp_manifest, build_webmcp_runtime_source, public_content_record, webmcp_entry_allowed, webmcp_tool_registry
+}
+
+test "WebMCP ships enabled with four bounded read-only browser tools" {
+	tools := webmcp_tool_registry()
+	assert_equal(len(tools), 4)
+	assert_equal(tools[0]["name"], "get_site_info")
+	assert_equal(tools[3]["name"], "get_content")
+	for tool in tools {
+		assert_equal(tool["annotations"]["readOnlyHint"], true)
+		assert_equal(tool["annotations"]["untrustedContentHint"], true)
+		assert_equal(tool["inputSchema"]["additionalProperties"], false)
+	}
+	manifest := build_webmcp_manifest({"site_url": "https://example.test/", "webmcp_enabled": true})
+	assert_equal(manifest["enabled"], true)
+	assert_equal(manifest["automatic"], true)
+	assert_equal(manifest["runtime"], "https://example.test/assets/js/kujo-webmcp.js")
+	assert_true(to_bool(contains(manifest["script_tag"], "data-kujo-webmcp") >= 0))
+	runtime := build_webmcp_runtime_source()
+	assert_true(to_bool(contains(runtime, "document.modelContext") >= 0))
+	assert_true(to_bool(contains(runtime, "registerTool") >= 0))
+}
+
+test "WebMCP exposes only bounded published content and honors exclusions" {
+	published := {"id": 7, "content_type_key": "article", "title": "<b>Useful</b>", "slug": "useful", "status": "published", "excerpt": "A public excerpt", "body": "<p>Public body</p> with `formatting`", "meta_json": to_json({"lang": "en", "secret": "never-return"}), "published_at": 1, "updated_at": 2}
+	assert_equal(webmcp_entry_allowed(published, false), true)
+	assert_equal(webmcp_entry_allowed({"status": "draft"}, false), false)
+	assert_equal(webmcp_entry_allowed({"status": "published", "meta_json": to_json({"webmcp_exclude": true})}, false), false)
+	assert_equal(webmcp_entry_allowed({"status": "published", "meta_json": to_json({"search_exclude": true})}, true), false)
+	record := public_content_record(published, {"category": ["Guides"]}, "https://example.test", 20)
+	assert_equal(record["title"], "Useful")
+	assert_true(to_bool(len(record["summary"]) <= 20))
+	assert_equal(has_key(record, "meta") == 1, false)
+	assert_equal(has_key(record, "body") == 1, false)
+	assert_equal(contains(to_json(record), "never-return"), 0)
 }
 
 test "abilities are discoverable, namespaced, schema-described, and MCP-ready" {
@@ -218,11 +253,20 @@ test "config wrapper delegates to backend implementation without shape drift" {
 test "config defaults api host to localhost and honors override" {
 	default_cfg := load_config({})
 	assert_equal(default_cfg["api_host"], "127.0.0.1")
+	assert_equal(default_cfg["webmcp_enabled"], true)
 
 	override_cfg := load_config({
-		"api_host": "0.0.0.0"
+		"api_host": "0.0.0.0",
+		"webmcp_enabled": false,
+		"webmcp_max_scan_records": 999999,
+		"webmcp_index_page_size_max": 1,
+		"webmcp_summary_max_chars": 9999
 	})
 	assert_equal(override_cfg["api_host"], "0.0.0.0")
+	assert_equal(override_cfg["webmcp_enabled"], false)
+	assert_equal(override_cfg["webmcp_max_scan_records"], 50000)
+	assert_equal(override_cfg["webmcp_index_page_size_max"], 10)
+	assert_equal(override_cfg["webmcp_summary_max_chars"], 2000)
 }
 
 test "bounded int parser supports zero offset" {

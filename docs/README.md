@@ -10,6 +10,7 @@ This index organizes CMS documentation by audience and workflow.
 ## Architecture and Design
 
 - `backend-architecture-notes.md`: canonical module boundaries, import policy, and contract invariants
+- `webmcp.md`: default browser-tool surface, privacy boundary, deployment, and extension contract
 
 ## Security and Reliability
 

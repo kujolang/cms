@@ -26,6 +26,7 @@ fi
 SERVER_PID=""
 TMP_BODY="$(mktemp)"
 TMP_HEADERS="$(mktemp)"
+TMP_WEBMCP_RUNTIME="$(mktemp)"
 
 cleanup() {
 	if [[ -n "${SERVER_PID}" ]] && kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
@@ -34,6 +35,7 @@ cleanup() {
 	fi
 	rm -f "${TMP_BODY}" || true
 	rm -f "${TMP_HEADERS}" || true
+	rm -f "${TMP_WEBMCP_RUNTIME}" || true
 	rm -f "${DB_PATH}" "${DB_PATH}-wal" "${DB_PATH}-shm" || true
 }
 trap cleanup EXIT
@@ -95,6 +97,17 @@ assert_contains() {
 	echo "[PASS] ${context}"
 }
 
+assert_not_contains() {
+	local needle="$1"
+	local context="$2"
+	if [[ "${BODY}" == *"${needle}"* ]]; then
+		echo "[FAIL] ${context}: unexpectedly found '${needle}'"
+		echo "Response body: ${BODY}"
+		exit 1
+	fi
+	echo "[PASS] ${context}"
+}
+
 echo "Starting CMS API smoke check..."
 (
 	cd "${ROOT_DIR}"
@@ -145,10 +158,49 @@ assert_status "200" "robots"
 request "GET" "/.well-known/security.txt"
 assert_status "200" "security.txt"
 
+request "GET" "/.well-known/kujo-webmcp.json"
+assert_status "200" "WebMCP manifest"
+assert_contains '"automatic":true' "WebMCP automatic availability"
+assert_contains '"get_site_info"' "WebMCP tool registry"
+
+request "GET" "/assets/js/kujo-webmcp.js"
+assert_status "200" "WebMCP browser adapter"
+assert_contains 'document.modelContext' "WebMCP runtime contract"
+cp "${TMP_BODY}" "${TMP_WEBMCP_RUNTIME}"
+node "${ROOT_DIR}/scripts/test-webmcp-runtime.js" "${TMP_WEBMCP_RUNTIME}"
+
+request "GET" "/v1/webmcp/site"
+assert_status "200" "WebMCP site information"
+
+request "GET" "/.well-known/kujo-site-index.json?limit=10&offset=0"
+assert_status "200" "WebMCP published-content index"
+assert_contains '"schema":"kujo-cms-site-index/v1"' "WebMCP site index schema"
+
 request "POST" "/v1/content-types" '{"type_key":"smoke","label":"Smoke","singular_label":"Smoke"}'
 assert_status "401" "write auth required"
 
 request "POST" "/v1/content-types" '{"type_key":"smoke","label":"Smoke","singular_label":"Smoke","description":"Smoke type"}' "1"
 assert_status "201" "authorized write"
+
+request "POST" "/v1/entries" '{"content_type_key":"smoke","title":"WebMCP Public","slug":"webmcp-public","status":"published","excerpt":"Published excerpt","body":"Published searchable body"}' "1"
+assert_status "201" "WebMCP published fixture"
+
+request "POST" "/v1/entries" '{"content_type_key":"smoke","title":"WebMCP Draft Secret","slug":"webmcp-draft","status":"draft","body":"Draft content must stay private"}' "1"
+assert_status "201" "WebMCP draft fixture"
+
+request "POST" "/v1/entries" '{"content_type_key":"smoke","title":"WebMCP Excluded","slug":"webmcp-excluded","status":"published","body":"Excluded published content","meta":{"webmcp_exclude":true}}' "1"
+assert_status "201" "WebMCP excluded fixture"
+
+request "GET" "/v1/webmcp/search?q=searchable&limit=10"
+assert_status "200" "WebMCP published search"
+assert_contains '"title":"WebMCP Public"' "WebMCP returns matching published content"
+assert_not_contains 'WebMCP Draft Secret' "WebMCP search excludes drafts"
+assert_not_contains 'WebMCP Excluded' "WebMCP search honors entry exclusion"
+
+request "GET" "/.well-known/kujo-site-index.json?limit=10&offset=0"
+assert_status "200" "WebMCP populated index"
+assert_contains '"id":"smoke:webmcp-public"' "WebMCP index exposes stable public ID"
+assert_not_contains 'webmcp-draft' "WebMCP index excludes drafts"
+assert_not_contains 'webmcp-excluded' "WebMCP index honors entry exclusion"
 
 echo "Smoke checks passed."
