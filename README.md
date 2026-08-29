@@ -169,7 +169,7 @@ Portable extension workflows:
 - The CMS records manifests but never downloads or executes package code. Deployment tools verify and build theme artifacts separately; webhook secrets and provider credentials are configured through protected operational surfaces.
 - `bash scripts/cms-extensions.sh help` provides API-equivalent terminal commands. Canonical manifests live under `examples/extensions/` and the authoring contract is documented in [`docs/extensions.md`](docs/extensions.md).
 - Field Notes has its own forkable home in the independent `cms-field-notes-theme` repository and is bundled as the showcase default. The independent `cms-contact-form` repository demonstrates a hybrid plugin with a browser component, durable submission API, moderation CLI, discoverable abilities, signed notification delivery, and production safety controls.
-- CMS Studio in `cms-example` provides a nontechnical **Themes & plugins** screen with guarded ZIP upload, install-and-activate controls, installed-package status, source links, and plugin activation toggles.
+- CMS Studio in `cms-example` provides separate **Themes** and **Plugins** screens with guarded ZIP upload, install-and-activate controls, installed-package status, source links, and activation controls.
 
 AI and agent interoperability:
 
