@@ -13,6 +13,7 @@ from backend.modules.authz import register_authz_routes
 from backend.routes.delivery import register_delivery_routes
 from backend.routes.tenancy import register_tenancy_routes
 from backend.routes.users import register_user_routes
+from backend.routes.abilities import register_ability_routes
 
 cfg := load_config({})
 
@@ -92,6 +93,12 @@ func register_options(server, cfg) {
 		"/v1",
 		"/v1/contract",
 		"/v1/openapi.json",
+		"/v1/abilities",
+		"/v1/abilities/categories",
+		"/v1/abilities/:namespace/:ability",
+		"/v1/abilities/:namespace/:ability/run",
+		"/v1/ai/connectors",
+		"/v1/ai/mcp/tools",
 		"/v1/content-types",
 		"/v1/content-types/:id",
 		"/v1/taxonomies",
@@ -220,6 +227,12 @@ func build_api_contract(cfg, schema_version) {
 			"/v1/users/:id/credentials": {"get": {"x-auth": "bearer:admin.users"}},
 			"/v1/settings/registration": {"get": {"x-auth": "bearer:admin.settings"}, "patch": {"x-auth": "bearer:admin.settings"}},
 			"/v1/settings/social-sharing": {"get": {"x-auth": "bearer:admin.settings"}, "patch": {"x-auth": "bearer:admin.settings"}},
+			"/v1/abilities": {"get": {"x-auth": "bearer:cms.read", "x-query": ["category"]}},
+			"/v1/abilities/categories": {"get": {"x-auth": "bearer:cms.read"}},
+			"/v1/abilities/:namespace/:ability": {"get": {"x-auth": "bearer:ability.permission"}},
+			"/v1/abilities/:namespace/:ability/run": {"post": {"x-auth": "bearer:ability.permission"}},
+			"/v1/ai/connectors": {"get": {"x-auth": "bearer:admin.settings"}},
+			"/v1/ai/mcp/tools": {"get": {"x-auth": "bearer:cms.read"}},
 			"/v1/tenants": {"get": {"x-auth": "bearer", "x-query": ["limit", "offset", "sort_by", "sort_dir"]}, "post": {"x-auth": "bearer"}},
 			"/v1/tenants/update": {"post": {"x-auth": "bearer"}},
 			"/v1/tenants/disable": {"post": {"x-auth": "bearer"}},
@@ -527,6 +540,10 @@ server = server.route("GET", "/v1", func(req) {
 			"tokens": "/v1/auth/tokens",
 			"users": "/v1/users",
 			"registration_settings": "/v1/settings/registration",
+			"abilities": "/v1/abilities",
+			"ability_categories": "/v1/abilities/categories",
+			"ai_connectors": "/v1/ai/connectors",
+			"mcp_tools": "/v1/ai/mcp/tools",
 			"tenants": "/v1/tenants",
 			"tenant_update": "/v1/tenants/update",
 			"tenant_disable": "/v1/tenants/disable",
@@ -600,6 +617,7 @@ server = register_plugin_routes(server, ctx)
 server = register_theme_routes(server, ctx)
 server = register_authz_routes(server, ctx)
 server = register_user_routes(server, ctx)
+server = register_ability_routes(server, ctx)
 server = register_tenancy_routes(server, ctx)
 
 print_lines([
@@ -612,7 +630,7 @@ print_lines([
 	"Schema version: " + to_string(schema_version),
 	"Readiness DB checks: " + to_string(dict_get_or(cfg, "readiness_check_db", true)),
 	"Structured logs: " + to_string(dict_get_or(cfg, "structured_logs", true)),
-	"Modules: delivery, content_types, taxonomies, entries, media, menus, plugins, themes, authz, users, tenancy",
+	"Modules: delivery, content_types, taxonomies, entries, media, menus, plugins, themes, authz, users, tenancy, abilities, ai_connectors",
 	"Press Ctrl+C to stop"
 ])
 

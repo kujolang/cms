@@ -1,0 +1,257 @@
+from backend.core.database import db_query_safe
+from backend.core.http import fail, guard_request, ok, parse_json_body, write_audit
+from backend.core.utils import dict_get_or
+from backend.routes.entries import apply_seo_changes, normalize_seo_changes
+
+export ability_categories := func() {
+	return [
+		{"slug": "cms", "label": "CMS", "description": "Site identity and operational information."},
+		{"slug": "content", "label": "Content", "description": "Bounded content discovery for assistants and automations."},
+		{"slug": "seo", "label": "SEO", "description": "Search readiness analysis and controlled metadata updates."},
+		{"slug": "ai", "label": "AI integration", "description": "Connector discovery and agent interoperability."}
+	]
+}
+
+export ability_registry := func() {
+	return [
+		{
+			"name": "cms/site-info", "label": "Get site information", "description": "Return CMS identity, version, site URL, and aggregate resource counts.", "category": "cms", "permission": "cms.read",
+			"input_schema": {"type": "object", "additionalProperties": false},
+			"output_schema": {"type": "object"},
+			"annotations": {"readonly": true, "destructive": false, "idempotent": true, "requires_confirmation": false}
+		},
+		{
+			"name": "content/list", "label": "List content", "description": "Search a bounded page of content without exposing arbitrary SQL or filesystem access.", "category": "content", "permission": "cms.read",
+			"input_schema": {"type": "object", "properties": {"query": {"type": "string", "maxLength": 200}, "status": {"type": "string", "maxLength": 40}, "content_type": {"type": "string", "maxLength": 80}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}}, "additionalProperties": false},
+			"output_schema": {"type": "object"},
+			"annotations": {"readonly": true, "destructive": false, "idempotent": true, "requires_confirmation": false}
+		},
+		{
+			"name": "seo/audit-summary", "label": "Get SEO audit summary", "description": "Return aggregate SEO coverage and the highest-priority entries needing work.", "category": "seo", "permission": "cms.read",
+			"input_schema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50}}, "additionalProperties": false},
+			"output_schema": {"type": "object"},
+			"annotations": {"readonly": true, "destructive": false, "idempotent": true, "requires_confirmation": false}
+		},
+		{
+			"name": "seo/update-entry", "label": "Update entry SEO", "description": "Apply validated SEO metadata to one unlocked entry.", "category": "seo", "permission": "cms.write",
+			"input_schema": {"type": "object", "required": ["entry_id", "changes", "confirmed"], "properties": {"entry_id": {"type": "integer", "minimum": 1}, "changes": {"type": "object"}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
+			"output_schema": {"type": "object"},
+			"annotations": {"readonly": false, "destructive": false, "idempotent": true, "requires_confirmation": true}
+		},
+		{
+			"name": "seo/bulk-update", "label": "Bulk update entry SEO", "description": "Apply the same validated SEO metadata to as many as 200 selected entries.", "category": "seo", "permission": "cms.write",
+			"input_schema": {"type": "object", "required": ["entry_ids", "changes", "confirmed"], "properties": {"entry_ids": {"type": "array", "minItems": 1, "maxItems": 200, "items": {"type": "integer", "minimum": 1}}, "changes": {"type": "object"}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
+			"output_schema": {"type": "object"},
+			"annotations": {"readonly": false, "destructive": false, "idempotent": true, "requires_confirmation": true}
+		},
+		{
+			"name": "ai/integration-status", "label": "Get AI integration status", "description": "Return the installed Kujo integration surface without exposing connector secrets.", "category": "ai", "permission": "admin.settings",
+			"input_schema": {"type": "object", "additionalProperties": false},
+			"output_schema": {"type": "object"},
+			"annotations": {"readonly": true, "destructive": false, "idempotent": true, "requires_confirmation": false}
+		}
+	]
+}
+
+export find_ability := func(namespace, ability_name) {
+	qualified_name := trim(to_string(namespace)) + "/" + trim(to_string(ability_name))
+	for ability in ability_registry() {
+		if ability["name"] == qualified_name { return ability }
+	}
+	return null
+}
+
+func connector(cfg, key, label, purpose, mode, endpoint_key, approval_required) {
+	endpoint := trim(to_string(dict_get_or(cfg, endpoint_key, "")))
+	configured := endpoint != ""
+	status := "available"
+	health := "not_configured"
+	if configured == true { status = "configured"; health = "not_checked" }
+	return {
+		"key": key, "label": label, "purpose": purpose, "mode": mode,
+		"available": true, "configured": configured, "status": status,
+		"endpoint_configured": configured, "approval_required": approval_required,
+		"secret_storage": "external", "health": health
+	}
+}
+
+export connector_registry := func(cfg) {
+	return [
+		connector(cfg, "ai-sdk", "Kujo AI SDK", "Provider-neutral inference, retries, budgets, redaction, and fixture-safe execution.", "library_or_gateway", "ai_sdk_endpoint", false),
+		connector(cfg, "agents-sdk", "Kujo Agents SDK", "Tools, sessions, memory, approvals, traces, artifacts, and execution budgets.", "agent_runtime", "agents_sdk_endpoint", true),
+		connector(cfg, "mcp", "Kujo MCP", "Least-privilege MCP exposure of registered CMS abilities.", "mcp_server", "mcp_endpoint", true),
+		connector(cfg, "dispatch", "Kujo Dispatch", "Auditable, resumable, approval-gated workflow orchestration.", "workflow_runtime", "dispatch_endpoint", true),
+		connector(cfg, "rag", "Kujo RAG", "Local or remote retrieval over approved CMS content.", "retrieval", "rag_endpoint", false),
+		connector(cfg, "redact", "Kujo Redact", "Secret and sensitive-data filtering before model or connector boundaries.", "policy", "redact_endpoint", false),
+		connector(cfg, "watchdog", "Kujo Watchdog", "Request telemetry, budgets, and operational visibility.", "telemetry", "watchdog_endpoint", false),
+		connector(cfg, "contentgraph", "Kujo ContentGraph", "Content relationships, clusters, overlap, and internal-link evidence.", "content_intelligence", "contentgraph_endpoint", false),
+		connector(cfg, "searchbridge", "Kujo SearchBridge", "Search performance, index, analytics, and backlink evidence.", "search_intelligence", "searchbridge_endpoint", false),
+		connector(cfg, "bluepencil", "Kujo BluePencil", "Propose-only editorial review with immutable review records.", "editorial", "bluepencil_endpoint", true),
+		connector(cfg, "presswire", "Kujo PressWire", "Approval-gated publication effects.", "publishing", "presswire_endpoint", true),
+		connector(cfg, "readersignal", "Kujo ReaderSignal", "Privacy-bounded reader measurement.", "analytics", "readersignal_endpoint", false)
+	]
+}
+
+export mcp_tool_descriptors := func() {
+	tools := []
+	for ability in ability_registry() {
+		parts := split(ability["name"], "/")
+		tools = push(tools, {
+			"name": parts[0] + "__" + parts[1],
+			"title": ability["label"],
+			"description": ability["description"],
+			"inputSchema": ability["input_schema"],
+			"annotations": ability["annotations"],
+			"ability": ability["name"],
+			"execution": "/v1/abilities/" + parts[0] + "/" + parts[1] + "/run"
+		})
+	}
+	return tools
+}
+
+func run_site_info(ctx) {
+	db := ctx["db"]
+	counts := {}
+	for table_name in ["content_types", "entries", "media_items", "taxonomies", "users"] {
+		result := db_query_safe(db, "SELECT COUNT(*) AS total FROM " + table_name, [])
+		count_value := null
+		if result["ok"] == true { count_value = result["rows"][0]["total"] }
+		count_key := table_name
+		if table_name == "media_items" { count_key = "media" }
+		counts[count_key] := count_value
+	}
+	cfg := ctx["cfg"]
+	return {"service": cfg["service_name"], "version": cfg["service_version"], "site_url": cfg["site_url"], "counts": counts}
+}
+
+func run_content_list(ctx, input) {
+	limit := to_int(dict_get_or(input, "limit", 20))
+	if limit < 1 { limit = 1 }
+	if limit > 50 { limit = 50 }
+	where_sql := " WHERE 1=1"
+	params := []
+	query := trim(to_string(dict_get_or(input, "query", "")))
+	status := trim(to_string(dict_get_or(input, "status", "")))
+	content_type := trim(to_string(dict_get_or(input, "content_type", "")))
+	if query != "" { where_sql = where_sql + " AND (title LIKE ? OR slug LIKE ? OR excerpt LIKE ?)"; like := "%" + query + "%"; params = push(params, like); params = push(params, like); params = push(params, like) }
+	if status != "" { where_sql = where_sql + " AND status = ?"; params = push(params, status) }
+	if content_type != "" { where_sql = where_sql + " AND content_type_key = ?"; params = push(params, content_type) }
+	params = push(params, limit)
+	result := db_query_safe(ctx["db"], "SELECT id, content_type_key, title, slug, status, excerpt, author_id, published_at, updated_at FROM entries" + where_sql + " ORDER BY updated_at DESC, id DESC LIMIT ?", params)
+	if result["ok"] == false { return {"error": "query_failed"} }
+	return {"items": result["rows"], "count": len(result["rows"]), "limit": limit}
+}
+
+func run_seo_summary(ctx, input) {
+	limit := to_int(dict_get_or(input, "limit", 10))
+	if limit < 1 { limit = 1 }
+	if limit > 50 { limit = 50 }
+	title_expr := "trim(CASE WHEN json_valid(meta_json) THEN COALESCE(json_extract(meta_json, '$.seo.title'), '') ELSE '' END)"
+	description_expr := "trim(CASE WHEN json_valid(meta_json) THEN COALESCE(json_extract(meta_json, '$.seo.description'), '') ELSE '' END)"
+	keyword_expr := "trim(CASE WHEN json_valid(meta_json) THEN COALESCE(json_extract(meta_json, '$.seo.focus_keyword'), '') ELSE '' END)"
+	image_expr := "trim(CASE WHEN json_valid(meta_json) THEN COALESCE(json_extract(meta_json, '$.seo.og_image_url'), '') ELSE '' END)"
+	rows := db_query_safe(ctx["db"], "SELECT COUNT(*) AS total, SUM(CASE WHEN " + title_expr + " = '' THEN 1 ELSE 0 END) AS missing_titles, SUM(CASE WHEN " + description_expr + " = '' THEN 1 ELSE 0 END) AS missing_descriptions, SUM(CASE WHEN " + keyword_expr + " = '' THEN 1 ELSE 0 END) AS missing_keywords, SUM(CASE WHEN " + image_expr + " = '' THEN 1 ELSE 0 END) AS missing_social_images FROM entries", [])
+	priority := db_query_safe(ctx["db"], "SELECT id, content_type_key, title, slug, status, updated_at FROM entries WHERE " + title_expr + " = '' OR " + description_expr + " = '' OR " + keyword_expr + " = '' OR " + image_expr + " = '' ORDER BY updated_at DESC LIMIT ?", [limit])
+	summary := {}
+	priority_items := []
+	if rows["ok"] == true { summary = rows["rows"][0] }
+	if priority["ok"] == true { priority_items = priority["rows"] }
+	return {"summary": summary, "priority_items": priority_items, "limit": limit}
+}
+
+func execute_ability(req, ctx, ability, input) {
+	name := ability["name"]
+	if name == "cms/site-info" { return {"ok": true, "result": run_site_info(ctx)} }
+	if name == "content/list" { return {"ok": true, "result": run_content_list(ctx, input)} }
+	if name == "seo/audit-summary" { return {"ok": true, "result": run_seo_summary(ctx, input)} }
+	if name == "ai/integration-status" {
+		connectors := connector_registry(ctx["cfg"])
+		configured := 0
+		for item in connectors { if item["configured"] == true { configured = configured + 1 } }
+		return {"ok": true, "result": {"connectors": connectors, "configured_count": configured, "ability_count": len(ability_registry()), "mcp_tool_count": len(mcp_tool_descriptors()), "secrets_exposed": false}}
+	}
+	if name == "seo/update-entry" {
+		if dict_get_or(input, "confirmed", false) != true { return {"ok": false, "status": 409, "code": "confirmation_required", "message": "This ability requires confirmed=true"} }
+		entry_id := to_int(dict_get_or(input, "entry_id", 0))
+		if entry_id <= 0 { return {"ok": false, "status": 400, "code": "invalid_entry_id", "message": "entry_id must be positive"} }
+		normalized := normalize_seo_changes(dict_get_or(input, "changes", {}))
+		if normalized["ok"] == false { return {"ok": false, "status": 400, "code": "invalid_seo", "message": normalized["error"]} }
+		result := apply_seo_changes(ctx["db"], entry_id, normalized["changes"])
+		if result["ok"] == false {
+			status_code := 404
+			if result["code"] == "entry_locked" { status_code = 409 }
+			return {"ok": false, "status": status_code, "code": result["code"], "message": result["message"]}
+		}
+		return {"ok": true, "result": result}
+	}
+	if name == "seo/bulk-update" {
+		if dict_get_or(input, "confirmed", false) != true { return {"ok": false, "status": 409, "code": "confirmation_required", "message": "This ability requires confirmed=true"} }
+		entry_ids := dict_get_or(input, "entry_ids", [])
+		if type(entry_ids) != "array" || len(entry_ids) < 1 || len(entry_ids) > 200 { return {"ok": false, "status": 400, "code": "invalid_entry_ids", "message": "entry_ids must contain 1 to 200 IDs"} }
+		normalized := normalize_seo_changes(dict_get_or(input, "changes", {}))
+		if normalized["ok"] == false { return {"ok": false, "status": 400, "code": "invalid_seo", "message": normalized["error"]} }
+		updated_ids := []
+		errors := []
+		for raw_id in entry_ids {
+			entry_id := to_int(raw_id)
+			if entry_id <= 0 { errors = push(errors, {"entry_id": raw_id, "code": "invalid_id"}); continue }
+			result := apply_seo_changes(ctx["db"], entry_id, normalized["changes"])
+			if result["ok"] == true { updated_ids = push(updated_ids, entry_id) } else { errors = push(errors, {"entry_id": entry_id, "code": result["code"]}) }
+		}
+		return {"ok": true, "result": {"updated_ids": updated_ids, "updated_count": len(updated_ids), "errors": errors}}
+	}
+	return {"ok": false, "status": 501, "code": "not_implemented", "message": "Ability handler is not implemented"}
+}
+
+export register_ability_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/abilities/categories", func(req) {
+		guard := guard_request(req, ctx, "cms.read")
+		if guard["ok"] == false { return guard["response"] }
+		return ok(ctx["cfg"], {"items": ability_categories(), "count": len(ability_categories())})
+	})
+	server = server.route("GET", "/v1/abilities", func(req) {
+		guard := guard_request(req, ctx, "cms.read")
+		if guard["ok"] == false { return guard["response"] }
+		query := dict_get_or(req, "query", {})
+		category := trim(to_string(dict_get_or(query, "category", "")))
+		items := []
+		for ability in ability_registry() { if category == "" || ability["category"] == category { items = push(items, ability) } }
+		return ok(ctx["cfg"], {"items": items, "count": len(items), "categories": ability_categories()})
+	})
+	server = server.route("GET", "/v1/abilities/:namespace/:ability", func(req) {
+		params := dict_get_or(req, "params", {})
+		ability := find_ability(dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
+		if type(ability) == "null" { return fail(ctx["cfg"], 404, "ability_not_found", "Ability not found", {}) }
+		guard := guard_request(req, ctx, ability["permission"])
+		if guard["ok"] == false { return guard["response"] }
+		return ok(ctx["cfg"], ability)
+	})
+	server = server.route("POST", "/v1/abilities/:namespace/:ability/run", func(req) {
+		params := dict_get_or(req, "params", {})
+		ability := find_ability(dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
+		if type(ability) == "null" { return fail(ctx["cfg"], 404, "ability_not_found", "Ability not found", {}) }
+		guard := guard_request(req, ctx, ability["permission"])
+		if guard["ok"] == false { return guard["response"] }
+		body_result := parse_json_body(req, ctx["cfg"])
+		if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
+		input := dict_get_or(body_result["data"], "input", {})
+		if type(input) != "dict" { return fail(ctx["cfg"], 400, "invalid_input", "input must be an object", {}) }
+		result := execute_ability(req, ctx, ability, input)
+		if result["ok"] == false { return fail(ctx["cfg"], result["status"], result["code"], result["message"], {}) }
+		_ = write_audit(ctx, req, "ability.execute", 200, "ability", ability["name"], {"readonly": ability["annotations"]["readonly"], "confirmed": dict_get_or(input, "confirmed", false)})
+		return ok(ctx["cfg"], {"ability": ability["name"], "result": result["result"]})
+	})
+	server = server.route("GET", "/v1/ai/connectors", func(req) {
+		guard := guard_request(req, ctx, "admin.settings")
+		if guard["ok"] == false { return guard["response"] }
+		items := connector_registry(ctx["cfg"])
+		return ok(ctx["cfg"], {"items": items, "count": len(items), "secrets_exposed": false})
+	})
+	server = server.route("GET", "/v1/ai/mcp/tools", func(req) {
+		guard := guard_request(req, ctx, "cms.read")
+		if guard["ok"] == false { return guard["response"] }
+		tools := mcp_tool_descriptors()
+		return ok(ctx["cfg"], {"tools": tools, "count": len(tools), "protocol": "mcp-ready", "transport": "CMS REST abilities"})
+	})
+	return server
+}

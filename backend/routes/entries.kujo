@@ -84,7 +84,7 @@ export build_seo_audit_item := func(entry, site_url, term_count) {
 	}
 }
 
-func normalize_seo_changes(raw) {
+export normalize_seo_changes := func(raw) {
 	if type(raw) != "dict" { return {"ok": false, "error": "changes must be an object"} }
 	allowed := {
 		"title": 70,
@@ -109,7 +109,7 @@ func normalize_seo_changes(raw) {
 	return {"ok": true, "changes": changes}
 }
 
-func apply_seo_changes(db, entry_id, changes) {
+export apply_seo_changes := func(db, entry_id, changes) {
 	lock_rows := db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, now()])
 	if len(lock_rows) > 0 { return {"ok": false, "code": "entry_locked", "message": "Entry is currently locked"} }
 	rows := db_query(db, "SELECT id, meta_json FROM entries WHERE id = ? LIMIT 1", [entry_id])

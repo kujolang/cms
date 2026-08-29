@@ -9,6 +9,30 @@ test_setup {
 	from backend.routes.entries import build_seo_audit_item, can_read_entry_status
 	from backend.routes.media import parse_media_size_bytes
 	from backend.routes.plugins import list_webhook_event_schemas, validate_webhook_event_payload, webhook_schema_for
+	from backend.routes.abilities import ability_categories, ability_registry, connector_registry, find_ability, mcp_tool_descriptors
+}
+
+test "abilities are discoverable, namespaced, schema-described, and MCP-ready" {
+	abilities := ability_registry()
+	assert_true(to_bool(len(abilities) >= 6))
+	assert_true(to_bool(len(ability_categories()) >= 4))
+	seo_update := find_ability("seo", "update-entry")
+	assert_equal(type(seo_update), "dict")
+	assert_equal(seo_update["annotations"]["requires_confirmation"], true)
+	assert_equal(seo_update["permission"], "cms.write")
+	assert_equal(type(find_ability("missing", "ability")), "null")
+	tools := mcp_tool_descriptors()
+	assert_equal(len(tools), len(abilities))
+	assert_equal(tools[0]["execution"], "/v1/abilities/cms/site-info/run")
+}
+
+test "connector registry reports configuration without returning endpoint values" {
+	connectors := connector_registry({"ai_sdk_endpoint": "https://gateway.example.test", "mcp_endpoint": ""})
+	assert_true(to_bool(len(connectors) >= 12))
+	assert_equal(connectors[0]["configured"], true)
+	assert_equal(connectors[2]["configured"], false)
+	assert_equal(has_key(connectors[0], "endpoint") == 1, false)
+	assert_equal(connectors[0]["secret_storage"], "external")
 }
 
 test "slug validation enforces lowercase-safe keys" {
