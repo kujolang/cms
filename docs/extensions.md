@@ -21,6 +21,8 @@ Lifecycle:
 
 [`examples/extensions/starter-theme/kujo-theme.json`](../examples/extensions/starter-theme/kujo-theme.json) is the canonical starter.
 
+The Field Notes frontend is a complete reusable theme package in the independent [`cms-example`](https://github.com/kujolang/cms-example) repository. Its root manifest maps the real templates, assets, content types, menu locations, settings, and administration entrypoint used by the showcase.
+
 ## Plugin packages
 
 A plugin repository includes `kujo-plugin.json`. Its manifest declares identity, compatibility, runtime type, capabilities, subscribed events, optional Abilities API descriptors, configuration schema, defaults, and distribution metadata.
@@ -37,6 +39,8 @@ Installing a manifest does not install webhook secrets, provider credentials, or
 Installing a newer manifest for an existing package preserves its current activation state and configured settings unless the request supplies replacements. This makes package upgrades safe for customer-specific configuration while keeping activation an explicit lifecycle decision.
 
 [`examples/extensions/starter-plugin/kujo-plugin.json`](../examples/extensions/starter-plugin/kujo-plugin.json) is the canonical starter.
+
+[`cms-contact-form`](https://github.com/kujolang/cms-contact-form) is the full plugin showcase. It combines a framework-neutral contact-form web component with a standalone SQLite-backed connector, protected moderation API, matching CLI, OpenAPI discovery, declared agent abilities, origin policy, rate limiting, honeypot filtering, hashed client addresses, and signed notification delivery for email or automation adapters.
 
 ## Contracts and API
 

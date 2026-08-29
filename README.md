@@ -168,6 +168,7 @@ Portable extension workflows:
 - Theme packages describe framework-neutral frontend entrypoints, templates, assets, settings, content types, and menu locations. Plugin packages declare connector, webhook, browser, or hybrid runtimes with explicit capabilities and events.
 - The CMS records manifests but never downloads or executes package code. Deployment tools verify and build theme artifacts separately; webhook secrets and provider credentials are configured through protected operational surfaces.
 - `bash scripts/cms-extensions.sh help` provides API-equivalent terminal commands. Canonical manifests live under `examples/extensions/` and the authoring contract is documented in [`docs/extensions.md`](docs/extensions.md).
+- Field Notes is packaged in the independent `cms-example` repository. The independent `cms-contact-form` repository demonstrates a hybrid plugin with a browser component, durable submission API, moderation CLI, discoverable abilities, signed notification delivery, and production safety controls.
 
 AI and agent interoperability:
 
