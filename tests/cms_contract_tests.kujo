@@ -6,7 +6,7 @@ test_setup {
 	from backend.core.database import connect_database, db_execute_safe, db_query_safe
 	from backend.core.migrations import get_schema_version, TARGET_SCHEMA_VERSION
 	from backend.routes.delivery import build_llms_txt, build_robots_txt, build_rss_xml, build_security_txt, build_sitemap_xml
-	from backend.routes.entries import can_read_entry_status
+	from backend.routes.entries import build_seo_audit_item, can_read_entry_status
 	from backend.routes.media import parse_media_size_bytes
 	from backend.routes.plugins import list_webhook_event_schemas, validate_webhook_event_payload, webhook_schema_for
 }
@@ -24,6 +24,31 @@ test "slug fallback normalization can produce invalid short slug" {
 	fallback_slug = regex_replace(fallback_slug, "-{2,}", "-")
 	fallback_slug = trim(fallback_slug)
 	assert_true(to_bool(len(fallback_slug) < 2))
+}
+
+test "SEO audit helper exposes granular readiness evidence" {
+	item := build_seo_audit_item({
+		"id": 7,
+		"content_type_key": "article",
+		"title": "A useful article",
+		"slug": "useful-article",
+		"status": "published",
+		"excerpt": "A useful excerpt",
+		"body": "one two three four",
+		"author_id": "editor",
+		"meta_json": to_json({"seo": {"title": "A deliberately clear search title for the article", "description": "A sufficiently descriptive search snippet that gives readers a concrete reason to visit and understand what the article contains.", "focus_keyword": "useful article", "og_image_url": "https://example.test/card.webp"}}),
+		"updated_at": 1,
+		"published_at": 1
+	}, "https://example.test", 2)
+	assert_equal(item["readiness"], "ready")
+	assert_equal(item["seo"]["focus_keyword"], "useful article")
+	assert_equal(item["term_count"], 2)
+	assert_equal(item["url"], "https://example.test/article/useful-article")
+
+	missing := build_seo_audit_item({"id": 8, "content_type_key": "page", "title": "Thin", "slug": "thin", "body": "", "meta_json": "{}"}, "https://example.test/", 0)
+	assert_equal(missing["readiness"], "needs_work")
+	assert_true(to_bool(contains(to_json(missing["issues"]), "missing_keyword") >= 0))
+	assert_true(to_bool(missing["score"] < 100))
 }
 
 test "parse positive integer helper honors defaults" {

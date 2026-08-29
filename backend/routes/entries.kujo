@@ -9,7 +9,227 @@ export can_read_entry_status := func(auth_context, status) {
 	return true
 }
 
+export build_seo_audit_item := func(entry, site_url, term_count) {
+	meta := {}
+	meta_text := trim(to_string(dict_get_or(entry, "meta_json", "")))
+	if meta_text != "" {
+		meta_err := null
+		try { meta = parse_json(meta_text) } except e { meta_err = e }
+		if type(meta_err) != "null" || type(meta) != "dict" { meta = {} }
+	}
+	seo := dict_get_or(meta, "seo", {})
+	if type(seo) != "dict" { seo = {} }
+	title := trim(to_string(dict_get_or(seo, "title", "")))
+	description := trim(to_string(dict_get_or(seo, "description", "")))
+	focus_keyword := trim(to_string(dict_get_or(seo, "focus_keyword", "")))
+	canonical_url := trim(to_string(dict_get_or(seo, "canonical_url", "")))
+	og_image_url := trim(to_string(dict_get_or(seo, "og_image_url", "")))
+	social_title := trim(to_string(dict_get_or(seo, "social_title", "")))
+	social_description := trim(to_string(dict_get_or(seo, "social_description", "")))
+	schema_type := trim(to_string(dict_get_or(seo, "schema_type", "")))
+	robots := trim(to_string(dict_get_or(seo, "robots", "index,follow")))
+
+	issues := []
+	score := 100
+	if title == "" { issues = push(issues, "missing_title"); score = score - 20 }
+	if title != "" && len(title) < 30 { issues = push(issues, "title_too_short"); score = score - 5 }
+	if len(title) > 60 { issues = push(issues, "title_too_long"); score = score - 5 }
+	if description == "" { issues = push(issues, "missing_description"); score = score - 20 }
+	if description != "" && len(description) < 70 { issues = push(issues, "description_too_short"); score = score - 5 }
+	if len(description) > 160 { issues = push(issues, "description_too_long"); score = score - 5 }
+	if focus_keyword == "" { issues = push(issues, "missing_keyword"); score = score - 15 }
+	if canonical_url == "" { issues = push(issues, "missing_canonical"); score = score - 10 }
+	if og_image_url == "" { issues = push(issues, "missing_social_image"); score = score - 10 }
+	if term_count <= 0 { issues = push(issues, "missing_terms"); score = score - 10 }
+	if score < 0 { score = 0 }
+	readiness := "needs_work"
+	if score >= 75 && title != "" && description != "" && focus_keyword != "" && og_image_url != "" && term_count > 0 { readiness = "ready" }
+
+	body_text := trim(to_string(dict_get_or(entry, "body", "")))
+	word_count := 0
+	if body_text != "" { word_count = len(split(body_text, " ")) }
+	base_url := trim(to_string(site_url))
+	if ends_with(base_url, "/") { base_url = substring(base_url, 0, len(base_url) - 1) }
+	path := "/" + to_string(dict_get_or(entry, "content_type_key", "entry")) + "/" + to_string(dict_get_or(entry, "slug", ""))
+
+	return {
+		"id": dict_get_or(entry, "id", 0),
+		"content_type_key": dict_get_or(entry, "content_type_key", ""),
+		"title": dict_get_or(entry, "title", ""),
+		"slug": dict_get_or(entry, "slug", ""),
+		"status": dict_get_or(entry, "status", ""),
+		"author_id": dict_get_or(entry, "author_id", ""),
+		"updated_at": dict_get_or(entry, "updated_at", null),
+		"published_at": dict_get_or(entry, "published_at", null),
+		"excerpt_length": len(trim(to_string(dict_get_or(entry, "excerpt", "")))),
+		"word_count": word_count,
+		"term_count": term_count,
+		"url": base_url + path,
+		"readiness": readiness,
+		"score": score,
+		"issues": issues,
+		"seo": {
+			"title": title,
+			"description": description,
+			"focus_keyword": focus_keyword,
+			"canonical_url": canonical_url,
+			"og_image_url": og_image_url,
+			"social_title": social_title,
+			"social_description": social_description,
+			"schema_type": schema_type,
+			"robots": robots,
+			"title_length": len(title),
+			"description_length": len(description)
+		}
+	}
+}
+
+func normalize_seo_changes(raw) {
+	if type(raw) != "dict" { return {"ok": false, "error": "changes must be an object"} }
+	allowed := {
+		"title": 70,
+		"description": 180,
+		"focus_keyword": 120,
+		"canonical_url": 2048,
+		"og_image_url": 2048,
+		"social_title": 100,
+		"social_description": 240,
+		"schema_type": 80,
+		"robots": 80
+	}
+	changes := {}
+	for key in keys(raw) {
+		if has_key(allowed, key) == 1 {
+			value := trim(to_string(raw[key]))
+			if len(value) > allowed[key] { return {"ok": false, "error": key + " exceeds its maximum length"} }
+			changes[key] = value
+		}
+	}
+	if len(changes) == 0 { return {"ok": false, "error": "No supported SEO fields were supplied"} }
+	return {"ok": true, "changes": changes}
+}
+
+func apply_seo_changes(db, entry_id, changes) {
+	lock_rows := db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, now()])
+	if len(lock_rows) > 0 { return {"ok": false, "code": "entry_locked", "message": "Entry is currently locked"} }
+	rows := db_query(db, "SELECT id, meta_json FROM entries WHERE id = ? LIMIT 1", [entry_id])
+	if len(rows) == 0 { return {"ok": false, "code": "not_found", "message": "Entry not found"} }
+	meta := {}
+	parse_err := null
+	try { meta = parse_json(to_string(dict_get_or(rows[0], "meta_json", "{}"))) } except e { parse_err = e }
+	if type(parse_err) != "null" || type(meta) != "dict" { meta = {} }
+	seo := dict_get_or(meta, "seo", {})
+	if type(seo) != "dict" { seo = {} }
+	for key in keys(changes) { seo[key] = changes[key] }
+	meta["seo"] = seo
+	db_execute(db, "UPDATE entries SET meta_json = ?, updated_at = ? WHERE id = ?", [to_json(meta), now(), entry_id])
+	return {"ok": true, "entry_id": entry_id, "seo": seo}
+}
+
 export register_entry_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/seo/entries", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		cfg := ctx["cfg"]
+		db := ctx["db"]
+		query := dict_get_or(req, "query", {})
+		list_query := parse_list_query(query, {"default_limit": 25, "max_limit": 100, "default_offset": 0, "default_sort_by": "updated_at", "default_sort_dir": "desc", "allowed_sort_fields": ["id", "title", "status", "updated_at", "published_at"]})
+		where_sql := " WHERE 1=1"
+		params := []
+		content_type := trim(to_string(dict_get_or(query, "content_type", "")))
+		status := trim(to_string(dict_get_or(query, "status", "")))
+		search := trim(to_string(dict_get_or(query, "q", "")))
+		readiness := to_lower(trim(to_string(dict_get_or(query, "readiness", ""))))
+		issue := to_lower(trim(to_string(dict_get_or(query, "issue", ""))))
+		focus_keyword := trim(to_string(dict_get_or(query, "focus_keyword", "")))
+		title_expr := "trim(CASE WHEN json_valid(meta_json) THEN COALESCE(json_extract(meta_json, '$.seo.title'), '') ELSE '' END)"
+		description_expr := "trim(CASE WHEN json_valid(meta_json) THEN COALESCE(json_extract(meta_json, '$.seo.description'), '') ELSE '' END)"
+		keyword_expr := "trim(CASE WHEN json_valid(meta_json) THEN COALESCE(json_extract(meta_json, '$.seo.focus_keyword'), '') ELSE '' END)"
+		image_expr := "trim(CASE WHEN json_valid(meta_json) THEN COALESCE(json_extract(meta_json, '$.seo.og_image_url'), '') ELSE '' END)"
+		canonical_expr := "trim(CASE WHEN json_valid(meta_json) THEN COALESCE(json_extract(meta_json, '$.seo.canonical_url'), '') ELSE '' END)"
+		terms_expr := "(SELECT COUNT(*) FROM entry_terms et WHERE et.entry_id = entries.id)"
+		if content_type != "" { where_sql = where_sql + " AND content_type_key = ?"; params = push(params, content_type) }
+		if status != "" { where_sql = where_sql + " AND status = ?"; params = push(params, status) }
+		if search != "" { where_sql = where_sql + " AND (title LIKE ? OR slug LIKE ? OR excerpt LIKE ?)"; like := "%" + search + "%"; params = push(params, like); params = push(params, like); params = push(params, like) }
+		if focus_keyword != "" { where_sql = where_sql + " AND " + keyword_expr + " LIKE ?"; params = push(params, "%" + focus_keyword + "%") }
+		core_ready := title_expr + " != '' AND " + description_expr + " != '' AND " + keyword_expr + " != '' AND " + image_expr + " != '' AND " + terms_expr + " > 0"
+		if readiness == "ready" { where_sql = where_sql + " AND " + core_ready }
+		if readiness == "needs_work" { where_sql = where_sql + " AND NOT (" + core_ready + ")" }
+		if issue == "missing_title" { where_sql = where_sql + " AND " + title_expr + " = ''" }
+		if issue == "missing_description" { where_sql = where_sql + " AND " + description_expr + " = ''" }
+		if issue == "missing_keyword" { where_sql = where_sql + " AND " + keyword_expr + " = ''" }
+		if issue == "missing_social_image" { where_sql = where_sql + " AND " + image_expr + " = ''" }
+		if issue == "missing_canonical" { where_sql = where_sql + " AND " + canonical_expr + " = ''" }
+		if issue == "missing_terms" { where_sql = where_sql + " AND " + terms_expr + " = 0" }
+
+		count_rows := db_query(db, "SELECT COUNT(*) AS total FROM entries" + where_sql, params)
+		total := to_int(dict_get_or(count_rows[0], "total", 0))
+		row_params := []
+		for param in params { row_params = push(row_params, param) }
+		row_params = push(row_params, list_query["limit"])
+		row_params = push(row_params, list_query["offset"])
+		rows := db_query(db, "SELECT entries.*, " + terms_expr + " AS term_count FROM entries" + where_sql + " ORDER BY " + list_query["sort_by"] + " " + to_upper(list_query["sort_dir"]) + ", id DESC LIMIT ? OFFSET ?", row_params)
+		items := []
+		for row in rows { items = push(items, build_seo_audit_item(row, dict_get_or(cfg, "site_url", ""), to_int(dict_get_or(row, "term_count", 0)))) }
+		summary_rows := db_query(db, "SELECT COUNT(*) AS total, SUM(CASE WHEN " + title_expr + " = '' THEN 1 ELSE 0 END) AS missing_titles, SUM(CASE WHEN " + description_expr + " = '' THEN 1 ELSE 0 END) AS missing_descriptions, SUM(CASE WHEN " + keyword_expr + " = '' THEN 1 ELSE 0 END) AS missing_keywords, SUM(CASE WHEN " + image_expr + " = '' THEN 1 ELSE 0 END) AS missing_social_images, SUM(CASE WHEN " + terms_expr + " = 0 THEN 1 ELSE 0 END) AS missing_terms FROM entries", [])
+		summary := summary_rows[0]
+		return ok(cfg, {"items": items, "count": len(items), "total": total, "limit": list_query["limit"], "offset": list_query["offset"], "summary": summary, "filters": {"content_type": content_type, "status": status, "q": search, "readiness": readiness, "issue": issue, "focus_keyword": focus_keyword}})
+	})
+
+	server = server.route("POST", "/v1/seo/entries/bulk", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		cfg := ctx["cfg"]
+		body_text := trim(to_string(dict_get_or(req, "body", "")))
+		body := null
+		body_err := null
+		try { body = parse_json(body_text) } except e { body_err = e }
+		if type(body_err) != "null" || type(body) != "dict" { return fail(cfg, 400, "invalid_body", "Invalid JSON body", {}) }
+		entry_ids := dict_get_or(body, "entry_ids", [])
+		if type(entry_ids) != "array" || len(entry_ids) == 0 || len(entry_ids) > 200 { return fail(cfg, 400, "invalid_entry_ids", "entry_ids must contain 1 to 200 IDs", {}) }
+		normalized := normalize_seo_changes(dict_get_or(body, "changes", {}))
+		if normalized["ok"] == false { return fail(cfg, 400, "invalid_seo", normalized["error"], {}) }
+		updated_ids := []
+		errors := []
+		for raw_id in entry_ids {
+			entry_id := to_int(raw_id)
+			if entry_id <= 0 { errors = push(errors, {"entry_id": raw_id, "code": "invalid_id"}); continue }
+			result := null
+			apply_err := null
+			try { result = apply_seo_changes(ctx["db"], entry_id, normalized["changes"]) } except e { apply_err = e }
+			if type(apply_err) != "null" { errors = push(errors, {"entry_id": entry_id, "code": "update_failed"}); continue }
+			if result["ok"] == true { updated_ids = push(updated_ids, entry_id) } else { errors = push(errors, {"entry_id": entry_id, "code": result["code"]}) }
+		}
+		_ = write_audit(ctx, req, "entry.seo.bulk_update", 200, "entry", "batch", {"updated_ids": updated_ids, "changes": normalized["changes"], "errors": errors})
+		return ok(cfg, {"updated_ids": updated_ids, "updated_count": len(updated_ids), "errors": errors})
+	})
+
+	server = server.route("PATCH", "/v1/entries/:id/seo", func(req) {
+		guard := guard_request(req, ctx, true)
+		if guard["ok"] == false { return guard["response"] }
+		cfg := ctx["cfg"]
+		params := dict_get_or(req, "params", {})
+		entry_id := to_int(dict_get_or(params, "id", 0))
+		if entry_id <= 0 { return fail(cfg, 400, "invalid_id", "id must be a positive integer", {}) }
+		body := null
+		body_err := null
+		try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { body_err = e }
+		if type(body_err) != "null" || type(body) != "dict" { return fail(cfg, 400, "invalid_body", "Invalid JSON body", {}) }
+		normalized := normalize_seo_changes(body)
+		if normalized["ok"] == false { return fail(cfg, 400, "invalid_seo", normalized["error"], {}) }
+		result := null
+		apply_err := null
+		try { result = apply_seo_changes(ctx["db"], entry_id, normalized["changes"]) } except e { apply_err = e }
+		if type(apply_err) != "null" { return fail(cfg, 500, "update_failed", "Failed to update SEO metadata", {}) }
+		if result["ok"] == false {
+			status_code := 404
+			if result["code"] == "entry_locked" { status_code = 409 }
+			return fail(cfg, status_code, result["code"], result["message"], {})
+		}
+		_ = write_audit(ctx, req, "entry.seo.update", 200, "entry", entry_id, {"changes": normalized["changes"]})
+		return ok(cfg, result)
+	})
+
 	server = server.route("GET", "/v1/entries", func(req) {
 		guard := guard_request(req, ctx, false)
 		if guard["ok"] == false {
@@ -1096,8 +1316,12 @@ export register_entry_routes := func(server, ctx) {
 
 		seo_title := trim(to_string(entry["title"]))
 		seo_description := trim(to_string(entry["excerpt"]))
+		focus_keyword := ""
 		og_image_url := ""
+		social_title := ""
+		social_description := ""
 		schema_type := "Article"
+		robots := "index,follow"
 
 		meta_text := trim(to_string(dict_get_or(entry, "meta_json", "")))
 		if meta_text != "" {
@@ -1116,14 +1340,26 @@ export register_entry_routes := func(server, ctx) {
 				if trim(to_string(dict_get_or(seo_obj, "description", ""))) != "" {
 					seo_description = trim(to_string(seo_obj["description"]))
 				}
+				if trim(to_string(dict_get_or(seo_obj, "focus_keyword", ""))) != "" {
+					focus_keyword = trim(to_string(seo_obj["focus_keyword"]))
+				}
 				if trim(to_string(dict_get_or(seo_obj, "canonical_url", ""))) != "" {
 					canonical_url = trim(to_string(seo_obj["canonical_url"]))
 				}
 				if trim(to_string(dict_get_or(seo_obj, "og_image_url", ""))) != "" {
 					og_image_url = trim(to_string(seo_obj["og_image_url"]))
 				}
+				if trim(to_string(dict_get_or(seo_obj, "social_title", ""))) != "" {
+					social_title = trim(to_string(seo_obj["social_title"]))
+				}
+				if trim(to_string(dict_get_or(seo_obj, "social_description", ""))) != "" {
+					social_description = trim(to_string(seo_obj["social_description"]))
+				}
 				if trim(to_string(dict_get_or(seo_obj, "schema_type", ""))) != "" {
 					schema_type = trim(to_string(seo_obj["schema_type"]))
+				}
+				if trim(to_string(dict_get_or(seo_obj, "robots", ""))) != "" {
+					robots = trim(to_string(seo_obj["robots"]))
 				}
 			}
 		}
@@ -1131,9 +1367,13 @@ export register_entry_routes := func(server, ctx) {
 		seo_data := {
 			"title": seo_title,
 			"description": seo_description,
+			"focus_keyword": focus_keyword,
 			"canonical_url": canonical_url,
 			"og_image_url": og_image_url,
-			"schema_type": schema_type
+			"social_title": social_title,
+			"social_description": social_description,
+			"schema_type": schema_type,
+			"robots": robots
 		}
 
 		json_ld := {
