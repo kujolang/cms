@@ -31,6 +31,7 @@ The current codebase is intentionally backend-first. Active source lives under `
 - Theme registry and activation controls
 - Portable, versioned theme and plugin manifests with validation, installation, export, discovery, settings schemas, compatibility declarations, and distribution metadata
 - Durable users and profiles with roles, account states, social links, derived credentials, and configurable open/approval/closed registration
+- Framework-neutral identity links and revocable CMS sessions with core-derived permissions and administration capabilities
 - Roles and API tokens with lifecycle controls
 - Tenants and workspaces with isolation controls
 - Public delivery and discovery routes (`/.well-known/security.txt`, `/.well-known/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/sitemap-index.xml`, `/rss.xml`, `/health`, `/v1`, `/v1/contract`, `/v1/openapi.json`)
@@ -156,6 +157,9 @@ User APIs:
 - `GET /v1/users/:id/credentials` is a bearer-protected server-to-server credential lookup; password hashes are never included in normal user responses.
 - `GET|PATCH /v1/settings/registration` reads or changes the `open`, `approval`, or `closed` signup policy and its default role.
 - `GET|PATCH /v1/settings/social-sharing` reads or changes the allowed sharing networks, per-network account attribution, and the content types that display them. This setting is bearer-protected and audited like other administration settings.
+- `POST /v1/auth/sessions` lets a trusted password or identity adapter exchange a verified active user for a bounded, revocable CMS session. The raw token is returned once and is sent to CMS as `X-CMS-Session`; frontend cookies remain the framework adapter's responsibility.
+- `POST /v1/auth/providers/exchange` links a trusted external identity to a CMS user, optionally provisions the user under the configured registration policy, and returns the same core session contract.
+- `GET /v1/auth/me` returns the session user, role permissions, and effective administration capabilities. `DELETE /v1/auth/session` immediately revokes that session.
 - `GET /v1/seo/entries` returns a filterable, paginated SEO inventory with scores, issue codes, metadata lengths, taxonomy counts, and content signals.
 - `PATCH /v1/entries/:id/seo` performs a focused SEO update without replacing other entry metadata; `POST /v1/seo/entries/bulk` applies the same supported fields to as many as 200 selected entries.
 
@@ -188,7 +192,7 @@ Only published records are exposed. Returned content is plain text, size-bounded
 
 Extend the public tool set at `backend/routes/webmcp.kujo:webmcp_tool_registry` and add a matching bounded, published-content handler. Keep authenticated or mutating agent operations in the Abilities API. Terminal agents can inspect the surface with `bash scripts/cms-ai.sh webmcp`, `webmcp-tools`, and `webmcp-index` without a CMS token. See [`docs/webmcp.md`](docs/webmcp.md) for the full extension and deployment contract.
 
-The backend stores portable PBKDF2 credential material supplied by the trusted authentication layer. Public applications should terminate password handling in a trusted server, keep the CMS token out of browsers, and use a managed identity provider where appropriate.
+The backend stores portable PBKDF2 credential material supplied by a trusted password adapter. Password verification remains in that adapter because the current Kujo runtime does not provide a password-hardening primitive; after verification, the adapter exchanges the user for a core-managed CMS session. This keeps the CMS API token and credential records out of browsers while ensuring that session expiry, revocation, role permissions, and effective capabilities have one framework-neutral source of truth.
 
 ## Validation and Release Gate
 

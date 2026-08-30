@@ -15,7 +15,7 @@ func with_headers(response, cfg) {
 
 	response = set_header(response, "Access-Control-Allow-Origin", cors_origin)
 	response = set_header(response, "Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
-	response = set_header(response, "Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-Lock-Session, X-Requested-With, Idempotency-Key")
+	response = set_header(response, "Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, X-CMS-Session, X-Lock-Session, X-Requested-With, Idempotency-Key")
 	response = set_header(response, "Access-Control-Max-Age", "86400")
 	response = set_header(response, "Vary", "Origin")
 	response = set_header(response, "X-Content-Type-Options", "nosniff")

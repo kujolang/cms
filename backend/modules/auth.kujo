@@ -16,27 +16,76 @@ func parse_permissions(permissions_json) {
 }
 
 export permissions_allow := func(permissions, required_permission) {
-	if required_permission == "" {
-		return true
-	}
-	if type(permissions) != "array" {
-		return false
-	}
-
+	if required_permission == "" { return true }
+	if type(permissions) != "array" { return false }
 	for permission in permissions {
 		perm := to_string(permission)
-		if perm == "*" || perm == required_permission {
-			return true
-		}
+		if perm == "*" || perm == required_permission { return true }
 		if ends_with(perm, ".*") {
 			prefix := substring(perm, 0, len(perm) - 1)
-			if starts_with(required_permission, prefix) {
-				return true
-			}
+			if starts_with(required_permission, prefix) { return true }
 		}
 	}
-
 	return false
+}
+
+export effective_admin_capabilities := func(permissions) {
+	capabilities := []
+	checks := {
+		"view_content": ["cms.read"],
+		"edit_content": ["cms.write", "entries.create", "entries.edit_own", "entries.edit"],
+		"publish_content": ["entries.publish", "entries.publish_own", "cms.write"],
+		"manage_taxonomies": ["taxonomies.manage", "taxonomies.create", "cms.write"],
+		"manage_seo": ["seo.manage", "cms.write"],
+		"upload_media": ["media.create", "media.manage", "cms.write"],
+		"manage_users": ["admin.users"],
+		"manage_extensions": ["admin.plugins", "admin.settings"]
+	}
+	for capability in keys(checks) {
+		allowed := false
+		for permission in checks[capability] { if permissions_allow(permissions, permission) { allowed = true } }
+		if allowed { capabilities = push(capabilities, capability) }
+	}
+	return capabilities
+}
+
+func extract_session_token(req, get_header_func) {
+	session_token_value := trim(get_header_func(req, "X-CMS-Session"))
+	if session_token_value == "" { session_token_value = trim(get_header_func(req, "x-cms-session")) }
+	if session_token_value == "" { return {"present": false, "invalid": false, "token": ""} }
+	if len(session_token_value) < 32 || len(session_token_value) > 512 || starts_with(session_token_value, "cms_session_") == false {
+		return {"present": true, "invalid": true, "token": ""}
+	}
+	invalid_chars := regex_replace(session_token_value, "[A-Za-z0-9_-]", "")
+	if invalid_chars != "" { return {"present": true, "invalid": true, "token": ""} }
+	return {"present": true, "invalid": false, "token": session_token_value}
+}
+
+export load_session_auth := func(db, token) {
+	token_hash := sha256(token)
+	result := db_query_safe(db, "SELECT s.id AS session_id, s.user_id, s.provider, s.provider_subject, s.expires_at, s.revoked_at, u.role_key, u.status, r.permissions_json FROM identity_sessions s INNER JOIN users u ON u.id = s.user_id INNER JOIN roles r ON r.role_key = u.role_key WHERE s.token_hash = ? LIMIT 1", [token_hash])
+	if result["ok"] == false { return {"ok": false, "error": result["error"]} }
+	if len(result["rows"]) == 0 { return {"ok": false, "error": "Session not found"} }
+	row := result["rows"][0]
+	if type(dict_get_or(row, "revoked_at", null)) != "null" { return {"ok": false, "error": "Session revoked"} }
+	if to_string(dict_get_or(row, "status", "")) != "active" { return {"ok": false, "error": "User account is not active"} }
+	expires_at := to_int(dict_get_or(row, "expires_at", 0))
+	if expires_at <= current_timestamp() { return {"ok": false, "error": "Session expired"} }
+	permissions := parse_permissions(row["permissions_json"])
+	permissions = push(permissions, "auth.session")
+	_ := db_execute_safe(db, "UPDATE identity_sessions SET last_seen_at = ? WHERE id = ?", [now(), row["session_id"]])
+	return {
+		"ok": true,
+		"actor": "user:" + to_string(row["user_id"]),
+		"credential_fingerprint": token_hash,
+		"role_key": row["role_key"],
+		"permissions": permissions,
+		"capabilities": effective_admin_capabilities(permissions),
+		"user_id": row["user_id"],
+		"session_id": row["session_id"],
+		"provider": row["provider"],
+		"provider_subject": row["provider_subject"]
+	}
 }
 
 func extract_bearer_token(req, get_header_func) {
@@ -165,7 +214,9 @@ export authorize_request := func(req, ctx, get_header_func, require_write_auth) 
 	if token_result["invalid"] == true {
 		return {"ok": false, "error": "Invalid bearer token format"}
 	}
-	token := token_result["token"]
+	bearer_token := token_result["token"]
+	session_result := extract_session_token(req, get_header_func)
+	if session_result["invalid"] == true { return {"ok": false, "error": "Invalid CMS session format"} }
 	method := to_upper(to_string(dict_get_or(req, "method", "GET")))
 	requires_write := require_write_auth == true || method == "POST" || method == "PUT" || method == "PATCH" || method == "DELETE"
 	required_permission := "cms.read"
@@ -176,7 +227,16 @@ export authorize_request := func(req, ctx, get_header_func, require_write_auth) 
 		required_permission = "cms.write"
 	}
 
-	if token == "" {
+	if bearer_token == "" && session_result["present"] == true {
+		session_auth := load_session_auth(db, session_result["token"])
+		if session_auth["ok"] == false { return session_auth }
+		if permissions_allow(session_auth["permissions"], required_permission) == false {
+			return {"ok": false, "error": "Insufficient permissions", "status": 403}
+		}
+		return session_auth
+	}
+
+	if bearer_token == "" {
 		if requires_write {
 			return {"ok": false, "error": "Missing bearer token"}
 		}
@@ -189,7 +249,7 @@ export authorize_request := func(req, ctx, get_header_func, require_write_auth) 
 	}
 
 	bootstrap := trim(to_string(dict_get_or(cfg, "api_token", "")))
-	if bootstrap != "" && token == bootstrap {
+	if bootstrap != "" && bearer_token == bootstrap {
 		if bool_or(dict_get_or(cfg, "allow_bootstrap_token", true), true) == false {
 			return {"ok": false, "error": "Bootstrap token is disabled"}
 		}
@@ -221,13 +281,13 @@ export authorize_request := func(req, ctx, get_header_func, require_write_auth) 
 		return {
 			"ok": true,
 			"actor": "bootstrap-token",
-			"credential_fingerprint": sha256(token),
+			"credential_fingerprint": sha256(bearer_token),
 			"role_key": "super_admin",
 			"permissions": permissions
 		}
 	}
 
-	token_auth := load_token_auth(db, token)
+	token_auth := load_token_auth(db, bearer_token)
 	if token_auth["ok"] == false {
 		return token_auth
 	}

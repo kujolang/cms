@@ -2,7 +2,7 @@ test_setup {
 	from backend.core.utils import is_valid_slug_key, parse_list_query, parse_nonnegative_int_text, parse_positive_int_text
 	from backend.core.http import get_header, parse_bounded_int, req_actor
 	from backend.config.config import load_config, load_config_impl
-	from backend.modules.auth import authorize_request, permissions_allow
+	from backend.modules.auth import authorize_request, effective_admin_capabilities, load_session_auth, permissions_allow
 	from backend.core.database import connect_database, db_execute_safe, db_query_safe
 	from backend.core.migrations import get_schema_version, TARGET_SCHEMA_VERSION
 	from backend.routes.delivery import build_llms_txt, build_robots_txt, build_rss_xml, build_security_txt, build_sitemap_xml
@@ -330,6 +330,30 @@ test "permission matcher supports exact and wildcard scopes" {
 	assert_equal(permissions_allow(["entries.*"], "entries.write"), true)
 	assert_equal(permissions_allow(["*"], "themes.activate"), true)
 	assert_equal(permissions_allow(["cms.read"], "cms.write"), false)
+}
+
+test "identity sessions carry core permissions and framework-neutral capabilities" {
+	if path_exists("results") == false { create_dir("results") }
+	db_path := "./results/test_identity_session_contract.db"
+	cfg := load_config({"db_path": db_path, "api_token": "contract-bootstrap-token-1234567890", "allow_bootstrap_token": true, "audit_log": false})
+	connection := connect_database(cfg)
+	assert_equal(connection["ok"], true)
+	db := connection["db"]
+	now_ts := now()
+	_ = db_execute_safe(db, "INSERT INTO users (user_key, email, username, display_name, first_name, last_name, bio, website_url, avatar_url, social_json, role_key, status, password_hash, password_salt, password_iterations, email_verified_at, approved_at, approved_by, last_login_at, created_at, updated_at) VALUES (?, ?, ?, ?, '', '', '', '', '', '{}', ?, 'active', ?, ?, 210000, NULL, ?, ?, NULL, ?, ?)", ["identity-editor", "identity@example.test", "identity-editor", "Identity Editor", "editor", sha256("not-a-login-secret"), "identity-session-salt", now_ts, "contract", now_ts, now_ts])
+	user_id := db_last_insert_id(db)
+	raw_session := "cms_session_contractidentitysessiontoken1234567890"
+	_ = db_execute_safe(db, "INSERT INTO identity_sessions (token_hash, user_id, provider, provider_subject, expires_at, last_seen_at, revoked_at, created_at) VALUES (?, ?, 'password', ?, ?, ?, NULL, ?)", [sha256(raw_session), user_id, to_string(user_id), current_timestamp() + 60000, now_ts, now_ts])
+	auth := load_session_auth(db, raw_session)
+	assert_equal(auth["ok"], true)
+	assert_equal(auth["user_id"], user_id)
+	assert_equal(permissions_allow(auth["permissions"], "auth.session"), true)
+	assert_equal(contains(effective_admin_capabilities(auth["permissions"]), "view_content"), true)
+	assert_equal(contains(effective_admin_capabilities(auth["permissions"]), "edit_content"), true)
+	assert_equal(contains(effective_admin_capabilities(auth["permissions"]), "manage_users"), false)
+	if file_exists(db_path) { delete_file(db_path) }
+	if file_exists(db_path + "-wal") { delete_file(db_path + "-wal") }
+	if file_exists(db_path + "-shm") { delete_file(db_path + "-shm") }
 }
 
 test "typed webhook schemas are published for supported events" {

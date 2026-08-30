@@ -1,4 +1,4 @@
-export TARGET_SCHEMA_VERSION := 11
+export TARGET_SCHEMA_VERSION := 12
 
 func db_query_safe(sql_db, sql_text, sql_params) {
 	rows := []
@@ -447,6 +447,24 @@ export run_post_bootstrap_migrations := func(db) {
 		if mark_v11["ok"] == false { return mark_v11 }
 		current_version = 11
 		applied = push(applied, "v11_worker_claim_leases")
+	}
+
+	if current_version < 12 {
+		steps_v12 := [
+			"CREATE TABLE IF NOT EXISTS identity_links (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, provider TEXT NOT NULL, provider_subject TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE, UNIQUE(provider, provider_subject))",
+			"CREATE INDEX IF NOT EXISTS idx_identity_links_user ON identity_links(user_id)",
+			"CREATE TABLE IF NOT EXISTS identity_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, token_hash TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL, provider TEXT NOT NULL, provider_subject TEXT NOT NULL, expires_at INTEGER NOT NULL, last_seen_at TEXT, revoked_at TEXT, created_at TEXT NOT NULL, FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE)",
+			"CREATE INDEX IF NOT EXISTS idx_identity_sessions_user ON identity_sessions(user_id)",
+			"CREATE INDEX IF NOT EXISTS idx_identity_sessions_expiry ON identity_sessions(expires_at)"
+		]
+		for step_v12 in steps_v12 {
+			result_v12 := db_execute_safe(db, step_v12, [])
+			if result_v12["ok"] == false { return result_v12 }
+		}
+		mark_v12 := set_schema_version(db, 12)
+		if mark_v12["ok"] == false { return mark_v12 }
+		current_version = 12
+		applied = push(applied, "v12_identity_sessions")
 	}
 
 	return {

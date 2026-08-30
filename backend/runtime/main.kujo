@@ -16,6 +16,7 @@ from backend.routes.users import register_user_routes
 from backend.routes.abilities import register_ability_routes
 from backend.routes.webmcp import register_webmcp_routes
 from backend.routes.extensions import register_extension_routes
+from backend.routes.identity import register_identity_routes
 
 cfg := load_config({})
 
@@ -155,6 +156,10 @@ func register_options(server, cfg) {
 		"/v1/themes/:id/activate",
 		"/v1/themes/active",
 		"/v1/auth/roles",
+		"/v1/auth/me",
+		"/v1/auth/session",
+		"/v1/auth/sessions",
+		"/v1/auth/providers/exchange",
 		"/v1/auth/roles/:id",
 		"/v1/auth/tokens",
 		"/v1/auth/tokens/:id",
@@ -241,6 +246,10 @@ func build_api_contract(cfg, schema_version) {
 			"/v1/themes/:id/activate": {"post": {"x-auth": "bearer"}},
 			"/v1/themes/active": {"get": {"x-auth": "public"}},
 			"/v1/auth/roles": {"get": {"x-auth": "bearer:admin.auth", "x-query": ["limit", "offset"]}, "post": {"x-auth": "bearer:admin.auth"}},
+			"/v1/auth/me": {"get": {"x-auth": "session"}},
+			"/v1/auth/session": {"delete": {"x-auth": "session"}},
+			"/v1/auth/sessions": {"post": {"x-auth": "bearer:admin.users"}},
+			"/v1/auth/providers/exchange": {"post": {"x-auth": "bearer:admin.users"}},
 			"/v1/auth/roles/:id": {"patch": {"x-auth": "bearer:admin.auth"}, "delete": {"x-auth": "bearer:admin.auth"}},
 			"/v1/auth/tokens": {"get": {"x-auth": "bearer:admin.auth", "x-query": ["limit", "offset"]}, "post": {"x-auth": "bearer:admin.auth"}},
 			"/v1/auth/tokens/:id": {"patch": {"x-auth": "bearer:admin.auth"}, "delete": {"x-auth": "bearer:admin.auth"}},
@@ -675,6 +684,7 @@ server = register_theme_routes(server, ctx)
 server = register_extension_routes(server, ctx)
 server = register_authz_routes(server, ctx)
 server = register_user_routes(server, ctx)
+server = register_identity_routes(server, ctx)
 server = register_ability_routes(server, ctx)
 server = register_tenancy_routes(server, ctx)
 
