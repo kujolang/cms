@@ -112,6 +112,16 @@ export register_identity_routes := func(server, ctx) {
 		return created(ctx["cfg"], {"user": user_result["user"], "session": session})
 	})
 	server = server.route("POST", "/v1/auth/providers/exchange", func(req) { guard := guard_request(req, ctx, "admin.users"); if guard["ok"] == false { return guard["response"] }; return provider_exchange(req, ctx) })
+	server = server.route("POST", "/v1/auth/providers/resolve", func(req) {
+		guard := guard_request(req, ctx, "admin.users"); if guard["ok"] == false { return guard["response"] }
+		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
+		body := body_result["data"]; provider := to_lower(trim(to_string(dict_get_or(body, "provider", "")))); provider_subject := trim(to_string(dict_get_or(body, "provider_subject", ""))); user_id := to_int(dict_get_or(body, "user_id", 0))
+		if user_id <= 0 || is_valid_slug_key(provider) == false || len(provider) > 64 || len(provider_subject) < 1 || len(provider_subject) > 256 { return fail(ctx["cfg"], 400, "invalid_provider_identity", "provider, provider_subject, and user_id are required", {}) }
+		user_result := load_identity_user(ctx["db"], user_id); if user_result["ok"] == false { return fail(ctx["cfg"], 404, user_result["code"], user_result["message"], {}) }
+		link_result := db_execute_safe(ctx["db"], "INSERT INTO identity_links (user_id, provider, provider_subject, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(provider, provider_subject) DO UPDATE SET user_id = excluded.user_id, updated_at = excluded.updated_at", [user_id, provider, provider_subject, now(), now()]); if link_result["ok"] == false { return fail(ctx["cfg"], 409, "identity_link_failed", "Could not link provider identity", {}) }
+		_ = write_audit(ctx, req, "identity.provider.resolve", 200, "user", user_id, {"provider": provider})
+		return ok(ctx["cfg"], {"authenticated": user_result["row"]["status"] == "active", "user": user_result["user"]})
+	})
 	server = server.route("GET", "/v1/auth/me", func(req) {
 		guard := guard_request(req, ctx, "auth.session"); if guard["ok"] == false { return guard["response"] }
 		user_result := load_identity_user(ctx["db"], guard["auth"]["user_id"]); if user_result["ok"] == false { return fail(ctx["cfg"], 404, user_result["code"], user_result["message"], {}) }

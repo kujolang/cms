@@ -662,6 +662,23 @@ export register_entry_routes := func(server, ctx) {
 		if len(type_rows) == 0 {
 			return fail(cfg, 404, "content_type_not_found", "Content type not found", {})
 		}
+		term_ids := []
+		if has_key(body, "term_ids") == 1 {
+			raw_term_ids := body["term_ids"]
+			if type(raw_term_ids) != "array" || len(raw_term_ids) > 500 { return fail(cfg, 400, "invalid_term_ids", "term_ids must be an array containing at most 500 IDs", {}) }
+			for raw_term_id in raw_term_ids {
+				term_id := to_int(raw_term_id)
+				if term_id <= 0 { return fail(cfg, 400, "invalid_term_ids", "term_ids must contain positive integers", {}) }
+				if contains(term_ids, term_id) == false { term_ids = push(term_ids, term_id) }
+			}
+			for term_id in term_ids {
+				term_rows := []
+				term_err := null
+				try { term_rows = db_query(db, "SELECT id FROM taxonomy_terms WHERE id = ? LIMIT 1", [term_id]) } except e { term_err = e }
+				if type(term_err) != "null" { return fail(cfg, 500, "db_query_failed", "Failed to validate terms", {}) }
+				if len(term_rows) == 0 { return fail(cfg, 400, "invalid_term_ids", "One or more term IDs do not exist", {"term_id": term_id}) }
+			}
+		}
 
 		now_ts := now()
 		published_at := dict_get_or(body, "published_at", null)
@@ -671,33 +688,30 @@ export register_entry_routes := func(server, ctx) {
 		}
 
 		insert_err := null
+		rows := []
 		try {
+			db_execute(db, "BEGIN IMMEDIATE", [])
 			db_execute(
 				db,
 				"INSERT INTO entries (content_type_key, title, slug, status, excerpt, body, meta_json, author_id, published_at, unpublish_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 				[content_type_key, title, slug, status, excerpt, entry_body, meta_json, author_id, published_at, unpublish_at, now_ts, now_ts]
 			)
+			rows = db_query(db, "SELECT * FROM entries WHERE content_type_key = ? AND slug = ? ORDER BY id DESC LIMIT 1", [content_type_key, slug])
+			created_entry_id := to_int(dict_get_or(rows[0], "id", 0))
+			for term_id in term_ids { db_execute(db, "INSERT INTO entry_terms (entry_id, term_id, created_at) VALUES (?, ?, ?)", [created_entry_id, term_id, now_ts]) }
+			db_execute(db, "COMMIT", [])
 		} except e {
 			insert_err = e
 		}
 		if type(insert_err) != "null" {
+			try { db_execute(db, "ROLLBACK", []) } except rollback_error { _ = rollback_error }
 			return fail(cfg, 409, "create_failed", "Could not create entry (possibly duplicate slug)", {})
-		}
-
-		rows := []
-		query_err := null
-		try {
-			rows = db_query(db, "SELECT * FROM entries WHERE content_type_key = ? AND slug = ? ORDER BY id DESC LIMIT 1", [content_type_key, slug])
-		} except e {
-			query_err = e
-		}
-		if type(query_err) != "null" || len(rows) == 0 {
-			return fail(cfg, 500, "load_failed", "Created entry but failed to load it", {})
 		}
 		audit_details := {
 			"content_type_key": content_type_key,
 			"status": status,
-			"slug": slug
+			"slug": slug,
+			"term_count": len(term_ids)
 		}
 		audit_err := null
 		try {

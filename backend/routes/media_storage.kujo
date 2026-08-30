@@ -28,30 +28,56 @@ func external_public_url_valid(value) {
 	return true
 }
 
+func ingest_media_path(ctx, filename_value, alt_text_value) {
+	source_path := path_join(ctx["cfg"]["media_inbox_dir"], filename_value); if path_is_file(source_path) == false { return {"ok": false, "status": 404, "code": "media_not_found", "message": "Media is not present in the configured inbox"} }
+	size_value := file_size(source_path); if type(size_value) == "error" || size_value <= 0 || size_value > ctx["cfg"]["media_max_bytes"] { return {"ok": false, "status": 413, "code": "invalid_media_size", "message": "Media size is outside the configured limit"} }
+	binary_value := read_binary_file(source_path); if type(binary_value) == "error" { return {"ok": false, "status": 422, "code": "media_read_failed", "message": "Media could not be inspected"} }
+	detected_value := detected_media_type(filename_value, encode_base64(binary_value)); if type(detected_value) != "dict" { return {"ok": false, "status": 415, "code": "unsupported_media_type", "message": "Only signature-verified PNG, JPEG, GIF, WebP, and PDF files are supported"} }
+	object_key := regex_replace(uuid_v4(), "-", "") + detected_value["extension"]; if path_exists(ctx["cfg"]["media_store_dir"]) == false { create_dir(ctx["cfg"]["media_store_dir"]) }
+	destination_path := path_join(ctx["cfg"]["media_store_dir"], object_key); copy_result := copy_file(source_path, destination_path); if type(copy_result) == "error" || path_is_file(destination_path) == false { return {"ok": false, "status": 500, "code": "media_store_failed", "message": "Media could not be copied into managed storage"} }
+	digest_value := sha256_file(destination_path); public_url_value := joined_public_media_url(ctx["cfg"]["media_public_base_url"], object_key)
+	meta_value := {"storage_adapter": "filesystem", "object_key": object_key, "sha256": digest_value, "source_filename": filename_value, "signature_verified": true}
+	write_error := null; try { db_execute(ctx["db"], "INSERT INTO media_items (filename, mime_type, storage_path, size_bytes, alt_text, meta_json, uploaded_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [filename_value, detected_value["mime_type"], public_url_value, size_value, alt_text_value, to_json(meta_value), now(), now()]) } except e { write_error = e }
+	if type(write_error) != "null" { if path_is_file(destination_path) { _ = delete_file(destination_path) }; return {"ok": false, "status": 409, "code": "media_register_failed", "message": "Media was stored but could not be registered"} }
+	media_id_value := db_last_insert_id(ctx["db"]); rows_value := db_query(ctx["db"], "SELECT * FROM media_items WHERE id = ? LIMIT 1", [media_id_value])
+	return {"ok": true, "media": rows_value[0], "sha256": digest_value, "size_bytes": size_value}
+}
+
 export register_media_storage_routes := func(server, ctx) {
+	server = server.route("GET", "/v1/media/files/:object_key", func(req) {
+		if ctx["cfg"]["media_storage_adapter"] != "filesystem" { return fail(ctx["cfg"], 404, "media_not_found", "Media file not found", {}) }
+		object_key := safe_media_filename(dict_get_or(dict_get_or(req, "params", {}), "object_key", "")); if object_key == "" { return fail(ctx["cfg"], 404, "media_not_found", "Media file not found", {}) }
+		rows := []; try { rows = db_query(ctx["db"], "SELECT mime_type FROM media_items WHERE json_valid(meta_json) AND json_extract(meta_json, '$.storage_adapter') = 'filesystem' AND json_extract(meta_json, '$.object_key') = ? LIMIT 1", [object_key]) } except e { return fail(ctx["cfg"], 500, "media_lookup_failed", "Media file could not be resolved", {}) }
+		if len(rows) == 0 { return fail(ctx["cfg"], 404, "media_not_found", "Media file not found", {}) }
+		media_path := path_join(ctx["cfg"]["media_store_dir"], object_key); if path_is_file(media_path) == false { return fail(ctx["cfg"], 404, "media_not_found", "Media file not found", {}) }
+		media_bytes := read_binary_file(media_path); if type(media_bytes) == "error" { return fail(ctx["cfg"], 500, "media_read_failed", "Media file could not be read", {}) }
+		return ok(ctx["cfg"], {"object_key": object_key, "mime_type": rows[0]["mime_type"], "size_bytes": file_size(media_path), "data_base64": encode_base64(media_bytes)})
+	})
+	server = server.route("POST", "/v1/media/upload", func(req) {
+		guard := guard_request(req, ctx, "media.create"); if guard["ok"] == false { return guard["response"] }
+		if ctx["cfg"]["media_storage_adapter"] != "filesystem" { return fail(ctx["cfg"], 409, "filesystem_storage_disabled", "This CMS uses an external media storage adapter", {}) }
+		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }; body_value := body_result["data"]
+		original_filename := safe_media_filename(dict_get_or(body_value, "filename", "")); encoded_media := to_string(dict_get_or(body_value, "data_base64", "")); alt_text_value := trim(to_string(dict_get_or(body_value, "alt_text", "")))
+		if original_filename == "" || len(encoded_media) < 4 || len(encoded_media) > (ctx["cfg"]["media_max_bytes"] * 2) || len(alt_text_value) > 500 { return fail(ctx["cfg"], 400, "invalid_media_upload", "Media upload metadata is invalid", {}) }
+		media_bytes := null; decode_error := null; try { media_bytes = decode_base64(encoded_media) } except e { decode_error = e }; if type(decode_error) != "null" || type(media_bytes) == "error" { return fail(ctx["cfg"], 400, "invalid_media_encoding", "data_base64 is not valid base64", {}) }
+		if path_exists(ctx["cfg"]["media_inbox_dir"]) == false { create_dir(ctx["cfg"]["media_inbox_dir"]) }
+		staged_filename := "api-" + regex_replace(uuid_v4(), "-", "")
+		if ends_with(to_lower(original_filename), ".webp") { staged_filename = staged_filename + ".webp" } else if ends_with(to_lower(original_filename), ".png") { staged_filename = staged_filename + ".png" } else if ends_with(to_lower(original_filename), ".jpg") || ends_with(to_lower(original_filename), ".jpeg") { staged_filename = staged_filename + ".jpg" } else if ends_with(to_lower(original_filename), ".gif") { staged_filename = staged_filename + ".gif" } else if ends_with(to_lower(original_filename), ".pdf") { staged_filename = staged_filename + ".pdf" } else { return fail(ctx["cfg"], 415, "unsupported_media_type", "File extension is not supported", {}) }
+		staged_path := path_join(ctx["cfg"]["media_inbox_dir"], staged_filename); write_result := write_binary_file(staged_path, media_bytes); if type(write_result) == "error" { return fail(ctx["cfg"], 500, "media_stage_failed", "Media could not be staged", {}) }
+		result := ingest_media_path(ctx, staged_filename, alt_text_value); if file_exists(staged_path) { delete_file(staged_path) }
+		if result["ok"] == false { return fail(ctx["cfg"], result["status"], result["code"], result["message"], {}) }
+		_ = write_audit(ctx, req, "media.upload", 201, "media", result["media"]["id"], {"adapter": "filesystem", "sha256": result["sha256"], "size_bytes": result["size_bytes"]})
+		return ok(ctx["cfg"], result["media"])
+	})
 	server = server.route("POST", "/v1/media/ingest", func(req) {
 		guard := guard_request(req, ctx, "media.create"); if guard["ok"] == false { return guard["response"] }
 		if ctx["cfg"]["media_storage_adapter"] != "filesystem" { return fail(ctx["cfg"], 409, "filesystem_storage_disabled", "This CMS uses an external media storage adapter", {}) }
 		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
 		filename_value := safe_media_filename(dict_get_or(body_result["data"], "filename", "")); if filename_value == "" { return fail(ctx["cfg"], 400, "invalid_filename", "filename must be a simple supported media filename", {}) }
-		source_path := path_join(ctx["cfg"]["media_inbox_dir"], filename_value); if path_is_file(source_path) == false { return fail(ctx["cfg"], 404, "media_not_found", "Media is not present in the configured inbox", {}) }
-		size_value := file_size(source_path); if type(size_value) == "error" || size_value <= 0 || size_value > ctx["cfg"]["media_max_bytes"] { return fail(ctx["cfg"], 413, "invalid_media_size", "Media size is outside the configured limit", {}) }
-		binary_value := read_binary_file(source_path); if type(binary_value) == "error" { return fail(ctx["cfg"], 422, "media_read_failed", "Media could not be inspected", {}) }
-		detected_value := detected_media_type(filename_value, encode_base64(binary_value)); if type(detected_value) != "dict" { return fail(ctx["cfg"], 415, "unsupported_media_type", "Only signature-verified PNG, JPEG, GIF, WebP, and PDF files are supported", {}) }
-		object_key := regex_replace(uuid_v4(), "-", "") + detected_value["extension"]
-		if path_exists(ctx["cfg"]["media_store_dir"]) == false { create_dir(ctx["cfg"]["media_store_dir"]) }
-		destination_path := path_join(ctx["cfg"]["media_store_dir"], object_key)
-		copy_result := copy_file(source_path, destination_path); if type(copy_result) == "error" || path_is_file(destination_path) == false { return fail(ctx["cfg"], 500, "media_store_failed", "Media could not be copied into managed storage", {}) }
-		digest_value := sha256_file(destination_path)
-		public_url_value := joined_public_media_url(ctx["cfg"]["media_public_base_url"], object_key)
 		alt_text_value := trim(to_string(dict_get_or(body_result["data"], "alt_text", ""))); if len(alt_text_value) > 500 { return fail(ctx["cfg"], 400, "invalid_alt_text", "alt_text must contain at most 500 characters", {}) }
-		meta_value := {"storage_adapter": "filesystem", "object_key": object_key, "sha256": digest_value, "source_filename": filename_value, "signature_verified": true}
-		write_error := null
-		try { db_execute(ctx["db"], "INSERT INTO media_items (filename, mime_type, storage_path, size_bytes, alt_text, meta_json, uploaded_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [filename_value, detected_value["mime_type"], public_url_value, size_value, alt_text_value, to_json(meta_value), now(), now()]) } except e { write_error = e }
-		if type(write_error) != "null" { return fail(ctx["cfg"], 409, "media_register_failed", "Media was stored but could not be registered", {}) }
-		media_id_value := db_last_insert_id(ctx["db"]); rows_value := db_query(ctx["db"], "SELECT * FROM media_items WHERE id = ? LIMIT 1", [media_id_value])
-		_ = write_audit(ctx, req, "media.ingest", 201, "media", media_id_value, {"adapter": "filesystem", "sha256": digest_value, "size_bytes": size_value})
-		return ok(ctx["cfg"], rows_value[0])
+		result := ingest_media_path(ctx, filename_value, alt_text_value); if result["ok"] == false { return fail(ctx["cfg"], result["status"], result["code"], result["message"], {}) }
+		_ = write_audit(ctx, req, "media.ingest", 201, "media", result["media"]["id"], {"adapter": "filesystem", "sha256": result["sha256"], "size_bytes": result["size_bytes"]})
+		return ok(ctx["cfg"], result["media"])
 	})
 
 	server = server.route("POST", "/v1/media/register-external", func(req) {

@@ -24,6 +24,27 @@ func parse_extension_manifest(path_value) {
 	return {"ok": false, "code": "invalid_package_schema", "message": "Package manifest schema must be kujo.theme/v1 or kujo.plugin/v1"}
 }
 
+func remove_managed_package_tree(store_root, install_root) {
+	store_prefix := path_join(store_root, "package-")
+	if starts_with(install_root, store_prefix) == false || path_is_dir(install_root) == false { return false }
+	entries := list_dir(install_root); if type(entries) == "error" { return false }
+	for entry in entries {
+		child_path := path_join(install_root, entry)
+		if path_is_dir(child_path) { _ = remove_managed_package_tree(store_root, child_path) } else if path_is_file(child_path) { _ = delete_file(child_path) }
+	}
+	if path_is_dir(install_root) { _ = os_rmdir(install_root) }
+	return path_exists(install_root) == false
+}
+
+func prior_package_root(ctx, kind, extension_key) {
+	table_name := "plugins"; key_column := "plugin_key"; if kind == "theme" { table_name = "themes"; key_column = "theme_key" }
+	rows := db_query_safe(ctx["db"], "SELECT config_json FROM " + table_name + " WHERE " + key_column + " = ? LIMIT 1", [extension_key]); if rows["ok"] == false || len(rows["rows"]) == 0 { return "" }
+	parsed := null; parse_error := null; try { parsed = parse_json(to_string(dict_get_or(rows["rows"][0], "config_json", "{}"))) } except e { parse_error = e }
+	if type(parse_error) != "null" || type(parsed) != "dict" { return "" }
+	storage := dict_get_or(parsed, "storage", {}); if type(storage) != "dict" { return "" }
+	return trim(to_string(dict_get_or(storage, "install_root", "")))
+}
+
 func persist_ingested_extension(ctx, kind, manifest, receipt, install_root, activate) {
 	storage := {"adapter": "filesystem", "install_root": install_root, "verified_at": now(), "digest": receipt["sha256"]}
 	config_json := to_json({"package_manifest": manifest, "settings": manifest["defaults"], "package": receipt, "storage": storage})
@@ -55,33 +76,51 @@ export ingest_extension_archive := func(ctx, filename_value, activate, allowed_k
 	if type(digest) == "error" || len(digest) != 64 { return {"ok": false, "status": 422, "code": "package_digest_failed", "message": "Could not calculate package digest"} }
 	install_root := path_join(store_root, "package-" + regex_replace(uuid_v4(), "-", ""))
 	extracted_files := unzip(archive_path, install_root)
-	if type(extracted_files) == "error" || type(extracted_files) != "array" { return {"ok": false, "status": 422, "code": "package_extract_failed", "message": "Package could not be extracted safely"} }
-	if len(extracted_files) < 1 || len(extracted_files) > 2000 { return {"ok": false, "status": 413, "code": "invalid_package_file_count", "message": "Package must contain 1 to 2,000 files"} }
+	if type(extracted_files) == "error" || type(extracted_files) != "array" { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 422, "code": "package_extract_failed", "message": "Package could not be extracted safely"} }
+	if len(extracted_files) < 1 || len(extracted_files) > 2000 { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 413, "code": "invalid_package_file_count", "message": "Package must contain 1 to 2,000 files"} }
 	manifest_paths := []
 	expanded_bytes := 0
 	for extracted_path in extracted_files {
 		extracted_size := file_size(extracted_path)
-		if type(extracted_size) == "error" { return {"ok": false, "status": 422, "code": "package_file_unreadable", "message": "An extracted package file could not be inspected"} }
+		if type(extracted_size) == "error" { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 422, "code": "package_file_unreadable", "message": "An extracted package file could not be inspected"} }
 		expanded_bytes = expanded_bytes + extracted_size
-		if expanded_bytes > 67108864 { return {"ok": false, "status": 413, "code": "invalid_package_expanded_size", "message": "Package expands beyond 64 MB"} }
+		if expanded_bytes > 67108864 { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 413, "code": "invalid_package_expanded_size", "message": "Package expands beyond 64 MB"} }
 		if ends_with(extracted_path, "/kujo-theme.json") || ends_with(extracted_path, "/kujo-plugin.json") || extracted_path == path_join(install_root, "kujo-theme.json") || extracted_path == path_join(install_root, "kujo-plugin.json") { manifest_paths = push(manifest_paths, extracted_path) }
 	}
-	if len(manifest_paths) != 1 { return {"ok": false, "status": 422, "code": "invalid_package_manifest_count", "message": "Package must contain exactly one theme or plugin manifest"} }
+	if len(manifest_paths) != 1 { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 422, "code": "invalid_package_manifest_count", "message": "Package must contain exactly one theme or plugin manifest"} }
 	manifest_result := parse_extension_manifest(manifest_paths[0])
-	if manifest_result["ok"] == false { return {"ok": false, "status": 422, "code": manifest_result["code"], "message": manifest_result["message"]} }
-	if type(allowed_kinds) != "array" || contains(allowed_kinds, manifest_result["kind"]) == false { return {"ok": false, "status": 403, "code": "forbidden", "message": "This principal cannot install the package type found in the archive"} }
+	if manifest_result["ok"] == false { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 422, "code": manifest_result["code"], "message": manifest_result["message"]} }
+	if type(allowed_kinds) != "array" || contains(allowed_kinds, manifest_result["kind"]) == false { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 403, "code": "forbidden", "message": "This principal cannot install the package type found in the archive"} }
 	prefix := install_root + "/"
 	manifest_relative := manifest_paths[0]
 	if starts_with(manifest_relative, prefix) { manifest_relative = substring(manifest_relative, len(prefix), len(manifest_relative)) }
 	receipt_raw := {"format": "zip", "filename": filename, "size_bytes": archive_size, "uncompressed_bytes": expanded_bytes, "file_count": len(extracted_files), "manifest_path": manifest_relative, "sha256": digest}
 	receipt_result := validate_package_receipt(receipt_raw, manifest_result["kind"])
-	if receipt_result["ok"] == false { return {"ok": false, "status": 422, "code": receipt_result["code"], "message": receipt_result["message"]} }
+	if receipt_result["ok"] == false { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 422, "code": receipt_result["code"], "message": receipt_result["message"]} }
+	previous_root := prior_package_root(ctx, manifest_result["kind"], manifest_result["manifest"]["key"])
 	persisted := persist_ingested_extension(ctx, manifest_result["kind"], manifest_result["manifest"], receipt_result["value"], install_root, activate)
-	if persisted["ok"] == false { persisted["status"] = 409; return persisted }
+	if persisted["ok"] == false { _ = remove_managed_package_tree(store_root, install_root); persisted["status"] = 409; return persisted }
+	if previous_root != "" && previous_root != install_root { _ = remove_managed_package_tree(store_root, previous_root) }
 	return persisted
 }
 
 export register_extension_package_routes := func(server, ctx) {
+	server = server.route("POST", "/v1/extensions/packages/upload", func(req) {
+		guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }
+		permissions := guard["auth"]["permissions"]; if permissions_allow(permissions, "admin.settings") == false && permissions_allow(permissions, "admin.plugins") == false { return fail(ctx["cfg"], 403, "forbidden", "Extension package upload requires extension administration access", {}) }
+		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }; body := body_result["data"]
+		encoded_package := to_string(dict_get_or(body, "data_base64", "")); if len(encoded_package) < 4 || len(encoded_package) > 23000000 { return fail(ctx["cfg"], 413, "invalid_package_size", "Encoded package is outside the supported upload limit", {}) }
+		package_bytes := null; decode_error := null; try { package_bytes = decode_base64(encoded_package) } except e { decode_error = e }; if type(decode_error) != "null" || type(package_bytes) == "error" { return fail(ctx["cfg"], 400, "invalid_package_encoding", "data_base64 is not valid base64", {}) }
+		if path_exists(ctx["cfg"]["extension_inbox_dir"]) == false { create_dir(ctx["cfg"]["extension_inbox_dir"]) }
+		staged_filename := "api-" + regex_replace(uuid_v4(), "-", "") + ".zip"; staged_path := path_join(ctx["cfg"]["extension_inbox_dir"], staged_filename)
+		write_result := write_binary_file(staged_path, package_bytes); if type(write_result) == "error" { return fail(ctx["cfg"], 500, "package_stage_failed", "Package could not be staged for verification", {}) }
+		allowed_kinds := []; if permissions_allow(permissions, "admin.settings") { allowed_kinds = push(allowed_kinds, "theme") }; if permissions_allow(permissions, "admin.plugins") { allowed_kinds = push(allowed_kinds, "plugin") }
+		result := ingest_extension_archive(ctx, staged_filename, dict_get_or(body, "activate", false) == true, allowed_kinds)
+		if file_exists(staged_path) { delete_file(staged_path) }
+		if result["ok"] == false { return fail(ctx["cfg"], dict_get_or(result, "status", 422), result["code"], result["message"], {}) }
+		_ = write_audit(ctx, req, "extension.package.upload", 200, result["kind"], result["extension"]["id"], {"sha256": result["package"]["sha256"], "storage_adapter": "filesystem"})
+		return ok(ctx["cfg"], result)
+	})
 	server = server.route("POST", "/v1/extensions/packages/ingest", func(req) {
 		guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }
 		permissions := guard["auth"]["permissions"]
