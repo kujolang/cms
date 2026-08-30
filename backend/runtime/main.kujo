@@ -18,6 +18,8 @@ from backend.routes.webmcp import register_webmcp_routes
 from backend.routes.extensions import register_extension_routes
 from backend.routes.identity import register_identity_routes
 from backend.routes.extension_packages import register_extension_package_routes
+from backend.routes.content_workflows import register_content_workflow_routes
+from backend.routes.media_storage import register_media_storage_routes
 
 cfg := load_config({})
 
@@ -140,6 +142,10 @@ func register_options(server, cfg) {
 		"/v1/entry-locks/release",
 		"/v1/entries/:id",
 		"/v1/entries/:id/seo",
+		"/v1/entries/:id/compose",
+		"/v1/taxonomies/:id/terms/bulk",
+		"/v1/media/ingest",
+		"/v1/media/register-external",
 		"/v1/entries/:id/revisions",
 		"/v1/entries/:id/revisions/:revision_id/restore",
 		"/v1/entries/by-slug/:content_type/:slug",
@@ -228,6 +234,10 @@ func build_api_contract(cfg, schema_version) {
 			"/v1/entries/by-slug/:content_type/:slug": {"get": {"x-auth": "public"}},
 			"/v1/entries/:id/terms": {"post": {"x-auth": "bearer"}},
 			"/v1/entries/:id/seo": {"get": {"x-auth": "public"}, "patch": {"x-auth": "bearer"}},
+			"/v1/entries/:id/compose": {"patch": {"summary": "Atomically snapshot, update entry fields, and replace terms", "x-auth": "bearer"}},
+			"/v1/taxonomies/:id/terms/bulk": {"post": {"summary": "Create or update a bounded term batch atomically", "x-auth": "bearer"}},
+			"/v1/media/ingest": {"post": {"summary": "Inspect and store staged media through the filesystem adapter", "x-auth": "bearer:media.create"}},
+			"/v1/media/register-external": {"post": {"summary": "Register an object verified by a trusted external storage adapter", "x-auth": "bearer:media.create"}},
 			"/v1/entries/:id/revisions": {"get": {"x-auth": "bearer"}, "post": {"x-auth": "bearer"}},
 			"/v1/entries/:id/revisions/:revision_id/restore": {"post": {"x-auth": "bearer"}},
 			"/v1/entries/scheduler/run": {"post": {"x-auth": "bearer"}},
@@ -680,9 +690,11 @@ server = server.route("HEAD", "/v1/openapi.json", func(req) {
 server = register_content_type_routes(server, ctx)
 server = register_taxonomy_routes(server, ctx)
 server = register_entry_routes(server, ctx)
+server = register_content_workflow_routes(server, ctx)
 server = register_delivery_routes(server, ctx)
 server = register_webmcp_routes(server, ctx)
 server = register_media_routes(server, ctx)
+server = register_media_storage_routes(server, ctx)
 server = register_menu_routes(server, ctx)
 server = register_plugin_routes(server, ctx)
 server = register_theme_routes(server, ctx)

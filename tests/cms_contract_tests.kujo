@@ -12,6 +12,23 @@ test_setup {
 	from backend.routes.abilities import ability_categories, ability_registry, connector_registry, find_ability, mcp_tool_descriptors, resolved_ability_registry, resolved_connector_registry
 	from backend.routes.webmcp import build_webmcp_manifest, build_webmcp_runtime_source, public_content_record, webmcp_entry_allowed, webmcp_tool_registry
 	from backend.routes.extensions import extension_contracts, validate_package_receipt, validate_plugin_manifest, validate_theme_manifest
+	from backend.routes.content_workflows import normalized_entry_slug, parse_positive_unique_ids
+	from backend.routes.media_storage import detected_media_type
+}
+
+test "atomic content workflow helpers validate slugs and bounded term IDs" {
+	assert_equal(normalized_entry_slug("Hello World", "")["value"], "hello-world")
+	assert_equal(normalized_entry_slug("Hello", "Bad Slug")["ok"], false)
+	ids := parse_positive_unique_ids([3, 3, 7], 10)
+	assert_equal(ids["ok"], true)
+	assert_equal(len(ids["ids"]), 2)
+	assert_equal(parse_positive_unique_ids([0], 10)["ok"], false)
+}
+
+test "media storage recognizes supported signatures instead of trusting extensions" {
+	assert_equal(detected_media_type("hero.webp", "UklGRfake")["mime_type"], "image/webp")
+	assert_equal(detected_media_type("hero.png", "not-a-png"), null)
+	assert_equal(detected_media_type("document.pdf", "JVBERi0fake")["mime_type"], "application/pdf")
 }
 
 test "extension package receipts are bounded and tied to their manifest type" {

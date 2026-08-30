@@ -1,0 +1,71 @@
+from backend.core.http import fail, guard_request, ok, parse_json_body, write_audit
+from backend.core.utils import dict_get_or
+
+func safe_media_filename(value) {
+	filename_value := trim(to_string(value))
+	if len(filename_value) < 5 || len(filename_value) > 240 || contains(filename_value, "..") || regex_replace(filename_value, "[A-Za-z0-9._-]", "") != "" { return "" }
+	return filename_value
+}
+
+export detected_media_type := func(filename_value, encoded_bytes) {
+	lower_name := to_lower(filename_value)
+	if ends_with(lower_name, ".png") && starts_with(encoded_bytes, "iVBORw0KGgo") { return {"mime_type": "image/png", "extension": ".png"} }
+	if (ends_with(lower_name, ".jpg") || ends_with(lower_name, ".jpeg")) && starts_with(encoded_bytes, "/9j/") { return {"mime_type": "image/jpeg", "extension": ".jpg"} }
+	if ends_with(lower_name, ".gif") && starts_with(encoded_bytes, "R0lGOD") { return {"mime_type": "image/gif", "extension": ".gif"} }
+	if ends_with(lower_name, ".webp") && starts_with(encoded_bytes, "UklGR") { return {"mime_type": "image/webp", "extension": ".webp"} }
+	if ends_with(lower_name, ".pdf") && starts_with(encoded_bytes, "JVBERi0") { return {"mime_type": "application/pdf", "extension": ".pdf"} }
+	return null
+}
+
+func joined_public_media_url(base_value, object_key) {
+	base_text := trim(to_string(base_value)); while ends_with(base_text, "/") { base_text = substring(base_text, 0, len(base_text) - 1) }
+	return base_text + "/" + object_key
+}
+
+func external_public_url_valid(value) {
+	url_text := trim(to_string(value))
+	if starts_with(url_text, "https://") == false || len(url_text) > 2048 || contains(url_text, "@") || contains(url_text, "\\") { return false }
+	return true
+}
+
+export register_media_storage_routes := func(server, ctx) {
+	server = server.route("POST", "/v1/media/ingest", func(req) {
+		guard := guard_request(req, ctx, "media.create"); if guard["ok"] == false { return guard["response"] }
+		if ctx["cfg"]["media_storage_adapter"] != "filesystem" { return fail(ctx["cfg"], 409, "filesystem_storage_disabled", "This CMS uses an external media storage adapter", {}) }
+		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
+		filename_value := safe_media_filename(dict_get_or(body_result["data"], "filename", "")); if filename_value == "" { return fail(ctx["cfg"], 400, "invalid_filename", "filename must be a simple supported media filename", {}) }
+		source_path := path_join(ctx["cfg"]["media_inbox_dir"], filename_value); if path_is_file(source_path) == false { return fail(ctx["cfg"], 404, "media_not_found", "Media is not present in the configured inbox", {}) }
+		size_value := file_size(source_path); if type(size_value) == "error" || size_value <= 0 || size_value > ctx["cfg"]["media_max_bytes"] { return fail(ctx["cfg"], 413, "invalid_media_size", "Media size is outside the configured limit", {}) }
+		binary_value := read_binary_file(source_path); if type(binary_value) == "error" { return fail(ctx["cfg"], 422, "media_read_failed", "Media could not be inspected", {}) }
+		detected_value := detected_media_type(filename_value, encode_base64(binary_value)); if type(detected_value) != "dict" { return fail(ctx["cfg"], 415, "unsupported_media_type", "Only signature-verified PNG, JPEG, GIF, WebP, and PDF files are supported", {}) }
+		object_key := regex_replace(uuid_v4(), "-", "") + detected_value["extension"]
+		if path_exists(ctx["cfg"]["media_store_dir"]) == false { create_dir(ctx["cfg"]["media_store_dir"]) }
+		destination_path := path_join(ctx["cfg"]["media_store_dir"], object_key)
+		copy_result := copy_file(source_path, destination_path); if type(copy_result) == "error" || path_is_file(destination_path) == false { return fail(ctx["cfg"], 500, "media_store_failed", "Media could not be copied into managed storage", {}) }
+		digest_value := sha256_file(destination_path)
+		public_url_value := joined_public_media_url(ctx["cfg"]["media_public_base_url"], object_key)
+		alt_text_value := trim(to_string(dict_get_or(body_result["data"], "alt_text", ""))); if len(alt_text_value) > 500 { return fail(ctx["cfg"], 400, "invalid_alt_text", "alt_text must contain at most 500 characters", {}) }
+		meta_value := {"storage_adapter": "filesystem", "object_key": object_key, "sha256": digest_value, "source_filename": filename_value, "signature_verified": true}
+		write_error := null
+		try { db_execute(ctx["db"], "INSERT INTO media_items (filename, mime_type, storage_path, size_bytes, alt_text, meta_json, uploaded_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [filename_value, detected_value["mime_type"], public_url_value, size_value, alt_text_value, to_json(meta_value), now(), now()]) } except e { write_error = e }
+		if type(write_error) != "null" { return fail(ctx["cfg"], 409, "media_register_failed", "Media was stored but could not be registered", {}) }
+		media_id_value := db_last_insert_id(ctx["db"]); rows_value := db_query(ctx["db"], "SELECT * FROM media_items WHERE id = ? LIMIT 1", [media_id_value])
+		_ = write_audit(ctx, req, "media.ingest", 201, "media", media_id_value, {"adapter": "filesystem", "sha256": digest_value, "size_bytes": size_value})
+		return ok(ctx["cfg"], rows_value[0])
+	})
+
+	server = server.route("POST", "/v1/media/register-external", func(req) {
+		guard := guard_request(req, ctx, "media.create"); if guard["ok"] == false { return guard["response"] }
+		if ctx["cfg"]["media_storage_adapter"] != "external" { return fail(ctx["cfg"], 409, "external_storage_disabled", "This CMS uses filesystem media storage", {}) }
+		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }; body_value := body_result["data"]
+		filename_value := safe_media_filename(dict_get_or(body_value, "filename", "")); adapter_value := to_lower(trim(to_string(dict_get_or(body_value, "adapter", "external")))); mime_value := to_lower(trim(to_string(dict_get_or(body_value, "mime_type", "")))); public_url_value := trim(to_string(dict_get_or(body_value, "public_url", ""))); object_key := trim(to_string(dict_get_or(body_value, "object_key", ""))); digest_value := to_lower(trim(to_string(dict_get_or(body_value, "sha256", "")))); size_value := to_int(dict_get_or(body_value, "size_bytes", 0))
+		if filename_value == "" || contains(["s3", "gcs", "azure", "r2", "external"], adapter_value) == false || contains(["image/png", "image/jpeg", "image/gif", "image/webp", "application/pdf"], mime_value) == false || external_public_url_valid(public_url_value) == false || len(object_key) < 1 || len(object_key) > 1024 || contains(object_key, "..") || regex_replace(digest_value, "[a-f0-9]", "") != "" || len(digest_value) != 64 || size_value <= 0 || size_value > ctx["cfg"]["media_max_bytes"] { return fail(ctx["cfg"], 400, "invalid_external_media", "External media metadata is invalid or incomplete", {}) }
+		alt_text_value := trim(to_string(dict_get_or(body_value, "alt_text", ""))); if len(alt_text_value) > 500 { return fail(ctx["cfg"], 400, "invalid_alt_text", "alt_text must contain at most 500 characters", {}) }
+		meta_value := {"storage_adapter": adapter_value, "object_key": object_key, "sha256": digest_value, "source_filename": filename_value, "verified_by": "trusted_storage_adapter"}
+		try { db_execute(ctx["db"], "INSERT INTO media_items (filename, mime_type, storage_path, size_bytes, alt_text, meta_json, uploaded_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [filename_value, mime_value, public_url_value, size_value, alt_text_value, to_json(meta_value), now(), now()]) } except e { return fail(ctx["cfg"], 409, "media_register_failed", "External media could not be registered", {}) }
+		media_id_value := db_last_insert_id(ctx["db"]); rows_value := db_query(ctx["db"], "SELECT * FROM media_items WHERE id = ? LIMIT 1", [media_id_value])
+		_ = write_audit(ctx, req, "media.external.register", 201, "media", media_id_value, {"adapter": adapter_value, "sha256": digest_value, "size_bytes": size_value})
+		return ok(ctx["cfg"], rows_value[0])
+	})
+	return server
+}

@@ -52,6 +52,11 @@ export load_config_backend_impl := func(overrides) {
 		"webmcp_summary_max_chars": parse_positive_int_env("CMS_WEBMCP_SUMMARY_MAX_CHARS", 600),
 		"extension_inbox_dir": env_or("CMS_EXTENSION_INBOX_DIR", ".data/extensions/inbox"),
 		"extension_store_dir": env_or("CMS_EXTENSION_STORE_DIR", ".data/extensions/installed"),
+		"media_storage_adapter": to_lower(env_or("CMS_MEDIA_STORAGE_ADAPTER", "filesystem")),
+		"media_inbox_dir": env_or("CMS_MEDIA_INBOX_DIR", ".data/media/inbox"),
+		"media_store_dir": env_or("CMS_MEDIA_STORE_DIR", ".data/media/files"),
+		"media_public_base_url": env_or("CMS_MEDIA_PUBLIC_BASE_URL", "/media"),
+		"media_max_bytes": parse_positive_int_env("CMS_MEDIA_MAX_BYTES", 16777216),
 		"ai_sdk_endpoint": env_or("CMS_AI_SDK_ENDPOINT", ""),
 		"agents_sdk_endpoint": env_or("CMS_AGENTS_SDK_ENDPOINT", ""),
 		"mcp_endpoint": env_or("CMS_MCP_ENDPOINT", ""),
@@ -121,6 +126,11 @@ export load_config_backend_impl := func(overrides) {
 			"webmcp_summary_max_chars",
 			"extension_inbox_dir",
 			"extension_store_dir",
+			"media_storage_adapter",
+			"media_inbox_dir",
+			"media_store_dir",
+			"media_public_base_url",
+			"media_max_bytes",
 			"ai_sdk_endpoint",
 			"agents_sdk_endpoint",
 			"mcp_endpoint",
@@ -228,6 +238,11 @@ export load_config_backend_impl := func(overrides) {
 	if cfg["webmcp_summary_max_chars"] > 2000 { cfg["webmcp_summary_max_chars"] := 2000 }
 	if trim(to_string(dict_get_or(cfg, "extension_inbox_dir", ""))) == "" { cfg["extension_inbox_dir"] := ".data/extensions/inbox" }
 	if trim(to_string(dict_get_or(cfg, "extension_store_dir", ""))) == "" { cfg["extension_store_dir"] := ".data/extensions/installed" }
+	if cfg["media_storage_adapter"] != "filesystem" && cfg["media_storage_adapter"] != "external" { cfg["media_storage_adapter"] := "filesystem" }
+	if trim(to_string(dict_get_or(cfg, "media_inbox_dir", ""))) == "" { cfg["media_inbox_dir"] := ".data/media/inbox" }
+	if trim(to_string(dict_get_or(cfg, "media_store_dir", ""))) == "" { cfg["media_store_dir"] := ".data/media/files" }
+	if trim(to_string(dict_get_or(cfg, "media_public_base_url", ""))) == "" { cfg["media_public_base_url"] := "/media" }
+	if cfg["media_max_bytes"] > 67108864 { cfg["media_max_bytes"] := 67108864 }
 
 	cfg["allow_bootstrap_token"] := bool_or(dict_get_or(cfg, "allow_bootstrap_token", true), true)
 	cfg["enforce_bootstrap_token_rotation"] := bool_or(dict_get_or(cfg, "enforce_bootstrap_token_rotation", false), false)

@@ -1,0 +1,102 @@
+from backend.core.http import fail, guard_request, ok, parse_json_body, write_audit
+from backend.core.utils import dict_get_or, ensure_json_text
+
+export normalized_entry_slug := func(title_value, slug_value) {
+	slug_text := trim(to_string(slug_value))
+	if slug_text == "" { slug_text = to_lower(trim(to_string(title_value))); slug_text = regex_replace(slug_text, "[^a-z0-9\\s\\-]", ""); slug_text = regex_replace(slug_text, "\\s+", "-"); slug_text = regex_replace(slug_text, "-{2,}", "-") }
+	if len(slug_text) < 2 || len(slug_text) > 64 || slug_text != to_lower(slug_text) || regex_replace(slug_text, "[a-z0-9_-]", "") != "" || starts_with(slug_text, "-") || starts_with(slug_text, "_") { return {"ok": false, "value": ""} }
+	return {"ok": true, "value": slug_text}
+}
+
+export parse_positive_unique_ids := func(raw_ids, max_count) {
+	if type(raw_ids) != "array" || len(raw_ids) > max_count { return {"ok": false, "ids": [], "message": "term_ids must be an array within the supported batch limit"} }
+	ids := []
+	for raw_id in raw_ids { parsed_id := to_int(raw_id); if parsed_id <= 0 { return {"ok": false, "ids": [], "message": "term_ids must contain positive integers"} }; if contains(ids, parsed_id) == false { ids = push(ids, parsed_id) } }
+	return {"ok": true, "ids": ids}
+}
+
+export register_content_workflow_routes := func(server, ctx) {
+	server = server.route("PATCH", "/v1/entries/:id/compose", func(req) {
+		guard := guard_request(req, ctx, true); if guard["ok"] == false { return guard["response"] }
+		entry_id_value := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if entry_id_value <= 0 { return fail(ctx["cfg"], 400, "invalid_id", "id must be a positive integer", {}) }
+		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
+		workflow_body := body_result["data"]; if type(workflow_body) != "dict" { return fail(ctx["cfg"], 400, "invalid_body", "Body must be an object", {}) }
+		entry_changes := dict_get_or(workflow_body, "entry", {}); if type(entry_changes) != "dict" { return fail(ctx["cfg"], 400, "invalid_entry", "entry must be an object", {}) }
+		has_entry_changes := len(keys(entry_changes)) > 0; has_term_changes := has_key(workflow_body, "term_ids") == 1
+		if has_entry_changes == false && has_term_changes == false { return fail(ctx["cfg"], 400, "no_changes", "Provide entry changes, term_ids, or both", {}) }
+
+		existing_rows := []; try { existing_rows = db_query(ctx["db"], "SELECT * FROM entries WHERE id = ? LIMIT 1", [entry_id_value]) } except e { return fail(ctx["cfg"], 500, "db_query_failed", "Failed to load entry", {}) }
+		if len(existing_rows) == 0 { return fail(ctx["cfg"], 404, "not_found", "Entry not found", {}) }
+		existing_entry := existing_rows[0]
+		expected_updated_at := trim(to_string(dict_get_or(workflow_body, "expected_updated_at", "")))
+		if expected_updated_at != "" && expected_updated_at != trim(to_string(dict_get_or(existing_entry, "updated_at", ""))) { return fail(ctx["cfg"], 409, "entry_changed", "Entry changed after the supplied version", {"current_updated_at": dict_get_or(existing_entry, "updated_at", null)}) }
+		lock_rows := []; try { lock_rows = db_query(ctx["db"], "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id_value, now()]) } except e { return fail(ctx["cfg"], 500, "db_query_failed", "Failed to resolve entry lock state", {}) }
+		if len(lock_rows) > 0 { return fail(ctx["cfg"], 409, "entry_locked", "Entry is currently locked", {}) }
+
+		allowed_fields := ["title", "body", "excerpt", "status", "slug", "meta", "published_at", "unpublish_at"]
+		for change_key in keys(entry_changes) { if contains(allowed_fields, to_string(change_key)) == false { return fail(ctx["cfg"], 400, "unknown_entry_field", "entry contains an unsupported field", {"field": to_string(change_key)}) } }
+		title_value := trim(to_string(dict_get_or(entry_changes, "title", dict_get_or(existing_entry, "title", ""))))
+		content_value := trim(to_string(dict_get_or(entry_changes, "body", dict_get_or(existing_entry, "body", ""))))
+		excerpt_value := trim(to_string(dict_get_or(entry_changes, "excerpt", dict_get_or(existing_entry, "excerpt", ""))))
+		status_value := to_lower(trim(to_string(dict_get_or(entry_changes, "status", dict_get_or(existing_entry, "status", "draft")))))
+		if len(title_value) < 2 || len(content_value) < 1 { return fail(ctx["cfg"], 400, "invalid_entry", "title and body are required", {}) }
+		if status_value != "draft" && status_value != "published" && status_value != "scheduled" && status_value != "archived" { return fail(ctx["cfg"], 400, "invalid_status", "status must be draft, published, scheduled, or archived", {}) }
+		slug_result := normalized_entry_slug(title_value, dict_get_or(entry_changes, "slug", dict_get_or(existing_entry, "slug", ""))); if slug_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_slug", "slug must be lowercase slug text", {}) }
+		slug_value := slug_result["value"]
+		duplicate_rows := []; try { duplicate_rows = db_query(ctx["db"], "SELECT id FROM entries WHERE content_type_key = ? AND slug = ? AND id != ? LIMIT 1", [existing_entry["content_type_key"], slug_value, entry_id_value]) } except e { return fail(ctx["cfg"], 500, "db_query_failed", "Failed to validate slug", {}) }
+		if len(duplicate_rows) > 0 { return fail(ctx["cfg"], 409, "duplicate_slug", "slug must be unique per content type", {}) }
+		meta_value := to_string(dict_get_or(existing_entry, "meta_json", "{}")); if has_key(entry_changes, "meta") == 1 { meta_value = ensure_json_text(entry_changes["meta"], {}) }
+		published_value := dict_get_or(entry_changes, "published_at", dict_get_or(existing_entry, "published_at", null)); if status_value == "published" && type(published_value) == "null" { published_value = now() }
+		unpublish_value := dict_get_or(entry_changes, "unpublish_at", dict_get_or(existing_entry, "unpublish_at", null))
+
+		term_ids_value := []
+		if has_term_changes {
+			term_result := parse_positive_unique_ids(workflow_body["term_ids"], 500); if term_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_term_ids", term_result["message"], {}) }; term_ids_value = term_result["ids"]
+			for term_id_value in term_ids_value { term_rows := []; try { term_rows = db_query(ctx["db"], "SELECT id FROM taxonomy_terms WHERE id = ? LIMIT 1", [term_id_value]) } except e { return fail(ctx["cfg"], 500, "db_query_failed", "Failed to validate terms", {}) }; if len(term_rows) == 0 { return fail(ctx["cfg"], 400, "invalid_term_ids", "One or more term IDs do not exist", {"term_id": term_id_value}) } }
+		}
+
+		revision_note_value := trim(to_string(dict_get_or(workflow_body, "revision_note", "atomic_compose"))); if len(revision_note_value) > 240 { return fail(ctx["cfg"], 400, "invalid_revision_note", "revision_note must contain at most 240 characters", {}) }
+		workflow_error := null
+		try {
+			db_execute(ctx["db"], "BEGIN IMMEDIATE", [])
+			db_execute(ctx["db"], "INSERT INTO entry_revisions (entry_id, title, slug, status, excerpt, body, meta_json, author_id, published_at, revision_note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [entry_id_value, existing_entry["title"], existing_entry["slug"], existing_entry["status"], existing_entry["excerpt"], existing_entry["body"], existing_entry["meta_json"], existing_entry["author_id"], existing_entry["published_at"], revision_note_value, now()])
+			if has_entry_changes { db_execute(ctx["db"], "UPDATE entries SET title = ?, slug = ?, status = ?, excerpt = ?, body = ?, meta_json = ?, published_at = ?, unpublish_at = ?, updated_at = ? WHERE id = ?", [title_value, slug_value, status_value, excerpt_value, content_value, meta_value, published_value, unpublish_value, now(), entry_id_value]) }
+			if has_term_changes { db_execute(ctx["db"], "DELETE FROM entry_terms WHERE entry_id = ?", [entry_id_value]); for term_id_value in term_ids_value { db_execute(ctx["db"], "INSERT INTO entry_terms (entry_id, term_id, created_at) VALUES (?, ?, ?)", [entry_id_value, term_id_value, now()]) } }
+			db_execute(ctx["db"], "COMMIT", [])
+		} except e { workflow_error = e }
+		if type(workflow_error) != "null" { try { db_execute(ctx["db"], "ROLLBACK", []) } except rollback_error { _ = rollback_error }; return fail(ctx["cfg"], 409, "compose_failed", "Atomic entry composition failed", {}) }
+		updated_entry_rows := db_query(ctx["db"], "SELECT * FROM entries WHERE id = ? LIMIT 1", [entry_id_value])
+		updated_terms_rows := db_query(ctx["db"], "SELECT t.id, t.name, t.slug, tx.taxonomy_key FROM taxonomy_terms t INNER JOIN taxonomies tx ON tx.id = t.taxonomy_id INNER JOIN entry_terms et ON et.term_id = t.id WHERE et.entry_id = ? ORDER BY tx.taxonomy_key, t.name", [entry_id_value])
+		revision_rows := db_query(ctx["db"], "SELECT id, revision_note, created_at FROM entry_revisions WHERE entry_id = ? ORDER BY id DESC LIMIT 1", [entry_id_value])
+		_ = write_audit(ctx, req, "entry.compose", 200, "entry", entry_id_value, {"entry_changed": has_entry_changes, "terms_changed": has_term_changes, "term_count": len(updated_terms_rows), "revision_id": revision_rows[0]["id"]})
+		return ok(ctx["cfg"], {"entry": updated_entry_rows[0], "terms": updated_terms_rows, "revision": revision_rows[0]})
+	})
+	server = server.route("POST", "/v1/taxonomies/:id/terms/bulk", func(req) {
+		guard := guard_request(req, ctx, true); if guard["ok"] == false { return guard["response"] }
+		taxonomy_id_value := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if taxonomy_id_value <= 0 { return fail(ctx["cfg"], 400, "invalid_taxonomy_id", "id must be a positive integer", {}) }
+		taxonomy_rows := []; try { taxonomy_rows = db_query(ctx["db"], "SELECT id, taxonomy_key FROM taxonomies WHERE id = ? LIMIT 1", [taxonomy_id_value]) } except e { return fail(ctx["cfg"], 500, "db_query_failed", "Failed to load taxonomy", {}) }
+		if len(taxonomy_rows) == 0 { return fail(ctx["cfg"], 404, "taxonomy_not_found", "Taxonomy not found", {}) }
+		bulk_body_result := parse_json_body(req, ctx["cfg"]); if bulk_body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", bulk_body_result["error"], {}) }
+		bulk_terms := dict_get_or(bulk_body_result["data"], "terms", null)
+		if type(bulk_terms) != "array" || len(bulk_terms) < 1 || len(bulk_terms) > 100 { return fail(ctx["cfg"], 400, "invalid_terms", "terms must contain 1 to 100 items", {}) }
+		normalized_terms := []; seen_slugs := []
+		for raw_term in bulk_terms {
+			if type(raw_term) != "dict" { return fail(ctx["cfg"], 400, "invalid_term", "Each term must be an object", {}) }
+			term_name_value := trim(to_string(dict_get_or(raw_term, "name", ""))); if len(term_name_value) < 1 || len(term_name_value) > 160 { return fail(ctx["cfg"], 400, "invalid_term_name", "Term names must contain 1 to 160 characters", {}) }
+			term_slug_result := normalized_entry_slug(term_name_value, dict_get_or(raw_term, "slug", "")); if term_slug_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_term_slug", "Term slugs must be lowercase slug text", {}) }
+			term_slug_value := term_slug_result["value"]; if contains(seen_slugs, term_slug_value) { return fail(ctx["cfg"], 400, "duplicate_term_slug", "The batch contains a duplicate term slug", {"slug": term_slug_value}) }; seen_slugs = push(seen_slugs, term_slug_value)
+			term_description_value := trim(to_string(dict_get_or(raw_term, "description", ""))); if len(term_description_value) > 2000 { return fail(ctx["cfg"], 400, "invalid_term_description", "Term descriptions must contain at most 2,000 characters", {}) }
+			term_parent_value := dict_get_or(raw_term, "parent_id", null)
+			if type(term_parent_value) != "null" { term_parent_value = to_int(term_parent_value); parent_rows := []; try { parent_rows = db_query(ctx["db"], "SELECT id FROM taxonomy_terms WHERE id = ? AND taxonomy_id = ? LIMIT 1", [term_parent_value, taxonomy_id_value]) } except e { return fail(ctx["cfg"], 500, "db_query_failed", "Failed to validate term parent", {}) }; if term_parent_value <= 0 || len(parent_rows) == 0 { return fail(ctx["cfg"], 400, "invalid_parent_id", "parent_id must reference an existing term in this taxonomy", {}) } }
+			normalized_terms = push(normalized_terms, {"name": term_name_value, "slug": term_slug_value, "description": term_description_value, "parent_id": term_parent_value})
+		}
+		bulk_error := null
+		try { db_execute(ctx["db"], "BEGIN IMMEDIATE", []); for normalized_term in normalized_terms { db_execute(ctx["db"], "INSERT INTO taxonomy_terms (taxonomy_id, name, slug, description, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(taxonomy_id, slug) DO UPDATE SET name = excluded.name, description = excluded.description, parent_id = excluded.parent_id, updated_at = excluded.updated_at", [taxonomy_id_value, normalized_term["name"], normalized_term["slug"], normalized_term["description"], normalized_term["parent_id"], now(), now()]) }; db_execute(ctx["db"], "COMMIT", []) } except e { bulk_error = e }
+		if type(bulk_error) != "null" { try { db_execute(ctx["db"], "ROLLBACK", []) } except rollback_error { _ = rollback_error }; return fail(ctx["cfg"], 409, "term_batch_failed", "Could not apply the taxonomy term batch", {}) }
+		placeholders := []; term_params := [taxonomy_id_value]; for term_slug_value in seen_slugs { placeholders = push(placeholders, "?"); term_params = push(term_params, term_slug_value) }
+		written_terms := db_query(ctx["db"], "SELECT id, taxonomy_id, name, slug, description, parent_id, created_at, updated_at FROM taxonomy_terms WHERE taxonomy_id = ? AND slug IN (" + join(placeholders, ",") + ") ORDER BY name", term_params)
+		_ = write_audit(ctx, req, "taxonomy.terms.bulk", 200, "taxonomy", taxonomy_id_value, {"count": len(written_terms), "taxonomy_key": taxonomy_rows[0]["taxonomy_key"]})
+		return ok(ctx["cfg"], {"taxonomy": taxonomy_rows[0], "terms": written_terms, "count": len(written_terms)})
+	})
+	return server
+}

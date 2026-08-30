@@ -162,8 +162,12 @@ User APIs:
 - `GET /v1/auth/me` returns the session user, role permissions, and effective administration capabilities. `DELETE /v1/auth/session` immediately revokes that session.
 - `GET /v1/seo/entries` returns a filterable, paginated SEO inventory with scores, issue codes, metadata lengths, taxonomy counts, and content signals.
 - `PATCH /v1/entries/:id/seo` performs a focused SEO update without replacing other entry metadata; `POST /v1/seo/entries/bulk` applies the same supported fields to as many as 200 selected entries.
+- `PATCH /v1/entries/:id/compose` snapshots the current revision, applies validated entry fields, replaces the selected terms, and commits the workflow atomically. `expected_updated_at` provides optimistic concurrency protection.
+- `POST /v1/taxonomies/:id/terms/bulk` creates or updates as many as 100 terms in one transaction.
+- `POST /v1/media/ingest` verifies the signature of staged PNG, JPEG, GIF, WebP, or PDF media and copies it into managed filesystem storage. `POST /v1/media/register-external` records objects verified by a trusted S3, GCS, Azure, R2, or custom adapter when `CMS_MEDIA_STORAGE_ADAPTER=external`.
 
 Agent and terminal workflows can use `bash scripts/cms-seo.sh help` for report, single-entry update, bulk update, and social-sharing settings commands.
+Content adapters and terminal agents can use `bash scripts/cms-content.sh help` for atomic composition, taxonomy batching, and both media storage workflows.
 
 Portable extension workflows:
 
