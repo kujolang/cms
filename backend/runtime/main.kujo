@@ -17,6 +17,7 @@ from backend.routes.abilities import register_ability_routes
 from backend.routes.webmcp import register_webmcp_routes
 from backend.routes.extensions import register_extension_routes
 from backend.routes.identity import register_identity_routes
+from backend.routes.extension_packages import register_extension_package_routes
 
 cfg := load_config({})
 
@@ -110,6 +111,7 @@ func register_options(server, cfg) {
 		"/v1/extensions/catalog",
 		"/v1/extensions/navigation",
 		"/v1/extensions/ai",
+		"/v1/extensions/packages/ingest",
 		"/v1/themes/validate",
 		"/v1/themes/install",
 		"/v1/themes/:id/export",
@@ -266,6 +268,7 @@ func build_api_contract(cfg, schema_version) {
 			"/v1/ai/connectors/:key": {"patch": {"x-auth": "bearer:admin.settings"}},
 			"/v1/ai/mcp/tools": {"get": {"x-auth": "bearer:cms.read"}},
 			"/v1/extensions/contracts": {"get": {"summary": "Portable theme and plugin contracts", "x-auth": "public"}},
+			"/v1/extensions/packages/ingest": {"post": {"summary": "Verify and install a staged ZIP inside CMS", "x-auth": "bearer:admin.settings|admin.plugins"}},
 			"/v1/extensions/catalog": {"get": {"summary": "Installed theme and active plugin catalog", "x-auth": "public"}},
 			"/v1/extensions/navigation": {"get": {"summary": "Active extension administration navigation", "x-auth": "bearer:cms.read"}},
 			"/v1/extensions/ai": {"get": {"summary": "Active plugin ability and connector contributions", "x-auth": "bearer:cms.read"}},
@@ -682,6 +685,7 @@ server = register_menu_routes(server, ctx)
 server = register_plugin_routes(server, ctx)
 server = register_theme_routes(server, ctx)
 server = register_extension_routes(server, ctx)
+server = register_extension_package_routes(server, ctx)
 server = register_authz_routes(server, ctx)
 server = register_user_routes(server, ctx)
 server = register_identity_routes(server, ctx)

@@ -1,0 +1,100 @@
+from backend.core.database import db_execute_safe, db_query_safe
+from backend.core.http import fail, guard_request, ok, parse_json_body, write_audit
+from backend.core.utils import dict_get_or
+from backend.modules.auth import permissions_allow
+from backend.routes.extensions import validate_package_receipt, validate_plugin_manifest, validate_theme_manifest
+
+func safe_archive_filename(value) {
+	filename := trim(to_string(value))
+	if len(filename) < 5 || len(filename) > 240 || ends_with(to_lower(filename), ".zip") == false { return "" }
+	if regex_replace(filename, "[A-Za-z0-9._-]", "") != "" || contains(filename, "..") > 0 { return "" }
+	return filename
+}
+
+func parse_extension_manifest(path_value) {
+	manifest_text := read_file(path_value)
+	if type(manifest_text) == "error" || len(manifest_text) > 131072 { return {"ok": false, "code": "invalid_package_manifest", "message": "Package manifest is missing or too large"} }
+	manifest_raw := null
+	manifest_error := null
+	try { manifest_raw = parse_json(manifest_text) } except e { manifest_error = e }
+	if type(manifest_error) != "null" || type(manifest_raw) != "dict" { return {"ok": false, "code": "invalid_package_manifest", "message": "Package manifest is not valid JSON"} }
+	schema := to_string(dict_get_or(manifest_raw, "schema", ""))
+	if schema == "kujo.theme/v1" { validated_theme := validate_theme_manifest(manifest_raw); if validated_theme["ok"] == false { return validated_theme }; return {"ok": true, "kind": "theme", "manifest": validated_theme["manifest"]} }
+	if schema == "kujo.plugin/v1" { validated_plugin := validate_plugin_manifest(manifest_raw); if validated_plugin["ok"] == false { return validated_plugin }; return {"ok": true, "kind": "plugin", "manifest": validated_plugin["manifest"]} }
+	return {"ok": false, "code": "invalid_package_schema", "message": "Package manifest schema must be kujo.theme/v1 or kujo.plugin/v1"}
+}
+
+func persist_ingested_extension(ctx, kind, manifest, receipt, install_root, activate) {
+	storage := {"adapter": "filesystem", "install_root": install_root, "verified_at": now(), "digest": receipt["sha256"]}
+	config_json := to_json({"package_manifest": manifest, "settings": manifest["defaults"], "package": receipt, "storage": storage})
+	if kind == "theme" {
+		if activate { deactivate_result := db_execute_safe(ctx["db"], "UPDATE themes SET status = 'inactive', updated_at = ?", [now()]); if deactivate_result["ok"] == false { return {"ok": false, "code": "theme_deactivate_failed", "message": "Could not deactivate the current theme"} } }
+		status := "inactive"; if activate { status = "active" }
+		write_result := db_execute_safe(ctx["db"], "INSERT INTO themes (theme_key, name, version, status, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(theme_key) DO UPDATE SET name = excluded.name, version = excluded.version, status = excluded.status, config_json = excluded.config_json, updated_at = excluded.updated_at", [manifest["key"], manifest["name"], manifest["version"], status, config_json, now(), now()])
+		if write_result["ok"] == false { return {"ok": false, "code": "theme_install_failed", "message": "Could not register the ingested theme"} }
+		rows := db_query_safe(ctx["db"], "SELECT id, theme_key, name, version, status, created_at, updated_at FROM themes WHERE theme_key = ? LIMIT 1", [manifest["key"]])
+		return {"ok": true, "kind": kind, "extension": rows["rows"][0], "manifest": manifest, "package": receipt, "storage": storage}
+	}
+	status := "inactive"; if activate { status = "active" }
+	write_result := db_execute_safe(ctx["db"], "INSERT INTO plugins (plugin_key, name, version, status, capabilities_json, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(plugin_key) DO UPDATE SET name = excluded.name, version = excluded.version, status = excluded.status, capabilities_json = excluded.capabilities_json, config_json = excluded.config_json, updated_at = excluded.updated_at", [manifest["key"], manifest["name"], manifest["version"], status, to_json(manifest["capabilities"]), config_json, now(), now()])
+	if write_result["ok"] == false { return {"ok": false, "code": "plugin_install_failed", "message": "Could not register the ingested plugin"} }
+	rows := db_query_safe(ctx["db"], "SELECT id, plugin_key, name, version, status, created_at, updated_at FROM plugins WHERE plugin_key = ? LIMIT 1", [manifest["key"]])
+	return {"ok": true, "kind": kind, "extension": rows["rows"][0], "manifest": manifest, "package": receipt, "storage": storage}
+}
+
+export ingest_extension_archive := func(ctx, filename_value, activate, allowed_kinds) {
+	filename := safe_archive_filename(filename_value)
+	if filename == "" { return {"ok": false, "status": 400, "code": "invalid_package_filename", "message": "filename must be a simple .zip filename"} }
+	inbox_root := trim(to_string(dict_get_or(ctx["cfg"], "extension_inbox_dir", ".data/extensions/inbox")))
+	store_root := trim(to_string(dict_get_or(ctx["cfg"], "extension_store_dir", ".data/extensions/installed")))
+	archive_path := path_join(inbox_root, filename)
+	if path_is_file(archive_path) == false { return {"ok": false, "status": 404, "code": "package_not_found", "message": "Package is not present in the configured extension inbox"} }
+	archive_size := file_size(archive_path)
+	if type(archive_size) == "error" || archive_size <= 0 || archive_size > 16777216 { return {"ok": false, "status": 413, "code": "invalid_package_size", "message": "Package must be between 1 byte and 16 MB"} }
+	digest := sha256_file(archive_path)
+	if type(digest) == "error" || len(digest) != 64 { return {"ok": false, "status": 422, "code": "package_digest_failed", "message": "Could not calculate package digest"} }
+	install_root := path_join(store_root, "package-" + regex_replace(uuid_v4(), "-", ""))
+	extracted_files := unzip(archive_path, install_root)
+	if type(extracted_files) == "error" || type(extracted_files) != "array" { return {"ok": false, "status": 422, "code": "package_extract_failed", "message": "Package could not be extracted safely"} }
+	if len(extracted_files) < 1 || len(extracted_files) > 2000 { return {"ok": false, "status": 413, "code": "invalid_package_file_count", "message": "Package must contain 1 to 2,000 files"} }
+	manifest_paths := []
+	expanded_bytes := 0
+	for extracted_path in extracted_files {
+		extracted_size := file_size(extracted_path)
+		if type(extracted_size) == "error" { return {"ok": false, "status": 422, "code": "package_file_unreadable", "message": "An extracted package file could not be inspected"} }
+		expanded_bytes = expanded_bytes + extracted_size
+		if expanded_bytes > 67108864 { return {"ok": false, "status": 413, "code": "invalid_package_expanded_size", "message": "Package expands beyond 64 MB"} }
+		if ends_with(extracted_path, "/kujo-theme.json") || ends_with(extracted_path, "/kujo-plugin.json") || extracted_path == path_join(install_root, "kujo-theme.json") || extracted_path == path_join(install_root, "kujo-plugin.json") { manifest_paths = push(manifest_paths, extracted_path) }
+	}
+	if len(manifest_paths) != 1 { return {"ok": false, "status": 422, "code": "invalid_package_manifest_count", "message": "Package must contain exactly one theme or plugin manifest"} }
+	manifest_result := parse_extension_manifest(manifest_paths[0])
+	if manifest_result["ok"] == false { return {"ok": false, "status": 422, "code": manifest_result["code"], "message": manifest_result["message"]} }
+	if type(allowed_kinds) != "array" || contains(allowed_kinds, manifest_result["kind"]) == false { return {"ok": false, "status": 403, "code": "forbidden", "message": "This principal cannot install the package type found in the archive"} }
+	prefix := install_root + "/"
+	manifest_relative := manifest_paths[0]
+	if starts_with(manifest_relative, prefix) { manifest_relative = substring(manifest_relative, len(prefix), len(manifest_relative)) }
+	receipt_raw := {"format": "zip", "filename": filename, "size_bytes": archive_size, "uncompressed_bytes": expanded_bytes, "file_count": len(extracted_files), "manifest_path": manifest_relative, "sha256": digest}
+	receipt_result := validate_package_receipt(receipt_raw, manifest_result["kind"])
+	if receipt_result["ok"] == false { return {"ok": false, "status": 422, "code": receipt_result["code"], "message": receipt_result["message"]} }
+	persisted := persist_ingested_extension(ctx, manifest_result["kind"], manifest_result["manifest"], receipt_result["value"], install_root, activate)
+	if persisted["ok"] == false { persisted["status"] = 409; return persisted }
+	return persisted
+}
+
+export register_extension_package_routes := func(server, ctx) {
+	server = server.route("POST", "/v1/extensions/packages/ingest", func(req) {
+		guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }
+		permissions := guard["auth"]["permissions"]
+		if permissions_allow(permissions, "admin.settings") == false && permissions_allow(permissions, "admin.plugins") == false { return fail(ctx["cfg"], 403, "forbidden", "Extension package ingestion requires extension administration access", {}) }
+		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
+		body := body_result["data"]
+		allowed_kinds := []
+		if permissions_allow(permissions, "admin.settings") { allowed_kinds = push(allowed_kinds, "theme") }
+		if permissions_allow(permissions, "admin.plugins") { allowed_kinds = push(allowed_kinds, "plugin") }
+		result := ingest_extension_archive(ctx, dict_get_or(body, "filename", ""), dict_get_or(body, "activate", false) == true, allowed_kinds)
+		if result["ok"] == false { return fail(ctx["cfg"], dict_get_or(result, "status", 422), result["code"], result["message"], {}) }
+		_ = write_audit(ctx, req, "extension.package.ingest", 200, result["kind"], result["extension"]["id"], {"filename": result["package"]["filename"], "sha256": result["package"]["sha256"], "storage_adapter": "filesystem"})
+		return ok(ctx["cfg"], result)
+	})
+	return server
+}

@@ -8,7 +8,7 @@ A theme repository includes `kujo-theme.json` at its root. The manifest identifi
 
 Themes remain ordinary frontend projects. They can use any framework that consumes the CMS delivery API. The manifest gives installers, marketplaces, deployment tools, agents, and the administration interface one stable way to understand and configure the project.
 
-The backend never downloads or executes theme code. Installation records the validated manifest and settings. Deployment tooling fetches a declared package, verifies its `sha256-` integrity value when supplied, builds it in an isolated environment, and connects it to the CMS URL.
+The backend does not execute theme code. It can register a validated manifest directly, or verify and extract a ZIP that a trusted upload adapter stages in its configured inbox. Deployment tooling builds frontend artifacts in an isolated environment and connects them to the CMS URL.
 
 Lifecycle:
 
@@ -23,7 +23,7 @@ Lifecycle:
 
 The Field Notes frontend is a complete reusable theme package in the independent [`cms-field-notes-theme`](https://github.com/kujolang/cms-field-notes-theme) repository. The CMS showcase bundles it as the default, but the standalone repository contains only the public theme so creators can fork, remix, package, and distribute it without the administration application.
 
-The `cms-example` administration frontend provides separate **Themes** and **Plugins** screens, where an administrator can drag in or choose a ZIP, install it, optionally activate it immediately, and manage installed extensions. Its server adapter rejects encrypted archives, traversal paths, unsupported compression, duplicate manifests, oversized packages, excessive expanded size, and CRC failures before calling the CMS install API. The CMS stores the normalized manifest and a bounded receipt containing the package digest and archive facts; it does not execute uploaded code.
+The `cms-example` administration frontend provides separate **Themes** and **Plugins** screens, where an administrator can drag in or choose a ZIP, install it, optionally activate it immediately, and manage installed extensions. Its server adapter stages the upload for the CMS. The CMS is the authoritative verifier: it uses hardened extraction, rejects traversal and unsafe links, enforces compressed and expanded limits, requires one canonical manifest, computes the package digest, and stores the normalized manifest with a bounded receipt. It does not execute uploaded code during installation.
 
 ## Plugin packages
 
@@ -61,13 +61,16 @@ Plugin manifests may also declare bounded, secret-free `abilities` and `connecto
 | Operation | Theme | Plugin |
 | --- | --- | --- |
 | Validate | `POST /v1/themes/validate` | `POST /v1/plugins/validate` |
-| Install/update | `POST /v1/themes/install` | `POST /v1/plugins/install` |
+| Install/update manifest | `POST /v1/themes/install` | `POST /v1/plugins/install` |
+| Verify/install staged ZIP | `POST /v1/extensions/packages/ingest` | `POST /v1/extensions/packages/ingest` |
 | Export | `GET /v1/themes/:id/export` | `GET /v1/plugins/:id/export` |
 | Activate | `POST /v1/themes/:id/activate` | `PATCH /v1/plugins/:id` |
 
 Validation endpoints require an authenticated CMS reader and are rate-limited. Theme installation requires `admin.settings`; plugin installation and export require `admin.plugins`. Theme exports are public because frontend manifests are distributable metadata. Every export is curated and excludes stored settings, hook secrets, credentials, and connector endpoints.
 
-Install APIs accept an optional verified `package` receipt with ZIP filename, compressed and expanded sizes, file count, manifest path, and SHA-256 digest. `GET /v1/extensions/manage` gives authenticated administration adapters an all-installed catalog without exposing extension settings. Terminal users can install the same archive with `theme:install-zip` or `plugin:install-zip`; the CLI performs the archive checks locally before sending the receipt.
+Set `CMS_EXTENSION_INBOX_DIR` to a server-only staging directory and `CMS_EXTENSION_STORE_DIR` to managed package storage. A trusted multipart upload adapter writes a simple `.zip` filename into the inbox, then calls `POST /v1/extensions/packages/ingest` with that filename and optional activation flag. The CMS computes the receipt itself and returns the installed theme or plugin. Direct manifest installation remains available for registries and deployment controllers, but its caller-supplied receipt is descriptive rather than server-verified.
+
+`GET /v1/extensions/manage` gives authenticated administration adapters an all-installed catalog without exposing extension settings. Terminal users may continue to validate archives locally with `theme:install-zip` or `plugin:install-zip`; production administration surfaces should prefer staged server ingestion so the trust decision lives in CMS.
 
 ## Compatibility policy
 

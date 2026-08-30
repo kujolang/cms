@@ -49,6 +49,8 @@ export load_config_backend_impl := func(overrides) {
 		"webmcp_max_scan_records": parse_positive_int_env("CMS_WEBMCP_MAX_SCAN_RECORDS", 10000),
 		"webmcp_index_page_size_max": parse_positive_int_env("CMS_WEBMCP_INDEX_PAGE_SIZE_MAX", 500),
 		"webmcp_summary_max_chars": parse_positive_int_env("CMS_WEBMCP_SUMMARY_MAX_CHARS", 600),
+		"extension_inbox_dir": env_or("CMS_EXTENSION_INBOX_DIR", ".data/extensions/inbox"),
+		"extension_store_dir": env_or("CMS_EXTENSION_STORE_DIR", ".data/extensions/installed"),
 		"ai_sdk_endpoint": env_or("CMS_AI_SDK_ENDPOINT", ""),
 		"agents_sdk_endpoint": env_or("CMS_AGENTS_SDK_ENDPOINT", ""),
 		"mcp_endpoint": env_or("CMS_MCP_ENDPOINT", ""),
@@ -115,6 +117,8 @@ export load_config_backend_impl := func(overrides) {
 			"webmcp_max_scan_records",
 			"webmcp_index_page_size_max",
 			"webmcp_summary_max_chars",
+			"extension_inbox_dir",
+			"extension_store_dir",
 			"ai_sdk_endpoint",
 			"agents_sdk_endpoint",
 			"mcp_endpoint",
@@ -219,6 +223,8 @@ export load_config_backend_impl := func(overrides) {
 	if cfg["webmcp_index_page_size_max"] > 1000 { cfg["webmcp_index_page_size_max"] := 1000 }
 	if dict_get_or(cfg, "webmcp_summary_max_chars", 0) < 100 { cfg["webmcp_summary_max_chars"] := 100 }
 	if cfg["webmcp_summary_max_chars"] > 2000 { cfg["webmcp_summary_max_chars"] := 2000 }
+	if trim(to_string(dict_get_or(cfg, "extension_inbox_dir", ""))) == "" { cfg["extension_inbox_dir"] := ".data/extensions/inbox" }
+	if trim(to_string(dict_get_or(cfg, "extension_store_dir", ""))) == "" { cfg["extension_store_dir"] := ".data/extensions/installed" }
 
 	cfg["allow_bootstrap_token"] := bool_or(dict_get_or(cfg, "allow_bootstrap_token", true), true)
 	cfg["enforce_bootstrap_token_rotation"] := bool_or(dict_get_or(cfg, "enforce_bootstrap_token_rotation", false), false)
