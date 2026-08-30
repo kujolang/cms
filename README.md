@@ -30,6 +30,7 @@ The current codebase is intentionally backend-first. Active source lives under `
 - Plugin registry and webhook hooks
 - Theme registry and activation controls
 - Portable, versioned theme and plugin manifests with validation, installation, export, discovery, settings schemas, compatibility declarations, and distribution metadata
+- Official dependency-free JavaScript and PHP clients with identity, content, SEO/social, extension, media, ability, connector, sharing, and administration-navigation helpers
 - Durable users and profiles with roles, account states, social links, derived credentials, and configurable open/approval/closed registration
 - Framework-neutral identity links and revocable CMS sessions with core-derived permissions and administration capabilities
 - Roles and API tokens with lifecycle controls
@@ -162,9 +163,9 @@ User APIs:
 - `GET /v1/auth/me` returns the session user, role permissions, and effective administration capabilities. `DELETE /v1/auth/session` immediately revokes that session.
 - `GET /v1/seo/entries` returns a filterable, paginated SEO inventory with scores, issue codes, metadata lengths, taxonomy counts, and content signals.
 - `PATCH /v1/entries/:id/seo` performs a focused SEO update without replacing other entry metadata; `POST /v1/seo/entries/bulk` applies the same supported fields to as many as 200 selected entries.
-- `PATCH /v1/entries/:id/compose` snapshots the current revision, applies validated entry fields, replaces the selected terms, and commits the workflow atomically. `expected_updated_at` provides optimistic concurrency protection.
+- `POST /v1/entries` accepts optional `term_ids` so creation and taxonomy assignment commit together. `PATCH /v1/entries/:id/compose` snapshots the current revision, applies validated entry fields, replaces the selected terms, and commits the workflow atomically. `expected_updated_at` provides optimistic concurrency protection.
 - `POST /v1/taxonomies/:id/terms/bulk` creates or updates as many as 100 terms in one transaction.
-- `POST /v1/media/ingest` verifies the signature of staged PNG, JPEG, GIF, WebP, or PDF media and copies it into managed filesystem storage. `POST /v1/media/register-external` records objects verified by a trusted S3, GCS, Azure, R2, or custom adapter when `CMS_MEDIA_STORAGE_ADAPTER=external`.
+- `POST /v1/media/ingest` verifies the signature of staged PNG, JPEG, GIF, WebP, or PDF media and copies it into managed filesystem storage; `/v1/media/upload` accepts the same bounded workflow as base64 JSON for administration adapters. Filesystem objects are readable from `GET /v1/media/files/:object_key` as verified base64 data so any frontend adapter can stream them with native caching headers. `POST /v1/media/register-external` records objects verified by a trusted S3, GCS, Azure, R2, or custom adapter when `CMS_MEDIA_STORAGE_ADAPTER=external`.
 
 Agent and terminal workflows can use `bash scripts/cms-seo.sh help` for report, single-entry update, bulk update, and social-sharing settings commands.
 Content adapters and terminal agents can use `bash scripts/cms-content.sh help` for atomic composition, taxonomy batching, and both media storage workflows.
@@ -174,7 +175,7 @@ Portable extension workflows:
 - `GET /v1/extensions/contracts` describes the `kujo.theme/v1` and `kujo.plugin/v1` package contracts; `GET /v1/extensions/catalog` discovers installed themes and active plugins.
 - Theme and plugin manifests can be validated, installed or updated, activated, and exported through versioned API routes without exposing package settings or secrets. Verified ZIP receipts bind an install to its filename, SHA-256 digest, manifest path, file count, and bounded expanded size.
 - Theme packages describe framework-neutral frontend entrypoints, templates, assets, settings, content types, menu locations, branded administration artwork, and ordered sidebar contributions. Plugin packages declare connector, webhook, browser, or hybrid runtimes with explicit capabilities, events, administration links, abilities, and connector descriptors.
-- `POST /v1/extensions/packages/ingest` verifies a ZIP staged in the configured server inbox, uses the runtime's hardened archive extraction, enforces compressed/expanded size and file-count limits, validates its one canonical manifest, records its SHA-256 receipt, and registers the extracted package in managed storage. Package code is not executed during installation. Deployment tools still build frontend artifacts separately; webhook secrets and provider credentials are configured through protected operational surfaces.
+- `POST /v1/extensions/packages/ingest` verifies a ZIP staged in the configured server inbox; `/v1/extensions/packages/upload` provides the same authoritative path for bounded base64 administration uploads. Both use hardened archive extraction, enforce compressed/expanded size and file-count limits, validate one canonical manifest, record a SHA-256 receipt, and register the extracted package in managed storage. Package code is not executed during installation.
 - `bash scripts/cms-extensions.sh help` provides API-equivalent terminal commands. Canonical manifests live under `examples/extensions/` and the authoring contract is documented in [`docs/extensions.md`](docs/extensions.md).
 - Field Notes has its own forkable home in the independent `cms-field-notes-theme` repository and is bundled as the showcase default. The independent `cms-contact-form` repository demonstrates a hybrid plugin with a browser component, durable submission API, moderation CLI, discoverable abilities, signed notification delivery, and production safety controls.
 - CMS Studio in `cms-example` provides separate **Themes** and **Plugins** screens with guarded ZIP upload, install-and-activate controls, installed-package status, source links, and activation controls.
@@ -265,6 +266,7 @@ Key docs:
 - `docs/runtime-limitations.md`
 - `docs/webmcp.md`
 - `docs/extensions.md`
+- `docs/framework-adapters.md`
 
 ## Contribution
 

@@ -1,0 +1,8 @@
+{
+  "name": "kujolang/cms-client",
+  "description": "Framework-neutral PHP client for Kujo CMS",
+  "type": "library",
+  "license": "MIT",
+  "require": {"php": ">=8.2"},
+  "autoload": {"psr-4": {"Kujo\\Cms\\": "src/"}}
+}
