@@ -15,6 +15,7 @@ usage() {
     '  ability:disable <namespace/name>     Disable a built-in ability.' \
     '  connector:enable <key>              Activate a configured connector.' \
     '  connector:disable <key>             Deactivate a connector.' \
+    '  connector:health <key>              Probe a configured connector health endpoint.' \
     '  categories                          List ability categories.' \
     '  list [category]                     List abilities, optionally by category.' \
     '  get <namespace/name>                Inspect one ability.' \
@@ -67,6 +68,12 @@ case "${command}" in
     enabled=false
     if [[ "${command}" == 'connector:enable' ]]; then enabled=true; fi
     request PATCH "/v1/ai/connectors/${key}" "{\"enabled\":${enabled}}"
+    ;;
+  connector:health)
+    require_token
+    key="${2:-}"
+    if [[ ! "${key}" =~ ^[a-z0-9_-]+$ ]]; then usage >&2; exit 2; fi
+    request POST "/v1/ai/connectors/${key}/health" '{}'
     ;;
   categories) require_token; request GET '/v1/abilities/categories' ;;
   list)

@@ -247,7 +247,7 @@ func is_allowed_handler_host(cfg, host) {
 	return false
 }
 
-func validate_handler_url_policy(cfg, handler_url) {
+export validate_handler_url_policy := func(cfg, handler_url) {
 	handler_url_text := to_lower(trim(to_string(handler_url)))
 	if len(handler_url_text) < 8 {
 		return {
@@ -338,7 +338,8 @@ func validate_handler_url_policy(cfg, handler_url) {
 		}
 	}
 
-	if host_is_reserved_label(host) {
+	allow_private := bool_or(dict_get_or(cfg, "plugin_hook_allow_private", false), false)
+	if host_is_reserved_label(host) && allow_private == false {
 		return {
 			"ok": false,
 			"code": "unsafe_handler_url",
@@ -352,14 +353,14 @@ func validate_handler_url_policy(cfg, handler_url) {
 			"message": "handler_url host is not allowed by egress policy"
 		}
 	}
-	if host_is_private_ipv4(host) {
+	if host_is_private_ipv4(host) && allow_private == false {
 		return {
 			"ok": false,
 			"code": "unsafe_handler_url",
 			"message": "handler_url host is not allowed by egress policy"
 		}
 	}
-	if host_is_private_ipv6(host) {
+	if host_is_private_ipv6(host) && allow_private == false {
 		return {
 			"ok": false,
 			"code": "unsafe_handler_url",

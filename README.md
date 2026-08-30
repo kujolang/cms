@@ -180,7 +180,7 @@ AI and agent interoperability:
 - `GET /v1/abilities` and `GET /v1/abilities/categories` provide authenticated discovery; `GET|PATCH /v1/abilities/:namespace/:ability` reads or administratively enables/disables one contract.
 - `POST /v1/abilities/:namespace/:ability/run` executes the registered handler through its declared permission. Mutating abilities require `confirmed: true` inside the input and write an audit event.
 - `GET /v1/ai/connectors` reports Kujo integration availability and configuration status without returning endpoint values or secrets; `PATCH /v1/ai/connectors/:key` activates or deactivates a configured connector.
-- Active plugins can contribute secret-free ability and connector descriptors to those same discovery APIs. They remain plugin-managed, execute through their declared runtime, and appear in `/v1/extensions/ai` for raw package-level discovery.
+- Active plugins can contribute secret-free ability and connector descriptors to those same discovery APIs. CMS can enable or disable each contribution, execute abilities through the plugin's configured service runtime with the same permission and confirmation boundary, probe connector health, and publish enabled abilities as MCP-ready tools. Runtime bearer credentials stay in server environment variables and never enter package manifests or browser responses.
 - `GET /v1/ai/mcp/tools` translates the same registry into MCP-ready tool descriptors, keeping REST, CLI, and agent surfaces on one source of truth.
 - `bash scripts/cms-ai.sh help` exposes status, connector, discovery, enable/disable, inspection, execution, and MCP descriptor commands for terminal agents. Disabled abilities cannot execute and are omitted from MCP descriptors.
 

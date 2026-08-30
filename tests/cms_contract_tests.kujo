@@ -495,7 +495,9 @@ test "database bootstrap applies schema version and auth seeds" {
 	assert_equal(resolved_abilities[len(resolved_abilities) - 1]["name"], "test/records-list")
 	resolved_connectors := resolved_connector_registry({"db": db, "cfg": cfg})
 	assert_equal(resolved_connectors[len(resolved_connectors) - 1]["key"], "test_agent_plugin-records")
-	assert_equal(resolved_connectors[len(resolved_connectors) - 1]["manageable"], false)
+	assert_equal(resolved_connectors[len(resolved_connectors) - 1]["manageable"], true)
+	assert_equal(resolved_abilities[len(resolved_abilities) - 1]["manageable"], true)
+	assert_equal(resolved_abilities[len(resolved_abilities) - 1]["external_execution"]["path"], "/v1/records")
 
 	if file_exists(db_path) {
 		delete_file(db_path)

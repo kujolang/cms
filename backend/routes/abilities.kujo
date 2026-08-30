@@ -2,7 +2,8 @@ from backend.core.database import db_execute_safe, db_query_safe
 from backend.core.http import fail, guard_request, ok, parse_json_body, write_audit
 from backend.core.utils import dict_get_or
 from backend.routes.entries import apply_seo_changes, normalize_seo_changes
-from backend.routes.extensions import extension_ai_registry
+from backend.routes.extensions import extension_ai_registry, extension_plugin_runtime
+from backend.routes.plugins import validate_handler_url_policy
 
 export ability_categories := func() {
 	return [
@@ -89,7 +90,7 @@ export resolved_ability_registry := func(ctx) {
 			"category": "plugin", "permission": trim(to_string(dict_get_or(raw, "permission", "admin.plugins"))),
 			"input_schema": dict_get_or(raw, "input_schema", {"type": "object"}), "output_schema": dict_get_or(raw, "output_schema", {"type": "object"}),
 			"annotations": {"readonly": readonly, "destructive": false, "idempotent": false, "requires_confirmation": readonly == false},
-			"enabled": true, "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": false,
+			"enabled": feature_state(ctx["db"], "ability", namespace + "/" + external_name, true), "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": true,
 			"external_execution": {"method": method, "path": trim(to_string(dict_get_or(raw, "path", ""))), "runtime": "plugin"}
 		})
 	}
@@ -155,13 +156,16 @@ export resolved_connector_registry := func(ctx) {
 	}
 	registry := extension_ai_registry(ctx["db"])
 	for raw in registry["connectors"] {
+		connector_key := raw["source_key"] + "-" + trim(to_string(dict_get_or(raw, "key", "connector")))
+		connector_enabled := feature_state(ctx["db"], "connector", connector_key, true)
+		plugin_status := "inactive"; if connector_enabled { plugin_status = "active" }
 		items = push(items, {
-			"key": raw["source_key"] + "-" + trim(to_string(dict_get_or(raw, "key", "connector"))),
+			"key": connector_key,
 			"label": trim(to_string(dict_get_or(raw, "label", "Plugin connector"))),
 			"purpose": trim(to_string(dict_get_or(raw, "purpose", "Provided by an active plugin runtime."))),
 			"mode": trim(to_string(dict_get_or(raw, "mode", "plugin_runtime"))), "available": true, "configured": true,
-			"enabled": true, "status": "active", "endpoint_configured": true, "approval_required": dict_get_or(raw, "approval_required", false),
-			"secret_storage": "plugin runtime", "health": "plugin_managed", "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": false
+			"enabled": connector_enabled, "status": plugin_status, "endpoint_configured": true, "approval_required": dict_get_or(raw, "approval_required", false),
+			"secret_storage": "plugin runtime", "health": "not_checked", "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": true
 		})
 	}
 	return items
@@ -187,7 +191,7 @@ export mcp_tool_descriptors := func() {
 func resolved_mcp_tool_descriptors(ctx) {
 	tools := []
 	for ability in resolved_ability_registry(ctx) {
-		if ability["enabled"] == true && ability["source"] == "core" {
+		if ability["enabled"] == true {
 			parts := split(ability["name"], "/")
 			tools = push(tools, {
 				"name": parts[0] + "__" + parts[1], "title": ability["label"], "description": ability["description"],
@@ -197,6 +201,49 @@ func resolved_mcp_tool_descriptors(ctx) {
 		}
 	}
 	return tools
+}
+
+func core_connector_endpoint(cfg, connector_key) {
+	if connector_key == "ai-sdk" { return trim(to_string(dict_get_or(cfg, "ai_sdk_endpoint", ""))) }
+	if connector_key == "agents-sdk" { return trim(to_string(dict_get_or(cfg, "agents_sdk_endpoint", ""))) }
+	if connector_key == "mcp" { return trim(to_string(dict_get_or(cfg, "mcp_endpoint", ""))) }
+	if connector_key == "dispatch" { return trim(to_string(dict_get_or(cfg, "dispatch_endpoint", ""))) }
+	if connector_key == "rag" { return trim(to_string(dict_get_or(cfg, "rag_endpoint", ""))) }
+	if connector_key == "redact" { return trim(to_string(dict_get_or(cfg, "redact_endpoint", ""))) }
+	if connector_key == "watchdog" { return trim(to_string(dict_get_or(cfg, "watchdog_endpoint", ""))) }
+	if connector_key == "contentgraph" { return trim(to_string(dict_get_or(cfg, "contentgraph_endpoint", ""))) }
+	if connector_key == "searchbridge" { return trim(to_string(dict_get_or(cfg, "searchbridge_endpoint", ""))) }
+	if connector_key == "bluepencil" { return trim(to_string(dict_get_or(cfg, "bluepencil_endpoint", ""))) }
+	if connector_key == "presswire" { return trim(to_string(dict_get_or(cfg, "presswire_endpoint", ""))) }
+	if connector_key == "readersignal" { return trim(to_string(dict_get_or(cfg, "readersignal_endpoint", ""))) }
+	return ""
+}
+
+func check_connector_health(ctx, selected) {
+	if selected["enabled"] != true { return {"ok": false, "status": 409, "code": "connector_disabled", "message": "Connector is disabled"} }
+	endpoint := ""
+	if selected["source"] == "plugin" {
+		runtime_url := plugin_runtime_url(ctx, selected["source_key"], "/health")
+		if runtime_url["ok"] == false { runtime_url["status"] = 422; return runtime_url }
+		endpoint = runtime_url["url"]
+	} else {
+		endpoint = core_connector_endpoint(ctx["cfg"], selected["key"])
+		if endpoint == "" { return {"ok": false, "status": 409, "code": "connector_not_configured", "message": "Connector endpoint is not configured"} }
+		url_policy := validate_handler_url_policy(ctx["cfg"], endpoint)
+		if url_policy["ok"] == false { return {"ok": false, "status": 422, "code": url_policy["code"], "message": url_policy["message"]} }
+		while ends_with(endpoint, "/") { endpoint = substring(endpoint, 0, len(endpoint) - 1) }
+		endpoint = endpoint + "/health"
+	}
+	transport_result := http_request(endpoint, {"method": "GET", "timeout": 5.0, "_headers": {"Accept": "application/json", "User-Agent": "Kujo-CMS-Connector-Health/1.0"}})
+	match transport_result {
+		case Ok(health_response): {
+			health_status := to_int(dict_get_or(health_response, "_status", dict_get_or(health_response, "status", 0)))
+			if health_status < 200 || health_status > 299 { return {"ok": false, "status": 502, "code": "connector_unhealthy", "message": "Connector health endpoint returned HTTP " + to_string(health_status)} }
+			return {"ok": true, "result": {"key": selected["key"], "healthy": true, "status": "healthy", "checked_at": now(), "http_status": health_status}}
+		}
+		case Err(health_error): { return {"ok": false, "status": 502, "code": "connector_unavailable", "message": "Connector health request failed"} }
+		case other: { return {"ok": false, "status": 502, "code": "connector_transport_error", "message": "Connector health request returned an unexpected transport result"} }
+	}
 }
 
 func run_site_info(ctx) {
@@ -249,9 +296,99 @@ func run_seo_summary(ctx, input) {
 	return {"summary": summary, "priority_items": priority_items, "limit": limit}
 }
 
+func plugin_runtime_url(ctx, plugin_key, path_value) {
+	runtime := extension_plugin_runtime(ctx["db"], plugin_key)
+	if runtime["ok"] == false { return runtime }
+	service_url := trim(to_string(dict_get_or(runtime["settings"], "service_url", "")))
+	if service_url == "" { return {"ok": false, "code": "plugin_runtime_not_configured", "message": "Plugin service_url is not configured"} }
+	runtime_policy_cfg := {
+		"plugin_hook_allow_http": dict_get_or(ctx["cfg"], "plugin_hook_allow_http", false),
+		"plugin_hook_allow_private": dict_get_or(ctx["cfg"], "plugin_runtime_allow_private", false),
+		"plugin_hook_url_allowlist": dict_get_or(ctx["cfg"], "plugin_hook_url_allowlist", ""),
+		"plugin_hook_url_denylist": dict_get_or(ctx["cfg"], "plugin_hook_url_denylist", "")
+	}
+	url_policy := validate_handler_url_policy(runtime_policy_cfg, service_url)
+	if url_policy["ok"] == false { return {"ok": false, "code": url_policy["code"], "message": url_policy["message"]} }
+	path_text := trim(to_string(path_value))
+	if starts_with(path_text, "/") == false || contains(path_text, "..") || starts_with(path_text, "//") { return {"ok": false, "code": "invalid_plugin_runtime_path", "message": "Plugin runtime path must be an absolute safe path"} }
+	while ends_with(service_url, "/") { service_url = substring(service_url, 0, len(service_url) - 1) }
+	return {"ok": true, "url": service_url + path_text, "runtime": runtime}
+}
+
+func safe_runtime_component(value) {
+	component_text := to_string(value)
+	if len(component_text) < 1 || len(component_text) > 512 || regex_replace(component_text, "[A-Za-z0-9_.~-]", "") != "" { return {"ok": false, "value": ""} }
+	return {"ok": true, "value": component_text}
+}
+
+func plugin_runtime_request(ctx, plugin_key, method_value, path_value, input) {
+	method_text := to_upper(trim(to_string(method_value)))
+	if method_text != "GET" && method_text != "POST" && method_text != "PUT" && method_text != "PATCH" && method_text != "DELETE" { return {"ok": false, "status": 422, "code": "invalid_plugin_runtime_method", "message": "Plugin ability method is not supported"} }
+	if type(input) != "dict" { return {"ok": false, "status": 400, "code": "invalid_input", "message": "Ability input must be an object"} }
+	path_text := trim(to_string(path_value))
+	path_input_keys := []
+	for input_key in keys(input) {
+		input_key_text := to_string(input_key)
+		placeholder := ":" + input_key_text
+		input_value := input[input_key]
+		if contains(path_text, placeholder) {
+			if type(input_value) != "string" && type(input_value) != "int" && type(input_value) != "float" { return {"ok": false, "status": 400, "code": "invalid_path_parameter", "message": "Plugin path parameters must be scalar values"} }
+			path_component := safe_runtime_component(input_value)
+			if path_component["ok"] == false { return {"ok": false, "status": 400, "code": "invalid_path_parameter", "message": "Plugin path parameters must use URL-safe characters"} }
+			path_text = regex_replace(path_text, placeholder, path_component["value"])
+			path_input_keys = push(path_input_keys, input_key_text)
+		}
+	}
+	if contains(path_text, ":") { return {"ok": false, "status": 400, "code": "missing_path_parameter", "message": "Plugin ability input is missing a required path parameter"} }
+	url_result := plugin_runtime_url(ctx, plugin_key, path_text)
+	if url_result["ok"] == false { url_result["status"] = 422; return url_result }
+	plugin_runtime_request_url := url_result["url"]
+	runtime_headers := {"Accept": "application/json", "Content-Type": "application/json", "User-Agent": "Kujo-CMS-Plugin-Runtime/1.0"}
+	runtime_bearer_env := "CMS_PLUGIN_" + to_upper(regex_replace(plugin_key, "[^a-z0-9]", "_")) + "_BEARER"
+	runtime_bearer := trim(env(runtime_bearer_env))
+	if runtime_bearer != "" { runtime_headers["Authorization"] := "Bearer " + runtime_bearer }
+	request_options := {"method": method_text, "timeout": 10.0, "_headers": runtime_headers}
+	if method_text == "GET" {
+		plugin_query_separator := "?"
+		for query_key in keys(input) {
+			query_key_text := to_string(query_key)
+			query_value := input[query_key]
+			if query_key_text != "confirmed" && contains(path_input_keys, query_key_text) == false && (type(query_value) == "string" || type(query_value) == "int" || type(query_value) == "float" || type(query_value) == "bool") {
+				query_key_component := safe_runtime_component(query_key_text)
+				query_value_component := safe_runtime_component(query_value)
+				if query_key_component["ok"] == false || query_value_component["ok"] == false { return {"ok": false, "status": 400, "code": "invalid_query_parameter", "message": "Plugin query parameters must use URL-safe characters"} }
+				plugin_runtime_request_url = plugin_runtime_request_url + plugin_query_separator + query_key_component["value"] + "=" + query_value_component["value"]
+				plugin_query_separator = "&"
+			}
+		}
+	} else {
+		request_body := {}
+		for body_key in keys(input) { body_key_text := to_string(body_key); if body_key_text != "confirmed" && contains(path_input_keys, body_key_text) == false { request_body[body_key_text] := input[body_key] } }
+		request_options["_body"] := to_json(request_body)
+	}
+	transport_result := http_request(plugin_runtime_request_url, request_options)
+	match transport_result {
+		case Ok(runtime_response): {
+			status_code := to_int(dict_get_or(runtime_response, "_status", dict_get_or(runtime_response, "status", 0)))
+			response_body := to_string(dict_get_or(runtime_response, "_body", dict_get_or(runtime_response, "body", "")))
+			if len(response_body) > 1048576 { return {"ok": false, "status": 502, "code": "plugin_runtime_response_too_large", "message": "Plugin runtime response exceeded 1 MB"} }
+			parsed_body := response_body; parse_error := null
+			if response_body != "" { try { parsed_body = parse_json(response_body) } except e { parse_error = e } }
+			if status_code < 200 || status_code > 299 { return {"ok": false, "status": 502, "code": "plugin_runtime_http_error", "message": "Plugin runtime returned HTTP " + to_string(status_code)} }
+			response_format := "text"; if type(parse_error) == "null" { response_format = "json" }
+			return {"ok": true, "result": parsed_body, "runtime_status": status_code, "response_format": response_format}
+		}
+		case Err(runtime_error): { return {"ok": false, "status": 502, "code": "plugin_runtime_unavailable", "message": "Plugin runtime request failed"} }
+		case other: { return {"ok": false, "status": 502, "code": "plugin_runtime_transport_error", "message": "Plugin runtime returned an unexpected transport result"} }
+	}
+}
+
 func execute_ability(req, ctx, ability, input) {
 	name := ability["name"]
-	if ability["source"] == "plugin" { return {"ok": false, "status": 501, "code": "plugin_runtime_required", "message": "This ability executes through its active plugin runtime"} }
+	if ability["source"] == "plugin" {
+		execution := ability["external_execution"]
+		return plugin_runtime_request(ctx, ability["source_key"], execution["method"], execution["path"], input)
+	}
 	if name == "cms/site-info" { return {"ok": true, "result": run_site_info(ctx)} }
 	if name == "content/list" { return {"ok": true, "result": run_content_list(ctx, input)} }
 	if name == "seo/audit-summary" { return {"ok": true, "result": run_seo_summary(ctx, input)} }
@@ -376,6 +513,18 @@ export register_ability_routes := func(server, ctx) {
 		_ = write_audit(ctx, req, "connector.state.update", 200, "connector", connector_key, {"enabled": enabled})
 		updated := null; for item in resolved_connector_registry(ctx) { if item["key"] == connector_key { updated = item } }
 		return ok(ctx["cfg"], updated)
+	})
+	server = server.route("POST", "/v1/ai/connectors/:key/health", func(req) {
+		guard := guard_request(req, ctx, "admin.settings")
+		if guard["ok"] == false { return guard["response"] }
+		connector_key := trim(to_string(dict_get_or(dict_get_or(req, "params", {}), "key", "")))
+		selected := null
+		for item in resolved_connector_registry(ctx) { if item["key"] == connector_key { selected = item } }
+		if type(selected) == "null" { return fail(ctx["cfg"], 404, "connector_not_found", "Connector not found", {}) }
+		health_result := check_connector_health(ctx, selected)
+		if health_result["ok"] == false { return fail(ctx["cfg"], health_result["status"], health_result["code"], health_result["message"], {}) }
+		_ = write_audit(ctx, req, "connector.health.check", 200, "connector", connector_key, {"healthy": true})
+		return ok(ctx["cfg"], health_result["result"])
 	})
 	server = server.route("GET", "/v1/ai/mcp/tools", func(req) {
 		guard := guard_request(req, ctx, "cms.read")

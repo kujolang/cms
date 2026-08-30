@@ -38,6 +38,7 @@ export load_config_backend_impl := func(overrides) {
 		"plugin_hook_url_allowlist": env_or("CMS_PLUGIN_HOOK_URL_ALLOWLIST", ""),
 		"plugin_hook_url_denylist": env_or("CMS_PLUGIN_HOOK_URL_DENYLIST", "localhost,127.*,10.*,172.*,192.168.*,169.254.*,0.0.0.0,::1,*.local"),
 		"plugin_hook_allow_http": bool_or(env_or("CMS_PLUGIN_HOOK_ALLOW_HTTP", "false"), false),
+		"plugin_runtime_allow_private": bool_or(env_or("CMS_PLUGIN_RUNTIME_ALLOW_PRIVATE", "false"), false),
 		"webhook_max_attempts": parse_positive_int_env("CMS_WEBHOOK_MAX_ATTEMPTS", 5),
 		"webhook_retry_base_sec": parse_positive_int_env("CMS_WEBHOOK_RETRY_BASE_SEC", 30),
 		"webhook_connect_timeout_sec": parse_positive_int_env("CMS_WEBHOOK_CONNECT_TIMEOUT_SEC", 3),
@@ -106,6 +107,7 @@ export load_config_backend_impl := func(overrides) {
 			"plugin_hook_url_allowlist",
 			"plugin_hook_url_denylist",
 			"plugin_hook_allow_http",
+			"plugin_runtime_allow_private",
 			"webhook_max_attempts",
 			"webhook_retry_base_sec",
 			"webhook_connect_timeout_sec",
@@ -194,6 +196,7 @@ export load_config_backend_impl := func(overrides) {
 	cfg["plugin_hook_url_allowlist"] := trim(to_string(dict_get_or(cfg, "plugin_hook_url_allowlist", "")))
 	cfg["plugin_hook_url_denylist"] := trim(to_string(dict_get_or(cfg, "plugin_hook_url_denylist", "")))
 	cfg["plugin_hook_allow_http"] := bool_or(dict_get_or(cfg, "plugin_hook_allow_http", false), false)
+	cfg["plugin_runtime_allow_private"] := bool_or(dict_get_or(cfg, "plugin_runtime_allow_private", false), false)
 
 	if dict_get_or(cfg, "webhook_max_attempts", 0) < 1 {
 		cfg["webhook_max_attempts"] := 5

@@ -287,6 +287,17 @@ export extension_ai_registry := func(db) {
 	return {"abilities": abilities, "connectors": connectors}
 }
 
+export extension_plugin_runtime := func(db, plugin_key) {
+	rows := db_query_safe(db, "SELECT * FROM plugins WHERE plugin_key = ? AND status = 'active' LIMIT 1", [trim(to_string(plugin_key))])
+	if rows["ok"] == false || len(rows["rows"]) == 0 { return {"ok": false, "code": "plugin_not_active", "message": "Plugin is not installed and active"} }
+	row := rows["rows"][0]
+	manifest := plugin_manifest_from_row(row)
+	config := parse_json_object(dict_get_or(row, "config_json", "{}"), {})
+	settings := dict_get_or(config, "settings", dict_get_or(manifest, "defaults", {}))
+	if type(settings) != "dict" { settings = {} }
+	return {"ok": true, "plugin_id": row["id"], "plugin_key": manifest["key"], "manifest": manifest, "settings": settings}
+}
+
 export register_extension_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/extensions/contracts", func(req) { guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }; return ok(ctx["cfg"], extension_contracts()) })
 	server = server.route("GET", "/v1/extensions/navigation", func(req) { guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }; items := extension_navigation(ctx["db"]); return ok(ctx["cfg"], {"items": items, "count": len(items)}) })
