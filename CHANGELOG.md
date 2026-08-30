@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 1.1.0 - 2026-08-30
+
+- Add framework-neutral identity providers, revocable CMS sessions, role-derived permissions, and administration capabilities.
+- Add granular SEO inventory, focused and bulk SEO updates, configurable social-sharing networks and accounts, and matching terminal workflows.
+- Add the Abilities API, connector controls, plugin-contributed abilities and connectors, MCP-ready descriptors, and WebMCP discovery and browser tools.
+- Add portable theme and plugin contracts, branded administration navigation, verified ZIP upload and installation, package export, and extension lifecycle controls.
+- Add atomic content composition, taxonomy batching, managed and externally verified media ingestion, and optimistic concurrency checks.
+- Add dependency-free JavaScript and PHP clients plus framework-adapter guidance for portable administration and frontend implementations.
+- Harden authentication, authorization, production ingress, idempotency, webhook egress, background work, migration safety, tenancy, and unpublished-content boundaries.
 - Restrict anonymous entry reads to published content and require authentication for revision history.
 - Reject malformed tenant/workspace keys, scope workspace-key uniqueness per tenant, and migrate existing databases to schema version 7.
 - Reject invalid media sizes and return `not_found` when deleting a missing media record.

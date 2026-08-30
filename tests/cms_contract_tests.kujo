@@ -424,7 +424,7 @@ test "webhook payload validator enforces required schema fields" {
 test "delivery helpers generate machine-readable documents" {
 	cfg := load_config({
 		"service_name": "Test CMS",
-		"service_version": "1.0.0",
+		"service_version": "1.1.0",
 		"site_url": "https://cms.example.com/"
 	})
 
