@@ -1,0 +1,19 @@
+{
+  "name": "cms-hardening-current",
+  "description": "Kujo Eval checks for the hardened CMS current revision.",
+  "version": "1.0.0",
+  "stop_on_failure": false,
+  "tests": [
+    { "name": "native contract pass 1", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 0" } },
+    { "name": "native contract pass 2", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 1" } },
+    { "name": "minimal workload succeeds", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 2" } },
+    { "name": "typical workload succeeds", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 3" } },
+    { "name": "large workload succeeds", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 4" } },
+    { "name": "invalid cursor rejected", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 5" } },
+    { "name": "unauthorized write rejected", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 6" } },
+    { "name": "missing entry is 404", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 7" } },
+    { "name": "anonymous draft not disclosed", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 8" } },
+    { "name": "agent evidence remains present", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 9" } },
+    { "name": "unsafe production config rejected", "check": "command_succeeds", "params": { "command": "node scripts/hardening-check.mjs current 10" } }
+  ]
+}

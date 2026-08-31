@@ -1,0 +1,1229 @@
+{
+  "environment": {
+    "generated_at": "2026-08-31T02:48:05.990Z",
+    "hostname": "MacBook-Pro",
+    "os": "ProductName:\t\tmacOS; ProductVersion:\t\t26.3.1; ProductVersionExtra:\t(a); BuildVersion:\t\t25D771280a",
+    "kernel": "Darwin MacBook-Pro 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:53:28 PST 2026; root:xnu-12377.91.3~2/RELEASE_X86_64 x86_64",
+    "cpu": "Intel(R) Core(TM) i7-9750H CPU @ 2.60GHz",
+    "logical_cores": 12,
+    "memory_bytes": 17179869184,
+    "kujo_version": "kujo 1.0.0",
+    "node_version": "v24.20.0",
+    "filesystem": "",
+    "kujo_bin": "/Users/robertdevore/.local/bin/kujo"
+  },
+  "baseline": {
+    "metadata": {
+      "label": "baseline",
+      "repo_dir": "/tmp/cms-hardening-eval.aasS1z/baseline",
+      "branch": "",
+      "sha": "1be7ec1f551dbecd964ce1404851276241838632",
+      "commit_timestamp": "2026-08-24T22:54:28-04:00",
+      "tags": [],
+      "worktree_status": ""
+    },
+    "parameters": {
+      "runs": 10,
+      "warmups": 3,
+      "startup_runs": 10,
+      "startup_warmups": 3,
+      "throughput_requests": 25
+    },
+    "startup": {
+      "latency_ms": {
+        "n": 10,
+        "min": 740.96831,
+        "max": 848.124045,
+        "mean": 798.1641591,
+        "median": 801.616701,
+        "p95": 848.124045,
+        "p99": 848.124045,
+        "stddev": 27.51090816271128
+      },
+      "rss_kb": {
+        "n": 10,
+        "min": 85924,
+        "max": 86948,
+        "mean": 86386,
+        "median": 86366,
+        "p95": 86948,
+        "p99": 86948,
+        "stddev": 349.0157589565262
+      },
+      "raw": [
+        {
+          "startup_ms": 790.540673,
+          "rss_kb": 85924
+        },
+        {
+          "startup_ms": 848.124045,
+          "rss_kb": 86948
+        },
+        {
+          "startup_ms": 819.063932,
+          "rss_kb": 86940
+        },
+        {
+          "startup_ms": 788.671921,
+          "rss_kb": 86116
+        },
+        {
+          "startup_ms": 740.96831,
+          "rss_kb": 85964
+        },
+        {
+          "startup_ms": 808.317531,
+          "rss_kb": 86440
+        },
+        {
+          "startup_ms": 769.063,
+          "rss_kb": 86436
+        },
+        {
+          "startup_ms": 800.560056,
+          "rss_kb": 86296
+        },
+        {
+          "startup_ms": 813.658777,
+          "rss_kb": 86640
+        },
+        {
+          "startup_ms": 802.673346,
+          "rss_kb": 86156
+        }
+      ]
+    },
+    "scaling": [
+      {
+        "entries": 0,
+        "result": {
+          "name": "entries-0",
+          "path": "/v1/entries?limit=100&offset=0&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 107.157455,
+            "max": 152.178449,
+            "mean": 121.30695110000002,
+            "median": 114.890102,
+            "p95": 152.178449,
+            "p99": 152.178449,
+            "stddev": 14.952325250391112
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 688,
+            "max": 688,
+            "mean": 688,
+            "median": 688,
+            "p95": 688,
+            "p99": 688,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":1,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"system\",\"body\":\"This entry exists so the API has immediate sample content.\",\"content_type_key\":\"article\",\"created_at\":\"1788144562.0\",\"excerpt\":\"Seeded demo article\",\"id\":1,\"meta_json\":\"{\\\"featured\\\":true}\",\"published_at\":\"1788144562.0\",\"slug\":\"welcome\",\"status\":\"published\",\"title\":\"Welcome\",\"unpublish_at\":null,\"updated_at\":\"1788144562.0\"}],\"limit\":100,\"offset\":0,\"pagination\":{\"cursor\":null,\"mode\":\"offset\",\"next_cursor\":null},\"projection\":{\"fields\":[],\"include_terms\":false},\"sort\":{\"by\":\"id\",\"dir\":\"asc\"},\"total\":1},\"ok\":true}"
+        }
+      },
+      {
+        "entries": 10,
+        "result": {
+          "name": "entries-10",
+          "path": "/v1/entries?limit=100&offset=0&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 100.267358,
+            "max": 138.999622,
+            "mean": 117.12185099999999,
+            "median": 114.88375500000001,
+            "p95": 138.999622,
+            "p99": 138.999622,
+            "stddev": 11.222021671318371
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 8885,
+            "max": 8885,
+            "mean": 8885,
+            "median": 8885,
+            "p95": 8885,
+            "p99": 8885,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":11,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"system\",\"body\":\"This entry exists so the API has immediate sample content.\",\"content_type_key\":\"article\",\"created_at\":\"1788144562.0\",\"excerpt\":\"Seeded demo article\",\"id\":1,\"meta_json\":\"{\\\"featured\\\":true}\",\"published_at\":\"1788144562.0\",\"slug\":\"welcome\",\"status\":\"published\",\"title\":\"Welcome\",\"unpublish_at\":null,\"updated_at\":\"1788144562.0\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 1\",\"id\":2,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-1\",\"status\":\"published\",\"title\":\"Benchmark entry 1\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 2\",\"id\":3,\"meta_json\":\"{}\",\"published_at\":\"2026-01"
+        }
+      },
+      {
+        "entries": 100,
+        "result": {
+          "name": "entries-100",
+          "path": "/v1/entries?limit=100&offset=0&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 105.223762,
+            "max": 166.017202,
+            "mean": 129.46180489999998,
+            "median": 125.093114,
+            "p95": 166.017202,
+            "p99": 166.017202,
+            "stddev": 19.121122917173523
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 82135,
+            "max": 82135,
+            "mean": 82135,
+            "median": 82135,
+            "p95": 82135,
+            "p99": 82135,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":100,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"system\",\"body\":\"This entry exists so the API has immediate sample content.\",\"content_type_key\":\"article\",\"created_at\":\"1788144562.0\",\"excerpt\":\"Seeded demo article\",\"id\":1,\"meta_json\":\"{\\\"featured\\\":true}\",\"published_at\":\"1788144562.0\",\"slug\":\"welcome\",\"status\":\"published\",\"title\":\"Welcome\",\"unpublish_at\":null,\"updated_at\":\"1788144562.0\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 1\",\"id\":2,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-1\",\"status\":\"published\",\"title\":\"Benchmark entry 1\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 2\",\"id\":3,\"meta_json\":\"{}\",\"published_at\":\"2026-0"
+        }
+      },
+      {
+        "entries": 1000,
+        "result": {
+          "name": "entries-1000",
+          "path": "/v1/entries?limit=100&offset=900&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 110.325159,
+            "max": 141.606559,
+            "mean": 123.25560580000001,
+            "median": 123.9620495,
+            "p95": 141.606559,
+            "p99": 141.606559,
+            "stddev": 9.221377304620736
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 83041,
+            "max": 83041,
+            "mean": 83041,
+            "median": 83041,
+            "p95": 83041,
+            "p99": 83041,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":100,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 900\",\"id\":901,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-900\",\"status\":\"published\",\"title\":\"Benchmark entry 900\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 901\",\"id\":902,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-901\",\"status\":\"published\",\"title\":\"Benchmark entry 901\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      {
+        "entries": 5000,
+        "result": {
+          "name": "entries-5000",
+          "path": "/v1/entries?limit=100&offset=4900&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 95.737603,
+            "max": 118.821206,
+            "mean": 108.3735353,
+            "median": 106.4387095,
+            "p95": 118.821206,
+            "p99": 118.821206,
+            "stddev": 7.212032394308169
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 83441,
+            "max": 83441,
+            "mean": 83441,
+            "median": 83441,
+            "p95": 83441,
+            "p99": 83441,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":100,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4900\",\"id\":4901,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4900\",\"status\":\"published\",\"title\":\"Benchmark entry 4900\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4901\",\"id\":4902,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4901\",\"status\":\"published\",\"title\":\"Benchmark entry 4901\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      }
+    ],
+    "workloads": [
+      {
+        "name": "minimal-health",
+        "path": "/health",
+        "method": "GET",
+        "expected_status": 200,
+        "statuses": {
+          "200": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 65.915155,
+          "max": 87.879994,
+          "mean": 76.69189300000001,
+          "median": 77.25395950000001,
+          "p95": 87.879994,
+          "p99": 87.879994,
+          "stddev": 7.761369581146655
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 226,
+          "max": 226,
+          "mean": 226,
+          "median": 226,
+          "p95": 226,
+          "p99": 226,
+          "stddev": 0
+        },
+        "sample_body": "{\"data\":{\"counts\":{\"background_jobs_dead\":0,\"background_jobs_dead_letters\":0,\"background_jobs_due\":0,\"background_jobs_total\":0,\"content_types\":2,\"entries\":5002,\"plugins\":1,\"themes\":1},\"db\":\"connected\",\"status\":\"ok\"},\"ok\":true}"
+      },
+      {
+        "name": "typical-entries",
+        "path": "/v1/entries?limit=25&offset=0",
+        "method": "GET",
+        "expected_status": 200,
+        "statuses": {
+          "200": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 98.026095,
+          "max": 123.197308,
+          "mean": 108.4010411,
+          "median": 106.535331,
+          "p95": 123.197308,
+          "p99": 123.197308,
+          "stddev": 8.728555671591167
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 21112,
+          "max": 21112,
+          "mean": 21112,
+          "median": 21112,
+          "p95": 21112,
+          "p99": 21112,
+          "stddev": 0
+        },
+        "sample_body": "{\"data\":{\"count\":25,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 5000\",\"id\":5001,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-5000\",\"status\":\"published\",\"title\":\"Benchmark entry 5000\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4999\",\"id\":5000,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4999\",\"status\":\"published\",\"title\":\"Benchmark entry 4999\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      {
+        "name": "large-entries",
+        "path": "/v1/entries?limit=100&offset=4900&sort_by=id&sort_dir=asc",
+        "method": "GET",
+        "expected_status": 200,
+        "statuses": {
+          "200": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 103.3492,
+          "max": 166.531453,
+          "mean": 129.0943016,
+          "median": 122.934515,
+          "p95": 166.531453,
+          "p99": 166.531453,
+          "stddev": 19.212848431169842
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 83441,
+          "max": 83441,
+          "mean": 83441,
+          "median": 83441,
+          "p95": 83441,
+          "p99": 83441,
+          "stddev": 0
+        },
+        "sample_body": "{\"data\":{\"count\":100,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4900\",\"id\":4901,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4900\",\"status\":\"published\",\"title\":\"Benchmark entry 4900\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4901\",\"id\":4902,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4901\",\"status\":\"published\",\"title\":\"Benchmark entry 4901\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      {
+        "name": "failure-invalid-cursor",
+        "path": "/v1/entries?cursor=not-a-number",
+        "method": "GET",
+        "expected_status": 400,
+        "statuses": {
+          "400": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 104.517069,
+          "max": 134.870121,
+          "mean": 121.86198320000001,
+          "median": 123.72353799999999,
+          "p95": 134.870121,
+          "p99": 134.870121,
+          "stddev": 9.66915671907927
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 105,
+          "max": 105,
+          "mean": 105,
+          "median": 105,
+          "p95": 105,
+          "p99": 105,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"invalid_cursor\",\"details\":{},\"message\":\"cursor must be a positive integer\"},\"ok\":false}"
+      },
+      {
+        "name": "failure-unauthorized-write",
+        "path": "/v1/content-types",
+        "method": "POST",
+        "expected_status": 401,
+        "statuses": {
+          "401": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 89.111881,
+          "max": 107.090433,
+          "mean": 99.0666371,
+          "median": 100.1470075,
+          "p95": 107.090433,
+          "p99": 107.090433,
+          "stddev": 5.993197787467031
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 90,
+          "max": 90,
+          "mean": 90,
+          "median": 90,
+          "p95": 90,
+          "p99": 90,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"unauthorized\",\"details\":{},\"message\":\"Missing bearer token\"},\"ok\":false}"
+      },
+      {
+        "name": "failure-invalid-json",
+        "path": "/v1/content-types",
+        "method": "POST",
+        "expected_status": 400,
+        "statuses": {
+          "401": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 79.283426,
+          "max": 117.825222,
+          "mean": 96.2846091,
+          "median": 96.4063305,
+          "p95": 117.825222,
+          "p99": 117.825222,
+          "stddev": 12.262863853864417
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 97,
+          "max": 97,
+          "mean": 97,
+          "median": 97,
+          "p95": 97,
+          "p99": 97,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"unauthorized\",\"details\":{},\"message\":\"Invalid bearer token format\"},\"ok\":false}"
+      },
+      {
+        "name": "failure-missing-entry",
+        "path": "/v1/entries/999999",
+        "method": "GET",
+        "expected_status": 404,
+        "statuses": {
+          "404": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 70.595416,
+          "max": 100.061999,
+          "mean": 84.95153489999998,
+          "median": 83.08874,
+          "p95": 100.061999,
+          "p99": 100.061999,
+          "stddev": 8.433262583205297
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 82,
+          "max": 82,
+          "mean": 82,
+          "median": 82,
+          "p95": 82,
+          "p99": 82,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"not_found\",\"details\":{},\"message\":\"Entry not found\"},\"ok\":false}"
+      },
+      {
+        "name": "privacy-anonymous-draft",
+        "path": "/v1/entries/by-slug/article/private-draft",
+        "method": "GET",
+        "expected_status": 200,
+        "statuses": {
+          "404": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 93.379847,
+          "max": 101.819228,
+          "mean": 97.7308867,
+          "median": 98.335231,
+          "p95": 101.819228,
+          "p99": 101.819228,
+          "stddev": 3.0699522689254968
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 82,
+          "max": 82,
+          "mean": 82,
+          "median": 82,
+          "p95": 82,
+          "p99": 82,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"not_found\",\"details\":{},\"message\":\"Entry not found\"},\"ok\":false}"
+      }
+    ],
+    "throughput": [
+      {
+        "path": "/v1/entries?limit=25&offset=0",
+        "total": 25,
+        "concurrency": 1,
+        "duration_ms": 3190.808626,
+        "requests_per_second": 7.835004517754491,
+        "statuses": {
+          "200": 25
+        },
+        "latency_ms": {
+          "n": 25,
+          "min": 109.206509,
+          "max": 156.163354,
+          "mean": 127.49300667999998,
+          "median": 128.530865,
+          "p95": 138.400591,
+          "p99": 156.163354,
+          "stddev": 9.580397917555445
+        }
+      },
+      {
+        "path": "/v1/entries?limit=25&offset=0",
+        "total": 25,
+        "concurrency": 10,
+        "duration_ms": 3118.869668,
+        "requests_per_second": 8.015724496763422,
+        "statuses": {
+          "200": 25
+        },
+        "latency_ms": {
+          "n": 25,
+          "min": 122.96194,
+          "max": 1307.270357,
+          "mean": 1027.91610964,
+          "median": 1223.212923,
+          "p95": 1296.670009,
+          "p99": 1307.270357,
+          "stddev": 353.8761588489508
+        }
+      },
+      {
+        "path": "/v1/entries?limit=25&offset=0",
+        "total": 25,
+        "concurrency": 25,
+        "duration_ms": 2895.510185,
+        "requests_per_second": 8.634057006433911,
+        "statuses": {
+          "200": 25
+        },
+        "latency_ms": {
+          "n": 25,
+          "min": 125.75535,
+          "max": 2893.825508,
+          "mean": 1529.8752799200001,
+          "median": 1529.982365,
+          "p95": 2776.913524,
+          "p99": 2893.825508,
+          "stddev": 825.2552134010742
+        }
+      }
+    ],
+    "agent_outputs": [
+      {
+        "name": "capabilities",
+        "path": "/v1",
+        "status": 200,
+        "bytes": 1717,
+        "lines": 1,
+        "words": 1,
+        "required_evidence_present": true,
+        "sha256": "4e18e83e1412f76ce956f42e53c6344f542cecef34560830cd65628b6e7deee7"
+      },
+      {
+        "name": "openapi",
+        "path": "/v1/openapi.json",
+        "status": 200,
+        "bytes": 4512,
+        "lines": 1,
+        "words": 10,
+        "required_evidence_present": true,
+        "sha256": "1665cca1a3f1ba34a948af444f799691e87ce58e5ba0e85970205c1e29166a54"
+      },
+      {
+        "name": "llms",
+        "path": "/llms.txt",
+        "status": 200,
+        "bytes": 477,
+        "lines": 13,
+        "words": 49,
+        "required_evidence_present": true,
+        "sha256": "3511f1511a3826e1fefa33f8fd2f37037c5528f199134099f0a0edbd7dec917d"
+      }
+    ],
+    "process": {
+      "peak_rss_kb": 98760,
+      "cpu_ms_before_shutdown": 28040,
+      "database_bytes": 4075520
+    },
+    "production_safety": {
+      "outcome": "exited",
+      "elapsed_ms": 1061.831013,
+      "exit_code": null,
+      "output": "CMS API\nServer: http://127.0.0.1:52190\nDatabase: /Users/robertdevore/2026/Kujolang/kujo-repos/cms/benchmarks/hardening/raw/pass2/baseline-production.db\nSite URL: http://127.0.0.1:52190\nCORS origin: *\nWrite token required: true\nSchema version: 8\nReadiness DB checks: true\nStructured logs: true\nModules: delivery, content_types, taxonomies, entries, media, menus, plugins, themes, authz, users, tenancy\nPress Ctrl+C to stop\nStarting HTTP server on 127.0.0.1:52190...\nServer listening on http://127.0.0.1:52190\nPress Ctrl+C to stop\n{\"event\":\"request.guard.start\",\"ip\":\"unknown\",\"method\":\"GET\",\"path\":\"/health\",\"request_id\":\"961d06ddc514effdaaf7cefa\",\"timestamp\":1788144591.0}\n{\"event\":\"request.guard.pass\",\"latency_ms\":53,\"method\":\"GET\",\"path\":\"/health\",\"request_id\":\"961d06ddc514effdaaf7cefa\",\"role_key\":\"anonymous\",\"timestamp\":1788144592.0}\n"
+    },
+    "native_tests": {
+      "command": "/Users/robertdevore/.local/bin/kujo test-run tests/cms_contract_tests.kujo",
+      "status": 0,
+      "signal": null,
+      "stdout": "\n============================================================\nTest Results\n============================================================\nTests: 20 total, 20 passed, 0 failed\nTime:  5797ms\n============================================================\n\nAll tests passed! ✨\n",
+      "stderr": "",
+      "duration_ms": 5848.017025,
+      "error": null,
+      "output_bytes": 271
+    }
+  },
+  "current": {
+    "metadata": {
+      "label": "current",
+      "repo_dir": "/tmp/cms-hardening-eval.aasS1z/current",
+      "branch": "",
+      "sha": "22570a510a0169bab2a6c3a4f3b92512f290ea57",
+      "commit_timestamp": "2026-08-30T13:10:11-04:00",
+      "tags": [
+        "v1.1.0"
+      ],
+      "worktree_status": ""
+    },
+    "parameters": {
+      "runs": 10,
+      "warmups": 3,
+      "startup_runs": 10,
+      "startup_warmups": 3,
+      "throughput_requests": 25
+    },
+    "startup": {
+      "latency_ms": {
+        "n": 10,
+        "min": 1059.33705,
+        "max": 2235.827038,
+        "mean": 1387.2638259999999,
+        "median": 1255.294798,
+        "p95": 2235.827038,
+        "p99": 2235.827038,
+        "stddev": 366.8606404919219
+      },
+      "rss_kb": {
+        "n": 10,
+        "min": 130660,
+        "max": 132776,
+        "mean": 131527.6,
+        "median": 131588,
+        "p95": 132776,
+        "p99": 132776,
+        "stddev": 566.8959692924267
+      },
+      "raw": [
+        {
+          "startup_ms": 1383.241457,
+          "rss_kb": 132776
+        },
+        {
+          "startup_ms": 1127.348139,
+          "rss_kb": 130772
+        },
+        {
+          "startup_ms": 1059.33705,
+          "rss_kb": 131628
+        },
+        {
+          "startup_ms": 1097.584318,
+          "rss_kb": 131392
+        },
+        {
+          "startup_ms": 1077.609632,
+          "rss_kb": 131824
+        },
+        {
+          "startup_ms": 1107.928964,
+          "rss_kb": 131184
+        },
+        {
+          "startup_ms": 1388.880428,
+          "rss_kb": 130660
+        },
+        {
+          "startup_ms": 1712.434905,
+          "rss_kb": 131772
+        },
+        {
+          "startup_ms": 1682.446329,
+          "rss_kb": 131720
+        },
+        {
+          "startup_ms": 2235.827038,
+          "rss_kb": 131548
+        }
+      ]
+    },
+    "scaling": [
+      {
+        "entries": 0,
+        "result": {
+          "name": "entries-0",
+          "path": "/v1/entries?limit=100&offset=0&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 155.249446,
+            "max": 223.107352,
+            "mean": 179.63285560000003,
+            "median": 172.38910850000002,
+            "p95": 223.107352,
+            "p99": 223.107352,
+            "stddev": 19.807749654231813
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 688,
+            "max": 688,
+            "mean": 688,
+            "median": 688,
+            "p95": 688,
+            "p99": 688,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":1,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"system\",\"body\":\"This entry exists so the API has immediate sample content.\",\"content_type_key\":\"article\",\"created_at\":\"1788144505.0\",\"excerpt\":\"Seeded demo article\",\"id\":1,\"meta_json\":\"{\\\"featured\\\":true}\",\"published_at\":\"1788144505.0\",\"slug\":\"welcome\",\"status\":\"published\",\"title\":\"Welcome\",\"unpublish_at\":null,\"updated_at\":\"1788144505.0\"}],\"limit\":100,\"offset\":0,\"pagination\":{\"cursor\":null,\"mode\":\"offset\",\"next_cursor\":null},\"projection\":{\"fields\":[],\"include_terms\":false},\"sort\":{\"by\":\"id\",\"dir\":\"asc\"},\"total\":1},\"ok\":true}"
+        }
+      },
+      {
+        "entries": 10,
+        "result": {
+          "name": "entries-10",
+          "path": "/v1/entries?limit=100&offset=0&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 99.071648,
+            "max": 150.039597,
+            "mean": 120.76464539999998,
+            "median": 114.861042,
+            "p95": 150.039597,
+            "p99": 150.039597,
+            "stddev": 18.049933653435406
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 8885,
+            "max": 8885,
+            "mean": 8885,
+            "median": 8885,
+            "p95": 8885,
+            "p99": 8885,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":11,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"system\",\"body\":\"This entry exists so the API has immediate sample content.\",\"content_type_key\":\"article\",\"created_at\":\"1788144505.0\",\"excerpt\":\"Seeded demo article\",\"id\":1,\"meta_json\":\"{\\\"featured\\\":true}\",\"published_at\":\"1788144505.0\",\"slug\":\"welcome\",\"status\":\"published\",\"title\":\"Welcome\",\"unpublish_at\":null,\"updated_at\":\"1788144505.0\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 1\",\"id\":2,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-1\",\"status\":\"published\",\"title\":\"Benchmark entry 1\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 2\",\"id\":3,\"meta_json\":\"{}\",\"published_at\":\"2026-01"
+        }
+      },
+      {
+        "entries": 100,
+        "result": {
+          "name": "entries-100",
+          "path": "/v1/entries?limit=100&offset=0&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 133.862415,
+            "max": 188.359158,
+            "mean": 161.28505610000002,
+            "median": 166.5314495,
+            "p95": 188.359158,
+            "p99": 188.359158,
+            "stddev": 19.538896161237986
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 82135,
+            "max": 82135,
+            "mean": 82135,
+            "median": 82135,
+            "p95": 82135,
+            "p99": 82135,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":100,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"system\",\"body\":\"This entry exists so the API has immediate sample content.\",\"content_type_key\":\"article\",\"created_at\":\"1788144505.0\",\"excerpt\":\"Seeded demo article\",\"id\":1,\"meta_json\":\"{\\\"featured\\\":true}\",\"published_at\":\"1788144505.0\",\"slug\":\"welcome\",\"status\":\"published\",\"title\":\"Welcome\",\"unpublish_at\":null,\"updated_at\":\"1788144505.0\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 1\",\"id\":2,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-1\",\"status\":\"published\",\"title\":\"Benchmark entry 1\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 2\",\"id\":3,\"meta_json\":\"{}\",\"published_at\":\"2026-0"
+        }
+      },
+      {
+        "entries": 1000,
+        "result": {
+          "name": "entries-1000",
+          "path": "/v1/entries?limit=100&offset=900&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 105.425746,
+            "max": 188.870841,
+            "mean": 138.6725887,
+            "median": 135.030439,
+            "p95": 188.870841,
+            "p99": 188.870841,
+            "stddev": 26.973382576020928
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 83041,
+            "max": 83041,
+            "mean": 83041,
+            "median": 83041,
+            "p95": 83041,
+            "p99": 83041,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":100,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 900\",\"id\":901,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-900\",\"status\":\"published\",\"title\":\"Benchmark entry 900\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 901\",\"id\":902,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-901\",\"status\":\"published\",\"title\":\"Benchmark entry 901\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      },
+      {
+        "entries": 5000,
+        "result": {
+          "name": "entries-5000",
+          "path": "/v1/entries?limit=100&offset=4900&sort_by=id&sort_dir=asc",
+          "method": "GET",
+          "expected_status": 200,
+          "statuses": {
+            "200": 10
+          },
+          "latency_ms": {
+            "n": 10,
+            "min": 98.136148,
+            "max": 125.197032,
+            "mean": 108.0811429,
+            "median": 106.796802,
+            "p95": 125.197032,
+            "p99": 125.197032,
+            "stddev": 7.796087473658224
+          },
+          "response_bytes": {
+            "n": 10,
+            "min": 83441,
+            "max": 83441,
+            "mean": 83441,
+            "median": 83441,
+            "p95": 83441,
+            "p99": 83441,
+            "stddev": 0
+          },
+          "sample_body": "{\"data\":{\"count\":100,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4900\",\"id\":4901,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4900\",\"status\":\"published\",\"title\":\"Benchmark entry 4900\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4901\",\"id\":4902,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4901\",\"status\":\"published\",\"title\":\"Benchmark entry 4901\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      }
+    ],
+    "workloads": [
+      {
+        "name": "minimal-health",
+        "path": "/health",
+        "method": "GET",
+        "expected_status": 200,
+        "statuses": {
+          "200": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 71.021452,
+          "max": 93.951073,
+          "mean": 83.16611649999999,
+          "median": 82.85645099999999,
+          "p95": 93.951073,
+          "p99": 93.951073,
+          "stddev": 8.026838333779773
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 226,
+          "max": 226,
+          "mean": 226,
+          "median": 226,
+          "p95": 226,
+          "p99": 226,
+          "stddev": 0
+        },
+        "sample_body": "{\"data\":{\"counts\":{\"background_jobs_dead\":0,\"background_jobs_dead_letters\":0,\"background_jobs_due\":0,\"background_jobs_total\":0,\"content_types\":2,\"entries\":5002,\"plugins\":1,\"themes\":1},\"db\":\"connected\",\"status\":\"ok\"},\"ok\":true}"
+      },
+      {
+        "name": "typical-entries",
+        "path": "/v1/entries?limit=25&offset=0",
+        "method": "GET",
+        "expected_status": 200,
+        "statuses": {
+          "200": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 103.106232,
+          "max": 290.240411,
+          "mean": 150.53097940000004,
+          "median": 140.32401199999998,
+          "p95": 290.240411,
+          "p99": 290.240411,
+          "stddev": 50.120956067129455
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 21112,
+          "max": 21112,
+          "mean": 21112,
+          "median": 21112,
+          "p95": 21112,
+          "p99": 21112,
+          "stddev": 0
+        },
+        "sample_body": "{\"data\":{\"count\":25,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 5000\",\"id\":5001,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-5000\",\"status\":\"published\",\"title\":\"Benchmark entry 5000\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4999\",\"id\":5000,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4999\",\"status\":\"published\",\"title\":\"Benchmark entry 4999\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      {
+        "name": "large-entries",
+        "path": "/v1/entries?limit=100&offset=4900&sort_by=id&sort_dir=asc",
+        "method": "GET",
+        "expected_status": 200,
+        "statuses": {
+          "200": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 106.474253,
+          "max": 193.106716,
+          "mean": 153.67494550000004,
+          "median": 166.2871815,
+          "p95": 193.106716,
+          "p99": 193.106716,
+          "stddev": 32.44900566725539
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 83441,
+          "max": 83441,
+          "mean": 83441,
+          "median": 83441,
+          "p95": 83441,
+          "p99": 83441,
+          "stddev": 0
+        },
+        "sample_body": "{\"data\":{\"count\":100,\"filters\":{\"author_id\":\"\",\"content_type\":\"\",\"published_after\":\"\",\"published_before\":\"\",\"q\":\"\",\"status\":\"published\"},\"items\":[{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4900\",\"id\":4901,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4900\",\"status\":\"published\",\"title\":\"Benchmark entry 4900\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\",\"content_type_key\":\"article\",\"created_at\":\"2026-01-01T00:00:00Z\",\"excerpt\":\"Excerpt 4901\",\"id\":4902,\"meta_json\":\"{}\",\"published_at\":\"2026-01-01T00:00:00Z\",\"slug\":\"entry-4901\",\"status\":\"published\",\"title\":\"Benchmark entry 4901\",\"unpublish_at\":null,\"updated_at\":\"2026-01-01T00:00:00Z\"},{\"author_id\":\"benchmark\",\"body\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      {
+        "name": "failure-invalid-cursor",
+        "path": "/v1/entries?cursor=not-a-number",
+        "method": "GET",
+        "expected_status": 400,
+        "statuses": {
+          "400": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 97.743151,
+          "max": 386.118401,
+          "mean": 162.2794143,
+          "median": 118.01390749999999,
+          "p95": 386.118401,
+          "p99": 386.118401,
+          "stddev": 97.18319344976494
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 105,
+          "max": 105,
+          "mean": 105,
+          "median": 105,
+          "p95": 105,
+          "p99": 105,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"invalid_cursor\",\"details\":{},\"message\":\"cursor must be a positive integer\"},\"ok\":false}"
+      },
+      {
+        "name": "failure-unauthorized-write",
+        "path": "/v1/content-types",
+        "method": "POST",
+        "expected_status": 401,
+        "statuses": {
+          "401": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 85.507111,
+          "max": 137.879173,
+          "mean": 112.00625950000001,
+          "median": 117.9476135,
+          "p95": 137.879173,
+          "p99": 137.879173,
+          "stddev": 17.64403037597385
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 90,
+          "max": 90,
+          "mean": 90,
+          "median": 90,
+          "p95": 90,
+          "p99": 90,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"unauthorized\",\"details\":{},\"message\":\"Missing bearer token\"},\"ok\":false}"
+      },
+      {
+        "name": "failure-invalid-json",
+        "path": "/v1/content-types",
+        "method": "POST",
+        "expected_status": 400,
+        "statuses": {
+          "401": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 95.291607,
+          "max": 149.801031,
+          "mean": 110.8991164,
+          "median": 107.55396,
+          "p95": 149.801031,
+          "p99": 149.801031,
+          "stddev": 16.15400625826062
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 97,
+          "max": 97,
+          "mean": 97,
+          "median": 97,
+          "p95": 97,
+          "p99": 97,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"unauthorized\",\"details\":{},\"message\":\"Invalid bearer token format\"},\"ok\":false}"
+      },
+      {
+        "name": "failure-missing-entry",
+        "path": "/v1/entries/999999",
+        "method": "GET",
+        "expected_status": 404,
+        "statuses": {
+          "404": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 100.18828,
+          "max": 153.055986,
+          "mean": 114.65468569999999,
+          "median": 106.8906675,
+          "p95": 153.055986,
+          "p99": 153.055986,
+          "stddev": 16.77802606804246
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 82,
+          "max": 82,
+          "mean": 82,
+          "median": 82,
+          "p95": 82,
+          "p99": 82,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"not_found\",\"details\":{},\"message\":\"Entry not found\"},\"ok\":false}"
+      },
+      {
+        "name": "privacy-anonymous-draft",
+        "path": "/v1/entries/by-slug/article/private-draft",
+        "method": "GET",
+        "expected_status": 404,
+        "statuses": {
+          "404": 10
+        },
+        "latency_ms": {
+          "n": 10,
+          "min": 88.796963,
+          "max": 123.207889,
+          "mean": 106.333226,
+          "median": 107.4435455,
+          "p95": 123.207889,
+          "p99": 123.207889,
+          "stddev": 9.617977140784332
+        },
+        "response_bytes": {
+          "n": 10,
+          "min": 82,
+          "max": 82,
+          "mean": 82,
+          "median": 82,
+          "p95": 82,
+          "p99": 82,
+          "stddev": 0
+        },
+        "sample_body": "{\"error\":{\"code\":\"not_found\",\"details\":{},\"message\":\"Entry not found\"},\"ok\":false}"
+      }
+    ],
+    "throughput": [
+      {
+        "path": "/v1/entries?limit=25&offset=0",
+        "total": 25,
+        "concurrency": 1,
+        "duration_ms": 2833.601857,
+        "requests_per_second": 8.82269325813757,
+        "statuses": {
+          "200": 25
+        },
+        "latency_ms": {
+          "n": 25,
+          "min": 90.821853,
+          "max": 181.930685,
+          "mean": 113.14744815999998,
+          "median": 105.901526,
+          "p95": 171.964925,
+          "p99": 181.930685,
+          "stddev": 23.169399627872604
+        }
+      },
+      {
+        "path": "/v1/entries?limit=25&offset=0",
+        "total": 25,
+        "concurrency": 10,
+        "duration_ms": 2560.215748,
+        "requests_per_second": 9.764802056049223,
+        "statuses": {
+          "200": 25
+        },
+        "latency_ms": {
+          "n": 25,
+          "min": 170.215222,
+          "max": 1068.299553,
+          "mean": 843.1595825999998,
+          "median": 957.51911,
+          "p95": 1007.984962,
+          "p99": 1068.299553,
+          "stddev": 241.8419382713774
+        }
+      },
+      {
+        "path": "/v1/entries?limit=25&offset=0",
+        "total": 25,
+        "concurrency": 25,
+        "duration_ms": 2582.982584,
+        "requests_per_second": 9.678733474573052,
+        "statuses": {
+          "200": 25
+        },
+        "latency_ms": {
+          "n": 25,
+          "min": 104.788744,
+          "max": 2580.170181,
+          "mean": 1318.0521120800001,
+          "median": 1267.080822,
+          "p95": 2478.557484,
+          "p99": 2580.170181,
+          "stddev": 756.5315747917189
+        }
+      }
+    ],
+    "agent_outputs": [
+      {
+        "name": "capabilities",
+        "path": "/v1",
+        "status": 200,
+        "bytes": 2348,
+        "lines": 1,
+        "words": 1,
+        "required_evidence_present": true,
+        "sha256": "09ac93bce3144b70db97355c6f6d186fc802d828b7794cc69467555495ead016"
+      },
+      {
+        "name": "openapi",
+        "path": "/v1/openapi.json",
+        "status": 200,
+        "bytes": 9209,
+        "lines": 1,
+        "words": 142,
+        "required_evidence_present": true,
+        "sha256": "5e6709b1d8665a197deea8e0486ff00326756384ddeda7de02b5766570893151"
+      },
+      {
+        "name": "llms",
+        "path": "/llms.txt",
+        "status": 200,
+        "bytes": 477,
+        "lines": 13,
+        "words": 49,
+        "required_evidence_present": true,
+        "sha256": "79bc0ce2ee8738723dc7b78d50839e2c68d6e2e68cded5bfe291642b2b267084"
+      }
+    ],
+    "process": {
+      "peak_rss_kb": 146512,
+      "cpu_ms_before_shutdown": 30020,
+      "database_bytes": 4112384
+    },
+    "production_safety": {
+      "outcome": "exited",
+      "elapsed_ms": 575.526518,
+      "exit_code": 1,
+      "output": "[ERROR] Production requires CMS_TRUSTED_INGRESS_LIMITS=true and a trusted ingress that enforces request-body and read-time limits before Kujo.\n"
+    },
+    "native_tests": {
+      "command": "/Users/robertdevore/.local/bin/kujo test-run tests/cms_contract_tests.kujo",
+      "status": 0,
+      "signal": null,
+      "stdout": "\n============================================================\nTest Results\n============================================================\nTests: 32 total, 32 passed, 0 failed\nTime:  10919ms\n============================================================\n\nAll tests passed! ✨\n",
+      "stderr": "",
+      "duration_ms": 10961.609684,
+      "error": null,
+      "output_bytes": 272
+    }
+  }
+}

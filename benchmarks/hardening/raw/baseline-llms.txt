@@ -1,0 +1,12 @@
+# CMS API
+
+This installation provides a headless CMS API and machine-readable discovery documents.
+
+- API root: http://127.0.0.1:52150/v1
+- Health: http://127.0.0.1:52150/health
+- Sitemap: http://127.0.0.1:52150/sitemap.xml
+- RSS: http://127.0.0.1:52150/rss.xml
+- Entry listing: http://127.0.0.1:52150/v1/entries
+- Entry by slug: http://127.0.0.1:52150/v1/entries/by-slug/{content_type}/{slug}
+
+Use bearer auth for write routes. Read routes are publicly consumable by default.
