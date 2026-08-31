@@ -11,12 +11,12 @@ This document tracks runtime or platform constraints that may need Kujo-level im
 - A runtime-level fix for closure symbol resolution would reduce boilerplate and prevent hidden production failures.
 
 2. HTTP requests are buffered before application body limits
-- The current Kujo HTTP server reads the full request body before CMS route code can enforce `CMS_MAX_BODY_BYTES`.
-- Production startup therefore requires `CMS_TRUSTED_INGRESS_LIMITS=true`; the trusted ingress must enforce body-size and connection/read-time limits before Kujo.
+- Kujo rejects bodies above 8 MiB before route dispatch and applies a bounded socket read deadline, but CMS may configure `CMS_MAX_BODY_BYTES` below that runtime ceiling after the body has been buffered.
+- Production startup therefore still requires `CMS_TRUSTED_INGRESS_LIMITS=true`; the trusted ingress must enforce the smaller CMS body-size contract before Kujo.
 
-3. Socket peer address is not exposed to CMS routes
-- The current request dictionary does not provide a reliable remote socket address, so application-local anonymous rate limiting collapses callers into one bucket.
-- Production startup requires `CMS_RATE_LIMIT_MODE=external`; enforce per-client limits at the trusted ingress without trusting client-supplied forwarding headers unless the ingress overwrites them.
+3. Socket peer identity is available in current Kujo runtimes
+- CMS prefers the socket-derived `peer_ip` field for rate limiting and audit identity, with compatibility fallbacks for older runtimes.
+- Production may use durable local `CMS_RATE_LIMIT_MODE=sqlite` or a shared `external` limiter. Forwarding headers remain untrusted and do not override socket identity.
 
 4. Background processing is shell-operated
 - The CMS includes leased SQLite workers for jobs and webhook retries, but they are operator-run processes rather than a first-class Kujo worker runtime.

@@ -137,6 +137,7 @@ Recommended env overrides:
 - `CMS_CORS_ORIGIN`
 - `CMS_TRUSTED_INGRESS_LIMITS`
 - `CMS_RATE_LIMIT_MODE`
+- `KUJO_HTTP_SERVER_READ_TIMEOUT_MS` (Kujo runtime socket deadline; default `10000`, clamped to `100..300000` ms)
 - `CMS_IDEMPOTENCY_ENABLED`
 - `CMS_PLUGIN_HOOK_URL_ALLOWLIST`
 - `CMS_PLUGIN_HOOK_URL_DENYLIST`
@@ -149,7 +150,7 @@ Bootstrap authentication has no usable default credential. Generate a unique boo
 
 Security upgrade note: schema migration v9 deactivates all database-backed API tokens created by earlier schema versions because legacy environment-bootstrap credentials were not distinguishable from ordinary tokens after edits. Reissue the required scoped tokens after upgrading; the current environment bootstrap token remains available only when explicitly enabled and is never persisted.
 
-Production startup also requires `CMS_TRUSTED_INGRESS_LIMITS=true` and `CMS_RATE_LIMIT_MODE=external`. The trusted ingress must enforce request-body size, connection/read timeouts, and per-client rate limits before traffic reaches Kujo; the current interpreter buffers request bodies and does not expose the socket peer address to application routes.
+Production startup requires `CMS_TRUSTED_INGRESS_LIMITS=true` because CMS's configurable body ceiling may be lower than Kujo's 8 MiB pre-dispatch limit. Set `CMS_RATE_LIMIT_MODE=sqlite` for durable local per-client limits or `external` for shared ingress limits. Current Kujo runtimes apply a bounded socket read deadline and expose the direct socket peer; CMS does not trust forwarding headers for client identity.
 
 User APIs:
 

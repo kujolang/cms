@@ -363,7 +363,7 @@ bash scripts/run-release-gate.sh
 For a public production deployment, also:
 
 - Set `CMS_ENV=production`.
-- Put the API behind a trusted ingress that enforces request-body size and connection/read timeouts, set `CMS_TRUSTED_INGRESS_LIMITS=true`, and use `CMS_RATE_LIMIT_MODE=external` for per-client limits.
+- Put the API behind a trusted ingress that enforces the configured CMS request-body size and set `CMS_TRUSTED_INGRESS_LIMITS=true`. Use `CMS_RATE_LIMIT_MODE=sqlite` for durable local limits keyed by Kujo's socket-derived peer IP, or `external` for shared ingress limits. Kujo enforces the socket read deadline through `KUJO_HTTP_SERVER_READ_TIMEOUT_MS`.
 - Generate a unique `CMS_API_TOKEN` for initial provisioning, then disable the bootstrap token after creating a scoped administrative API token.
 - Set a specific `CMS_CORS_ORIGIN`.
 - Use durable storage and test backup and restore procedures.
