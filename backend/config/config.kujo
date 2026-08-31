@@ -1,5 +1,27 @@
 from backend.core.utils import bool_or, dict_get_or, parse_positive_int_env
 
+export validate_production_runtime_config := func(cfg) {
+	if to_lower(trim(to_string(dict_get_or(cfg, "environment", "development")))) != "production" {
+		return {"ok": true}
+	}
+	if dict_get_or(cfg, "trusted_ingress_limits", false) != true {
+		return {
+			"ok": false,
+			"code": "trusted_ingress_body_limit_required",
+			"message": "Production requires CMS_TRUSTED_INGRESS_LIMITS=true and a trusted ingress that enforces CMS request-body limits before Kujo."
+		}
+	}
+	rate_limit_mode := to_lower(trim(to_string(dict_get_or(cfg, "rate_limit_mode", "memory"))))
+	if rate_limit_mode != "external" && rate_limit_mode != "sqlite" {
+		return {
+			"ok": false,
+			"code": "durable_rate_limit_required",
+			"message": "Production requires CMS_RATE_LIMIT_MODE=sqlite or external; Kujo socket peer identity supports local per-client limits, while production state must remain durable or shared."
+		}
+	}
+	return {"ok": true, "rate_limit_mode": rate_limit_mode}
+}
+
 export load_config_backend_impl := func(overrides) {
 	allow_bootstrap_env_raw := env_or("CMS_ALLOW_BOOTSTRAP_TOKEN", "__unset__")
 	allow_bootstrap_env_set := allow_bootstrap_env_raw != "__unset__"

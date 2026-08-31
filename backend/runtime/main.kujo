@@ -1,4 +1,4 @@
-from backend.config.config import load_config
+from backend.config.config import load_config, validate_production_runtime_config
 from backend.core.database import connect_database
 from backend.core.http import api_text, fail, guard_request, ok
 from backend.core.utils import dict_get_or
@@ -23,15 +23,10 @@ from backend.routes.media_storage import register_media_storage_routes
 
 cfg := load_config({})
 
-if to_lower(trim(to_string(dict_get_or(cfg, "environment", "development")))) == "production" {
-	if dict_get_or(cfg, "trusted_ingress_limits", false) != true {
-		print("[ERROR] Production requires CMS_TRUSTED_INGRESS_LIMITS=true and a trusted ingress that enforces request-body and read-time limits before Kujo.")
-		exit(1)
-	}
-	if to_lower(trim(to_string(dict_get_or(cfg, "rate_limit_mode", "memory")))) != "external" {
-		print("[ERROR] Production requires CMS_RATE_LIMIT_MODE=external until the Kujo runtime supplies a per-client socket address.")
-		exit(1)
-	}
+production_policy := validate_production_runtime_config(cfg)
+if dict_get_or(production_policy, "ok", false) == false {
+	print("[ERROR] " + to_string(dict_get_or(production_policy, "message", "Production runtime configuration is invalid.")))
+	exit(1)
 }
 
 if trim(to_string(dict_get_or(cfg, "api_token", ""))) == "change-me-in-production" {

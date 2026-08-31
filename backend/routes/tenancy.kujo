@@ -1,5 +1,5 @@
 from backend.core.utils import dict_get_or, is_valid_slug_key, parse_list_query
-from backend.core.http import fail, guard_request, idempotency_complete, write_audit
+from backend.core.http import fail, guard_request, idempotency_complete, req_ip, write_audit
 
 get_tenant_scope := func(auth_context) {
 	permissions := []
@@ -293,7 +293,7 @@ export register_tenancy_routes := func(server, ctx) {
 					"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 					[
 						now(),
-						to_string(dict_get_or(req, "remote_addr", "unknown")),
+						req_ip(req),
 						to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
 						to_string(dict_get_or(req, "path", "")),
 						"token",
@@ -438,7 +438,7 @@ export register_tenancy_routes := func(server, ctx) {
 					"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 					[
 						now(),
-						to_string(dict_get_or(req, "remote_addr", "unknown")),
+						req_ip(req),
 						to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
 						to_string(dict_get_or(req, "path", "")),
 						"token",
@@ -862,7 +862,7 @@ export register_tenancy_routes := func(server, ctx) {
 					"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 					[
 						now(),
-						to_string(dict_get_or(req, "remote_addr", "unknown")),
+						req_ip(req),
 						to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
 						to_string(dict_get_or(req, "path", "")),
 						"token",

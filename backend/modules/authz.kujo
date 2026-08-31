@@ -1,6 +1,6 @@
 from backend.core.utils import dict_get_or, ensure_json_text, is_valid_slug_key, parse_list_query, trim_or
 from backend.core.database import db_execute_safe, db_query_safe
-from backend.core.http import created, fail, get_query, guard_request, ok, parse_bounded_int, parse_id_param, parse_json_body, write_audit
+from backend.core.http import created, fail, get_query, guard_request, ok, parse_bounded_int, parse_id_param, parse_json_body, req_ip, write_audit
 
 func generate_token_secret(label, role_key) {
 	seed := uuid_v4() + ":" + uuid_v4() + ":" + uuid_v4()
@@ -660,7 +660,7 @@ export register_authz_routes := func(server, ctx) {
 										"INSERT INTO audit_log (created_at, ip, method, path, actor, action, status_code, target_type, target_id, details_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 										[
 											now(),
-											to_string(dict_get_or(req, "remote_addr", "unknown")),
+											req_ip(req),
 											to_upper(to_string(dict_get_or(req, "method", "UNKNOWN"))),
 											to_string(dict_get_or(req, "path", "")),
 											"token",

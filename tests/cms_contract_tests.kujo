@@ -1,7 +1,7 @@
 test_setup {
 	from backend.core.utils import is_valid_slug_key, parse_list_query, parse_nonnegative_int_text, parse_positive_int_text
-	from backend.core.http import get_header, parse_bounded_int, req_actor
-	from backend.config.config import load_config, load_config_impl
+	from backend.core.http import get_header, parse_bounded_int, req_actor, req_ip
+	from backend.config.config import load_config, load_config_impl, validate_production_runtime_config
 	from backend.modules.auth import authorize_request, effective_admin_capabilities, load_session_auth, permissions_allow
 	from backend.core.database import connect_database, db_execute_safe, db_query_safe
 	from backend.core.migrations import get_schema_version, TARGET_SCHEMA_VERSION
@@ -265,6 +265,22 @@ test "config applies enterprise bootstrap defaults in production" {
 		"rate_limit_mode": "unsupported"
 	})
 	assert_equal(invalid_mode_cfg["rate_limit_mode"], "memory")
+}
+
+test "socket peer identity and production rate-limit policy fail closed" {
+	assert_equal(req_ip({"peer_ip": "127.0.0.1", "peer_address": "127.0.0.1:4200", "remote_addr": "spoofed"}), "127.0.0.1")
+	assert_equal(req_ip({"peer_address": "127.0.0.1:4200", "remote_addr": "legacy"}), "127.0.0.1:4200")
+	assert_equal(req_ip({"remote_addr": "legacy"}), "legacy")
+
+	missing_ingress := validate_production_runtime_config({"environment": "production", "trusted_ingress_limits": false, "rate_limit_mode": "sqlite"})
+	assert_equal(missing_ingress["ok"], false)
+	assert_equal(missing_ingress["code"], "trusted_ingress_body_limit_required")
+
+	memory_mode := validate_production_runtime_config({"environment": "production", "trusted_ingress_limits": true, "rate_limit_mode": "memory"})
+	assert_equal(memory_mode["ok"], false)
+	assert_equal(memory_mode["code"], "durable_rate_limit_required")
+	assert_equal(validate_production_runtime_config({"environment": "production", "trusted_ingress_limits": true, "rate_limit_mode": "sqlite"})["ok"], true)
+	assert_equal(validate_production_runtime_config({"environment": "production", "trusted_ingress_limits": true, "rate_limit_mode": "external"})["ok"], true)
 }
 
 test "config wrapper delegates to backend implementation without shape drift" {

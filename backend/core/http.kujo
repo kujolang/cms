@@ -76,7 +76,13 @@ export req_path := func(req) {
 }
 
 export req_ip := func(req) {
-	ip := to_string(dict_get_or(req, "remote_addr", "unknown"))
+	ip := trim(to_string(dict_get_or(req, "peer_ip", "")))
+	if ip == "" {
+		ip = trim(to_string(dict_get_or(req, "peer_address", "")))
+	}
+	if ip == "" {
+		ip = trim(to_string(dict_get_or(req, "remote_addr", "unknown")))
+	}
 	if trim(ip) == "" {
 		return "unknown"
 	}
