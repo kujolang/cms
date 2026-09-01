@@ -13,26 +13,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install CI tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep
 
       - name: Install Kujo runtime
         shell: bash
         run: |
           cd "$RUNNER_TEMP"
-          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.0.1/kujo-v1.0.1-linux-x64.tar.gz
-          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.0.1/kujo-v1.0.1-linux-x64.tar.gz.sha256
-          sha256sum --check kujo-v1.0.1-linux-x64.tar.gz.sha256
+          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz
+          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz.sha256
+          sha256sum --check kujo-v1.2.0-linux-x64.tar.gz.sha256
           mkdir -p "$RUNNER_TEMP/kujo-bin"
-          tar -xzf kujo-v1.0.1-linux-x64.tar.gz -C "$RUNNER_TEMP/kujo-bin"
+          tar -xzf kujo-v1.2.0-linux-x64.tar.gz -C "$RUNNER_TEMP/kujo-bin"
+          chmod +x "$RUNNER_TEMP/kujo-bin/kujo"
           echo "$RUNNER_TEMP/kujo-bin" >> "$GITHUB_PATH"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Resolve Kujo runtime
         id: kujo
@@ -69,26 +76,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install CI tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ripgrep
 
       - name: Install Kujo runtime
         shell: bash
         run: |
           cd "$RUNNER_TEMP"
-          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.0.1/kujo-v1.0.1-linux-x64.tar.gz
-          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.0.1/kujo-v1.0.1-linux-x64.tar.gz.sha256
-          sha256sum --check kujo-v1.0.1-linux-x64.tar.gz.sha256
+          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz
+          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz.sha256
+          sha256sum --check kujo-v1.2.0-linux-x64.tar.gz.sha256
           mkdir -p "$RUNNER_TEMP/kujo-bin"
-          tar -xzf kujo-v1.0.1-linux-x64.tar.gz -C "$RUNNER_TEMP/kujo-bin"
+          tar -xzf kujo-v1.2.0-linux-x64.tar.gz -C "$RUNNER_TEMP/kujo-bin"
+          chmod +x "$RUNNER_TEMP/kujo-bin/kujo"
           echo "$RUNNER_TEMP/kujo-bin" >> "$GITHUB_PATH"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Resolve Kujo runtime
         id: kujo
