@@ -275,6 +275,9 @@ func idempotency_resolve_create_by_unique_key(db, req, body_obj, body_key, table
 }
 
 func idempotency_supported_request(method, path) {
+	if method == "POST" && starts_with(path, "/v1/abilities/") && ends_with(path, "/run") {
+		return true
+	}
 	if method == "POST" && path == "/v1/entries" {
 		return true
 	}

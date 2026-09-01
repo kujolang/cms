@@ -1,6 +1,7 @@
 from backend.core.database import db_execute_safe, db_query_safe
-from backend.core.http import fail, guard_request, ok, parse_json_body, write_audit
+from backend.core.http import fail, guard_request, idempotency_complete, ok, parse_json_body, write_audit
 from backend.core.utils import dict_get_or
+from backend.modules.ability_contract import ABILITY_SCHEMA_ID, validate_ability_definition, validate_ability_invocation, validate_ability_value
 from backend.routes.entries import apply_seo_changes, normalize_seo_changes
 from backend.routes.extensions import extension_ai_registry, extension_plugin_runtime
 from backend.routes.plugins import validate_handler_url_policy
@@ -14,8 +15,33 @@ export ability_categories := func() {
 	]
 }
 
+func core_ability_definition(ability) {
+	legacy_name := ability["name"]
+	canonical_id := ""
+	resource := ""
+	effect_kind := "read"
+	idempotency_mode := "intrinsic"
+	if legacy_name == "cms/site-info" { canonical_id = "kujo.cms.site.inspect"; resource = "kujo.cms.site" }
+	if legacy_name == "content/list" { canonical_id = "kujo.cms.content.list"; resource = "kujo.cms.content" }
+	if legacy_name == "seo/audit-summary" { canonical_id = "kujo.cms.seo.audit"; resource = "kujo.cms.seo" }
+	if legacy_name == "seo/update-entry" { canonical_id = "kujo.cms.seo.update-entry"; resource = "kujo.cms.seo"; effect_kind = "write"; idempotency_mode = "keyed" }
+	if legacy_name == "seo/bulk-update" { canonical_id = "kujo.cms.seo.bulk-update"; resource = "kujo.cms.seo"; effect_kind = "write"; idempotency_mode = "keyed" }
+	if legacy_name == "ai/integration-status" { canonical_id = "kujo.cms.integrations.inspect"; resource = "kujo.cms.integrations" }
+	return {
+		"schema": ABILITY_SCHEMA_ID,
+		"id": canonical_id,
+		"version": "1.0.0",
+		"title": ability["label"],
+		"description": ability["description"],
+		"input_schema": ability["input_schema"],
+		"output_schema": ability["output_schema"],
+		"effects": [{"kind": effect_kind, "resource": resource}],
+		"idempotency": {"mode": idempotency_mode}
+	}
+}
+
 export ability_registry := func() {
-	return [
+	items := [
 		{
 			"name": "cms/site-info", "label": "Get site information", "description": "Return CMS identity, version, site URL, and aggregate resource counts.", "category": "cms", "permission": "cms.read",
 			"input_schema": {"type": "object", "additionalProperties": false},
@@ -53,6 +79,18 @@ export ability_registry := func() {
 			"annotations": {"readonly": true, "destructive": false, "idempotent": true, "requires_confirmation": false}
 		}
 	]
+	resolved := []
+	for ability in items {
+		ability["definition"] := core_ability_definition(ability)
+		resolved = push(resolved, ability)
+	}
+	return resolved
+}
+
+export ability_definitions := func() {
+	definitions := []
+	for ability in ability_registry() { definitions = push(definitions, ability["definition"]) }
+	return definitions
 }
 
 func feature_state(db, feature_type, feature_key, default_enabled) {
@@ -84,11 +122,23 @@ export resolved_ability_registry := func(ctx) {
 		external_name := regex_replace(regex_replace(raw_name, "^[^.]+\\.", ""), "[^a-z0-9_-]", "-")
 		method := to_upper(trim(to_string(dict_get_or(raw, "method", "GET"))))
 		readonly := method == "GET"
+		input_schema := dict_get_or(raw, "input_schema", {"type": "object"})
+		output_schema := dict_get_or(raw, "output_schema", {"type": "object"})
+		label := trim(to_string(dict_get_or(raw, "label", raw_name)))
+		description := trim(to_string(dict_get_or(raw, "description", "Provided by an active plugin runtime.")))
+		plugin_resource := "kujo.plugin." + raw["source_key"] + "." + namespace
+		plugin_effect := "write"; plugin_idempotency := "none"
+		if readonly { plugin_effect = "read"; plugin_idempotency = "intrinsic" }
+		definition := {
+			"schema": ABILITY_SCHEMA_ID, "id": "kujo.plugin." + raw["source_key"] + "." + raw_name, "version": "1.0.0",
+			"title": label, "description": description, "input_schema": input_schema, "output_schema": output_schema,
+			"effects": [{"kind": plugin_effect, "resource": plugin_resource}], "idempotency": {"mode": plugin_idempotency}
+		}
 		items = push(items, {
 			"name": namespace + "/" + external_name, "label": trim(to_string(dict_get_or(raw, "label", raw_name))),
-			"description": trim(to_string(dict_get_or(raw, "description", "Provided by an active plugin runtime."))),
+			"description": description,
 			"category": "plugin", "permission": trim(to_string(dict_get_or(raw, "permission", "admin.plugins"))),
-			"input_schema": dict_get_or(raw, "input_schema", {"type": "object"}), "output_schema": dict_get_or(raw, "output_schema", {"type": "object"}),
+			"input_schema": input_schema, "output_schema": output_schema, "definition": definition,
 			"annotations": {"readonly": readonly, "destructive": false, "idempotent": false, "requires_confirmation": readonly == false},
 			"enabled": feature_state(ctx["db"], "ability", namespace + "/" + external_name, true), "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": true,
 			"external_execution": {"method": method, "path": trim(to_string(dict_get_or(raw, "path", ""))), "runtime": "plugin"}
@@ -180,8 +230,12 @@ export mcp_tool_descriptors := func() {
 			"title": ability["label"],
 			"description": ability["description"],
 			"inputSchema": ability["input_schema"],
+			"outputSchema": ability["output_schema"],
 			"annotations": ability["annotations"],
 			"ability": ability["name"],
+			"abilityId": ability["definition"]["id"],
+			"abilityVersion": ability["definition"]["version"],
+			"effects": ability["definition"]["effects"],
 			"execution": "/v1/abilities/" + parts[0] + "/" + parts[1] + "/run"
 		})
 	}
@@ -195,7 +249,8 @@ func resolved_mcp_tool_descriptors(ctx) {
 			parts := split(ability["name"], "/")
 			tools = push(tools, {
 				"name": parts[0] + "__" + parts[1], "title": ability["label"], "description": ability["description"],
-				"inputSchema": ability["input_schema"], "annotations": ability["annotations"], "ability": ability["name"],
+				"inputSchema": ability["input_schema"], "outputSchema": ability["output_schema"], "annotations": ability["annotations"], "ability": ability["name"],
+				"abilityId": ability["definition"]["id"], "abilityVersion": ability["definition"]["version"], "effects": ability["definition"]["effects"],
 				"execution": "/v1/abilities/" + parts[0] + "/" + parts[1] + "/run"
 			})
 		}
@@ -446,6 +501,17 @@ export register_ability_routes := func(server, ctx) {
 		for ability in resolved_ability_registry(ctx) { if category == "" || ability["category"] == category { items = push(items, ability) } }
 		return ok(ctx["cfg"], {"items": items, "count": len(items), "categories": ability_categories()})
 	})
+	server = server.route("GET", "/v1/abilities/definitions", func(req) {
+		guard := guard_request(req, ctx, "cms.read")
+		if guard["ok"] == false { return guard["response"] }
+		definitions := []
+		for ability in resolved_ability_registry(ctx) {
+			definition_result := validate_ability_definition(ability["definition"])
+			if definition_result["ok"] == false { return fail(ctx["cfg"], 500, "invalid_ability_definition", "Registered Ability definition is invalid", {"ability": ability["name"], "reason": definition_result["code"]}) }
+			definitions = push(definitions, ability["definition"])
+		}
+		return ok(ctx["cfg"], {"schema": ABILITY_SCHEMA_ID, "items": definitions, "count": len(definitions)})
+	})
 	server = server.route("GET", "/v1/abilities/:namespace/:ability", func(req) {
 		params := dict_get_or(req, "params", {})
 		ability := find_resolved_ability(ctx, dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
@@ -465,10 +531,20 @@ export register_ability_routes := func(server, ctx) {
 		if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
 		input := dict_get_or(body_result["data"], "input", {})
 		if type(input) != "dict" { return fail(ctx["cfg"], 400, "invalid_input", "input must be an object", {}) }
+		input_result := validate_ability_invocation(ability, input)
+		if input_result["ok"] == false {
+			input_status := 400
+			if input_result["code"] == "confirmation_required" { input_status = 409 }
+			return fail(ctx["cfg"], input_status, input_result["code"], input_result["message"], input_result["details"])
+		}
 		result := execute_ability(req, ctx, ability, input)
 		if result["ok"] == false { return fail(ctx["cfg"], result["status"], result["code"], result["message"], {}) }
+		output_result := validate_ability_value(result["result"], ability["output_schema"], "output")
+		if output_result["ok"] == false { return fail(ctx["cfg"], 502, output_result["code"], output_result["message"], output_result["details"]) }
 		_ = write_audit(ctx, req, "ability.execute", 200, "ability", ability["name"], {"readonly": ability["annotations"]["readonly"], "confirmed": dict_get_or(input, "confirmed", false)})
-		return ok(ctx["cfg"], {"ability": ability["name"], "result": result["result"]})
+		response_payload := {"ok": true, "data": {"ability": ability["name"], "result": result["result"]}}
+		_ = idempotency_complete(req, ctx, 200, response_payload)
+		return ok(ctx["cfg"], response_payload["data"])
 	})
 	server = server.route("PATCH", "/v1/abilities/:namespace/:ability", func(req) {
 		guard := guard_request(req, ctx, "admin.settings")

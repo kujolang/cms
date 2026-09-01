@@ -3,13 +3,14 @@ test_setup {
 	from backend.core.http import get_header, parse_bounded_int, req_actor, req_ip
 	from backend.config.config import load_config, load_config_impl, validate_production_runtime_config
 	from backend.modules.auth import authorize_request, effective_admin_capabilities, load_session_auth, permissions_allow
+	from backend.modules.ability_contract import ABILITY_SCHEMA_ID, validate_ability_definition, validate_ability_invocation, validate_ability_value, validate_plugin_ability_descriptor
 	from backend.core.database import connect_database, db_execute_safe, db_query_safe
 	from backend.core.migrations import get_schema_version, TARGET_SCHEMA_VERSION
 	from backend.routes.delivery import build_llms_txt, build_robots_txt, build_rss_xml, build_security_txt, build_sitemap_xml
 	from backend.routes.entries import build_seo_audit_item, can_read_entry_status
 	from backend.routes.media import parse_media_size_bytes
 	from backend.routes.plugins import list_webhook_event_schemas, validate_webhook_event_payload, webhook_schema_for
-	from backend.routes.abilities import ability_categories, ability_registry, connector_registry, find_ability, mcp_tool_descriptors, resolved_ability_registry, resolved_connector_registry
+	from backend.routes.abilities import ability_categories, ability_definitions, ability_registry, connector_registry, find_ability, mcp_tool_descriptors, resolved_ability_registry, resolved_connector_registry
 	from backend.routes.webmcp import build_webmcp_manifest, build_webmcp_runtime_source, public_content_record, webmcp_entry_allowed, webmcp_tool_registry
 	from backend.routes.extensions import extension_contracts, validate_package_receipt, validate_plugin_manifest, validate_theme_manifest
 	from backend.routes.content_workflows import normalized_entry_slug, parse_positive_unique_ids
@@ -113,7 +114,10 @@ test "WebMCP exposes only bounded published content and honors exclusions" {
 
 test "abilities are discoverable, namespaced, schema-described, and MCP-ready" {
 	abilities := ability_registry()
+	definitions := ability_definitions()
 	assert_true(to_bool(len(abilities) >= 6))
+	assert_equal(len(definitions), len(abilities))
+	for definition in definitions { assert_equal(validate_ability_definition(definition)["ok"], true) }
 	assert_true(to_bool(len(ability_categories()) >= 4))
 	seo_update := find_ability("seo", "update-entry")
 	assert_equal(type(seo_update), "dict")
@@ -123,6 +127,55 @@ test "abilities are discoverable, namespaced, schema-described, and MCP-ready" {
 	tools := mcp_tool_descriptors()
 	assert_equal(len(tools), len(abilities))
 	assert_equal(tools[0]["execution"], "/v1/abilities/cms/site-info/run")
+	assert_equal(tools[0]["abilityId"], "kujo.cms.site.inspect")
+	assert_equal(tools[0]["abilityVersion"], "1.0.0")
+	assert_equal(tools[0]["effects"][0]["kind"], "read")
+}
+
+test "ability definitions enforce the portable semantic contract" {
+	contract_schema := parse_json(read_file("schemas/ability.schema.json"))
+	definition := {
+		"schema": ABILITY_SCHEMA_ID,
+		"id": "kujo.cms.content.list",
+		"version": "1.0.0",
+		"title": "List content",
+		"description": "List a bounded page of CMS content.",
+		"input_schema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50}}, "additionalProperties": false},
+		"output_schema": {"type": "object"},
+		"effects": [{"kind": "read", "resource": "kujo.cms.content"}],
+		"idempotency": {"mode": "intrinsic"}
+	}
+	assert_equal(validate_ability_definition(definition)["ok"], true)
+	assert_equal(json_schema_validate(definition, contract_schema)["valid"], true)
+	definition["id"] = "content/list"
+	assert_equal(validate_ability_definition(definition)["code"], "invalid_ability_id")
+	definition["id"] = "kujo.cms.content.list"
+	definition["effects"] = [{"kind": "financial", "resource": "kujo.cms.content"}]
+	assert_equal(validate_ability_definition(definition)["code"], "invalid_ability_effect_kind")
+}
+
+test "ability invocation preflight enforces confirmation and schemas before handlers" {
+	plugin_write := {
+		"input_schema": {"type": "object", "required": ["status", "confirmed"], "properties": {"status": {"type": "string", "enum": ["read", "spam"]}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
+		"annotations": {"requires_confirmation": true}
+	}
+	assert_equal(validate_ability_invocation(plugin_write, {"status": "spam"})["code"], "confirmation_required")
+	assert_equal(validate_ability_invocation(plugin_write, {"status": "invalid", "confirmed": true})["code"], "ability_input_invalid")
+	assert_equal(validate_ability_invocation(plugin_write, {"status": "spam", "confirmed": true})["ok"], true)
+	assert_equal(validate_ability_value("not-an-object", {"type": "object"}, "output")["code"], "ability_output_invalid")
+}
+
+test "plugin ability descriptors reject unsafe bindings and unsupported schemas" {
+	descriptor := {"name": "contact.submissions.moderate", "description": "Moderate one contact submission.", "method": "PATCH", "path": "/v1/submissions/:id", "permission": "contact.manage"}
+	assert_equal(validate_plugin_ability_descriptor(descriptor)["ok"], true)
+	descriptor["method"] = "CONNECT"
+	assert_equal(validate_plugin_ability_descriptor(descriptor)["code"], "invalid_ability_method")
+	descriptor["method"] = "PATCH"
+	descriptor["path"] = "/../private"
+	assert_equal(validate_plugin_ability_descriptor(descriptor)["code"], "invalid_ability_path")
+	descriptor["path"] = "/v1/submissions/:id"
+	descriptor["input_schema"] = {"type": "object", "unknownKeyword": true}
+	assert_equal(validate_plugin_ability_descriptor(descriptor)["code"], "unsupported_ability_schema")
 }
 
 test "connector registry reports configuration without returning endpoint values" {

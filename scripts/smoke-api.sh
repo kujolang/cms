@@ -230,6 +230,27 @@ assert_status "401" "write auth required"
 request "POST" "/v1/content-types" '{"type_key":"smoke","label":"Smoke","singular_label":"Smoke","description":"Smoke type"}' "1"
 assert_status "201" "authorized write"
 
+request "GET" "/v1/abilities/definitions" "" "1"
+assert_status "200" "portable Ability definitions"
+assert_contains '"schema":"kujo.ability/v1"' "Ability definition schema"
+assert_contains '"id":"kujo.cms.content.list"' "canonical Ability identity"
+
+request "POST" "/v1/abilities/content/list/run" '{"input":{"unexpected":true}}' "1"
+assert_status "400" "Ability input schema enforced"
+assert_contains '"code":"ability_input_invalid"' "Ability input schema error"
+
+request "POST" "/v1/abilities/seo/update-entry/run" '{"input":{"entry_id":1,"changes":{}}}' "1"
+assert_status "409" "Ability mutation confirmation enforced"
+assert_contains '"code":"confirmation_required"' "Ability confirmation error"
+
+request "POST" "/v1/abilities/content/list/run" '{"input":{"limit":5}}' "1"
+assert_status "200" "Ability execution validates output"
+assert_contains '"ability":"content/list"' "Ability execution response"
+
+request "GET" "/v1/ai/mcp/tools" "" "1"
+assert_status "200" "MCP-ready Ability projection"
+assert_contains '"abilityId":"kujo.cms.content.list"' "MCP projection preserves canonical Ability identity"
+
 request "POST" "/v1/entries" '{"content_type_key":"smoke","title":"WebMCP Public","slug":"webmcp-public","status":"published","excerpt":"Published excerpt","body":"Published searchable body"}' "1"
 assert_status "201" "WebMCP published fixture"
 

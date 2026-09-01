@@ -1,6 +1,7 @@
 from backend.core.database import db_execute_safe, db_query_safe
 from backend.core.http import fail, guard_request, ok, write_audit
 from backend.core.utils import bool_or, dict_get_or, is_valid_slug_key
+from backend.modules.ability_contract import validate_plugin_ability_descriptor
 
 func failure(code, message, details) {
 	return {"ok": false, "code": code, "message": message, "details": details}
@@ -207,7 +208,11 @@ export validate_plugin_manifest := func(raw) {
 	events_result := validate_string_array(dict_get_or(raw, "events", []), "events", 100, 128, false); if events_result["ok"] == false { return events_result }
 	abilities := dict_get_or(raw, "abilities", [])
 	if type(abilities) != "array" || len(abilities) > 50 { return failure("invalid_abilities", "abilities must be an array with at most 50 descriptors", {}) }
-	for ability in abilities { if type(ability) != "dict" || len(keys(ability)) > 8 || len(to_json(ability)) > 8192 || contains_sensitive_keys(ability) || bounded_string(dict_get_or(ability, "name", ""), 3, 160) == false { return failure("invalid_ability", "ability descriptors must be bounded secret-free objects with a name", {}) } }
+	for ability in abilities {
+		if type(ability) != "dict" || len(keys(ability)) > 8 || len(to_json(ability)) > 8192 || contains_sensitive_keys(ability) { return failure("invalid_ability", "ability descriptors must be bounded secret-free objects", {}) }
+		ability_result := validate_plugin_ability_descriptor(ability)
+		if ability_result["ok"] == false { return failure(ability_result["code"], ability_result["message"], ability_result["details"]) }
+	}
 	connectors := dict_get_or(raw, "connectors", [])
 	if type(connectors) != "array" || len(connectors) > 20 { return failure("invalid_connectors", "connectors must be an array with at most 20 descriptors", {}) }
 	for connector_item in connectors { if type(connector_item) != "dict" || len(keys(connector_item)) > 8 || len(to_json(connector_item)) > 4096 || contains_sensitive_keys(connector_item) || bounded_string(dict_get_or(connector_item, "key", ""), 2, 80) == false || bounded_string(dict_get_or(connector_item, "label", ""), 2, 160) == false { return failure("invalid_connector", "connector descriptors must be bounded secret-free objects with a key and label", {}) } }

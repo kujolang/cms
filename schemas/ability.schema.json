@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kujolang.dev/schemas/ability/v1",
+  "title": "Kujo Ability Definition",
+  "description": "Portable semantic operation contract independent of handlers, policy, providers, and exposure protocols.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "version",
+    "description",
+    "input_schema",
+    "output_schema",
+    "effects",
+    "idempotency"
+  ],
+  "properties": {
+    "schema": {
+      "const": "kujo.ability/v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 240,
+      "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*){2,}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 160
+    },
+    "description": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 1000
+    },
+    "input_schema": {
+      "type": "object"
+    },
+    "output_schema": {
+      "type": "object"
+    },
+    "effects": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["kind", "resource"],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["read", "write", "delete", "external"]
+          },
+          "resource": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 240,
+            "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*){2,}$"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "idempotency": {
+      "type": "object",
+      "required": ["mode"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["intrinsic", "keyed", "none"]
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
