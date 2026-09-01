@@ -24,41 +24,41 @@ jobs:
       - name: Install Kujo runtime
         shell: bash
         run: |
+          set -euo pipefail
           cd "$RUNNER_TEMP"
           curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz
-          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz.sha256
-          sha256sum --check kujo-v1.2.0-linux-x64.tar.gz.sha256
+          echo "3f9d69779fef64c8f329c69301ac666cf74499ff083f1a5f25f729368b318fcb  kujo-v1.2.0-linux-x64.tar.gz" | sha256sum --check --strict
           mkdir -p "$RUNNER_TEMP/kujo-bin"
           tar -xzf kujo-v1.2.0-linux-x64.tar.gz -C "$RUNNER_TEMP/kujo-bin"
           chmod +x "$RUNNER_TEMP/kujo-bin/kujo"
+          "$RUNNER_TEMP/kujo-bin/kujo" --version
           echo "$RUNNER_TEMP/kujo-bin" >> "$GITHUB_PATH"
+
+      - name: Install pinned dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          kennel_dir="$RUNNER_TEMP/kennel"
+          git clone --filter=blob:none https://github.com/kujolang/kennel.git "$kennel_dir"
+          git -C "$kennel_dir" checkout --detach b5e0cf290aa2af7a90b637a7c3bdb4324ea4f66d
+          test "$(git -C "$kennel_dir" rev-parse HEAD)" = "b5e0cf290aa2af7a90b637a7c3bdb4324ea4f66d"
+          "$RUNNER_TEMP/kujo-bin/kujo" run "$kennel_dir/kennel.kujo" --interpreter -- validate --project-dir "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/kujo-bin/kujo" run "$kennel_dir/kennel.kujo" --interpreter -- install --project-dir "$GITHUB_WORKSPACE"
+          test -f kennel_packages/ability/ability.kujo
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
       - name: Resolve Kujo runtime
         id: kujo
         shell: bash
         run: |
           set -euo pipefail
-          if command -v kujo >/dev/null 2>&1; then
-            echo "path=$(command -v kujo)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [[ -d ../kujo && -f ../kujo/Cargo.toml ]]; then
-            cargo build --manifest-path ../kujo/Cargo.toml --bin kujo
-            echo "path=$(realpath ../kujo/target/debug/kujo)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "::error::Unable to locate Kujo runtime binary. Provide it in PATH as 'kujo' or include a sibling ../kujo workspace with Cargo.toml."
-          exit 1
+          kujo_path="$RUNNER_TEMP/kujo-bin/kujo"
+          test -x "$kujo_path"
+          echo "path=$kujo_path" >> "$GITHUB_OUTPUT"
 
       - name: Contract tests
         shell: bash
@@ -87,41 +87,41 @@ jobs:
       - name: Install Kujo runtime
         shell: bash
         run: |
+          set -euo pipefail
           cd "$RUNNER_TEMP"
           curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz
-          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz.sha256
-          sha256sum --check kujo-v1.2.0-linux-x64.tar.gz.sha256
+          echo "3f9d69779fef64c8f329c69301ac666cf74499ff083f1a5f25f729368b318fcb  kujo-v1.2.0-linux-x64.tar.gz" | sha256sum --check --strict
           mkdir -p "$RUNNER_TEMP/kujo-bin"
           tar -xzf kujo-v1.2.0-linux-x64.tar.gz -C "$RUNNER_TEMP/kujo-bin"
           chmod +x "$RUNNER_TEMP/kujo-bin/kujo"
+          "$RUNNER_TEMP/kujo-bin/kujo" --version
           echo "$RUNNER_TEMP/kujo-bin" >> "$GITHUB_PATH"
+
+      - name: Install pinned dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          kennel_dir="$RUNNER_TEMP/kennel"
+          git clone --filter=blob:none https://github.com/kujolang/kennel.git "$kennel_dir"
+          git -C "$kennel_dir" checkout --detach b5e0cf290aa2af7a90b637a7c3bdb4324ea4f66d
+          test "$(git -C "$kennel_dir" rev-parse HEAD)" = "b5e0cf290aa2af7a90b637a7c3bdb4324ea4f66d"
+          "$RUNNER_TEMP/kujo-bin/kujo" run "$kennel_dir/kennel.kujo" --interpreter -- validate --project-dir "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/kujo-bin/kujo" run "$kennel_dir/kennel.kujo" --interpreter -- install --project-dir "$GITHUB_WORKSPACE"
+          test -f kennel_packages/ability/ability.kujo
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '20'
 
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-
       - name: Resolve Kujo runtime
         id: kujo
         shell: bash
         run: |
           set -euo pipefail
-          if command -v kujo >/dev/null 2>&1; then
-            echo "path=$(command -v kujo)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [[ -d ../kujo && -f ../kujo/Cargo.toml ]]; then
-            cargo build --manifest-path ../kujo/Cargo.toml --bin kujo
-            echo "path=$(realpath ../kujo/target/debug/kujo)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "::error::Unable to locate Kujo runtime binary. Provide it in PATH as 'kujo' or include a sibling ../kujo workspace with Cargo.toml."
-          exit 1
+          kujo_path="$RUNNER_TEMP/kujo-bin/kujo"
+          test -x "$kujo_path"
+          echo "path=$kujo_path" >> "$GITHUB_OUTPUT"
 
       - name: Full release gate
         shell: bash
