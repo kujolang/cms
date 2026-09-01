@@ -118,6 +118,10 @@ test "abilities are discoverable, namespaced, schema-described, and MCP-ready" {
 	assert_true(to_bool(len(abilities) >= 6))
 	assert_equal(len(definitions), len(abilities))
 	for definition in definitions { assert_equal(validate_ability_definition(definition)["ok"], true) }
+	for ability in abilities {
+		assert_equal(len(ability["definition_digest"]), 64)
+		assert_equal(ability["definition"]["output_schema"]["additionalProperties"], false)
+	}
 	assert_true(to_bool(len(ability_categories()) >= 4))
 	seo_update := find_ability("seo", "update-entry")
 	assert_equal(type(seo_update), "dict")
@@ -129,6 +133,7 @@ test "abilities are discoverable, namespaced, schema-described, and MCP-ready" {
 	assert_equal(tools[0]["execution"], "/v1/abilities/cms/site-info/run")
 	assert_equal(tools[0]["abilityId"], "kujo.cms.site.inspect")
 	assert_equal(tools[0]["abilityVersion"], "1.0.0")
+	assert_equal(tools[0]["abilityDigest"], abilities[0]["definition_digest"])
 	assert_equal(tools[0]["effects"][0]["kind"], "read")
 }
 

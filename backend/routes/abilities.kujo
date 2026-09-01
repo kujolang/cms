@@ -1,10 +1,11 @@
 from backend.core.database import db_execute_safe, db_query_safe
 from backend.core.http import fail, guard_request, idempotency_complete, ok, parse_json_body, write_audit
 from backend.core.utils import dict_get_or
-from backend.modules.ability_contract import ABILITY_SCHEMA_ID, validate_ability_definition, validate_ability_invocation, validate_ability_value
+from backend.modules.ability_contract import ABILITY_SCHEMA_ID, validate_ability_definition, validate_ability_invocation, validate_ability_value, ability_definition_digest
 from backend.routes.entries import apply_seo_changes, normalize_seo_changes
 from backend.routes.extensions import extension_ai_registry, extension_plugin_runtime
 from backend.routes.plugins import validate_handler_url_policy
+from ability import create_ability_registry, register_ability_definition, register_ability_binding, register_ability_exposure, execute_ability
 
 export ability_categories := func() {
 	return [
@@ -82,6 +83,8 @@ export ability_registry := func() {
 	resolved := []
 	for ability in items {
 		ability["definition"] := core_ability_definition(ability)
+		digest_result := ability_definition_digest(ability["definition"])
+		ability["definition_digest"] := dict_get_or(digest_result, "digest", "")
 		resolved = push(resolved, ability)
 	}
 	return resolved
@@ -134,11 +137,12 @@ export resolved_ability_registry := func(ctx) {
 			"title": label, "description": description, "input_schema": input_schema, "output_schema": output_schema,
 			"effects": [{"kind": plugin_effect, "resource": plugin_resource}], "idempotency": {"mode": plugin_idempotency}
 		}
+		digest_result := ability_definition_digest(definition)
 		items = push(items, {
 			"name": namespace + "/" + external_name, "label": trim(to_string(dict_get_or(raw, "label", raw_name))),
 			"description": description,
 			"category": "plugin", "permission": trim(to_string(dict_get_or(raw, "permission", "admin.plugins"))),
-			"input_schema": input_schema, "output_schema": output_schema, "definition": definition,
+			"input_schema": input_schema, "output_schema": output_schema, "definition": definition, "definition_digest": dict_get_or(digest_result, "digest", ""),
 			"annotations": {"readonly": readonly, "destructive": false, "idempotent": false, "requires_confirmation": readonly == false},
 			"enabled": feature_state(ctx["db"], "ability", namespace + "/" + external_name, true), "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": true,
 			"external_execution": {"method": method, "path": trim(to_string(dict_get_or(raw, "path", ""))), "runtime": "plugin"}
@@ -233,8 +237,9 @@ export mcp_tool_descriptors := func() {
 			"outputSchema": ability["output_schema"],
 			"annotations": ability["annotations"],
 			"ability": ability["name"],
-			"abilityId": ability["definition"]["id"],
-			"abilityVersion": ability["definition"]["version"],
+				"abilityId": ability["definition"]["id"],
+				"abilityVersion": ability["definition"]["version"],
+				"abilityDigest": ability["definition_digest"],
 			"effects": ability["definition"]["effects"],
 			"execution": "/v1/abilities/" + parts[0] + "/" + parts[1] + "/run"
 		})
@@ -250,7 +255,7 @@ func resolved_mcp_tool_descriptors(ctx) {
 			tools = push(tools, {
 				"name": parts[0] + "__" + parts[1], "title": ability["label"], "description": ability["description"],
 				"inputSchema": ability["input_schema"], "outputSchema": ability["output_schema"], "annotations": ability["annotations"], "ability": ability["name"],
-				"abilityId": ability["definition"]["id"], "abilityVersion": ability["definition"]["version"], "effects": ability["definition"]["effects"],
+					"abilityId": ability["definition"]["id"], "abilityVersion": ability["definition"]["version"], "abilityDigest": ability["definition_digest"], "effects": ability["definition"]["effects"],
 				"execution": "/v1/abilities/" + parts[0] + "/" + parts[1] + "/run"
 			})
 		}
@@ -438,7 +443,7 @@ func plugin_runtime_request(ctx, plugin_key, method_value, path_value, input) {
 	}
 }
 
-func execute_ability(req, ctx, ability, input) {
+func execute_cms_ability_handler(req, ctx, ability, input) {
 	name := ability["name"]
 	if ability["source"] == "plugin" {
 		execution := ability["external_execution"]
@@ -486,6 +491,96 @@ func execute_ability(req, ctx, ability, input) {
 	return {"ok": false, "status": 501, "code": "not_implemented", "message": "Ability handler is not implemented"}
 }
 
+func cms_ability_runtime_registry(req, ctx, ability) {
+	registry := create_ability_registry()
+	step := register_ability_definition(registry, ability["definition"])
+	if step["ok"] == false { return step }
+	registry = step["registry"]
+	binding := {
+		"schema": "kujo.ability.binding/v1",
+		"ability_id": ability["definition"]["id"],
+		"ability_version": ability["definition"]["version"],
+		"handler_id": "kujo.cms." + regex_replace(ability["name"], "[^a-zA-Z0-9_.-]", "."),
+		"handler_version": to_string(dict_get_or(ctx["cfg"], "service_version", "1.0.0")),
+		"handler": func(input, runtime_context) { return execute_cms_ability_handler(req, ctx, ability, input) },
+		"result_mode": "kujo.result/v1",
+		"timeout_ms": 30000,
+		"metadata": {"source": ability["source"], "legacy_name": ability["name"]}
+	}
+	step = register_ability_binding(registry, binding)
+	if step["ok"] == false { return step }
+	registry = step["registry"]
+	exposure := {
+		"schema": "kujo.ability.exposure/v1",
+		"ability_id": ability["definition"]["id"],
+		"ability_version": ability["definition"]["version"],
+		"surface": "rest",
+		"name": ability["name"],
+		"enabled": ability["enabled"],
+		"public": false,
+		"metadata": {"path": "/v1/abilities/" + ability["name"] + "/run"}
+	}
+	step = register_ability_exposure(registry, exposure)
+	if step["ok"] == false { return step }
+	return {"ok": true, "registry": step["registry"], "definition_digest": dict_get_or(step, "digest", "")}
+}
+
+func cms_ability_invocation(req, ability, input) {
+	auth_context := dict_get_or(req, "auth_context", {})
+	request_id := to_string(dict_get_or(req, "request_id", ""))
+	if request_id == "" { request_id = substring(sha256(ability["definition"]["id"] + ":" + to_string(current_timestamp())), 0, 24) }
+	idempotency_context := dict_get_or(req, "idempotency_context", {})
+	return {
+		"schema": "kujo.ability.invocation/v1",
+		"invocation_id": "cms-" + request_id,
+		"ability_id": ability["definition"]["id"],
+		"ability_version": ability["definition"]["version"],
+		"definition_digest": "",
+		"input": input,
+		"principal": {
+			"type": "cms",
+			"id": to_string(dict_get_or(auth_context, "actor", "unknown")),
+			"tenant_id": "",
+			"claims": {"role_key": dict_get_or(auth_context, "role_key", ""), "permissions": dict_get_or(auth_context, "permissions", [])}
+		},
+		"request_id": request_id,
+		"trace_id": to_string(dict_get_or(req, "trace_id", request_id)),
+		"surface": "rest",
+		"idempotency_key": to_string(dict_get_or(idempotency_context, "scoped_key", "")),
+		"approval": {},
+		"metadata": {"legacy_name": ability["name"]}
+	}
+}
+
+func cms_ability_runtime_services(req, ctx, ability) {
+	return {
+		"clock_ms": func() { return current_timestamp() },
+		"id_factory": func(kind, invocation) { return kind + "-" + substring(sha256(kind + ":" + invocation["invocation_id"] + ":" + invocation["definition_digest"]), 0, 24) },
+		"policy": func(definition, invocation, exposure) {
+			return {"schema": "kujo.ability.policy-decision/v1", "decision_id": "cms-policy-" + substring(sha256(invocation["invocation_id"] + ":" + ability["permission"]), 0, 20), "outcome": "allow", "reason": "CMS request guard authorized the server-owned Ability permission.", "requirements": [], "policy_id": "kujo.cms.request-guard", "policy_version": "1.0.0"}
+		},
+		"audit_required": true,
+		"audit": func(phase, invocation, payload) {
+			action := "ability.preflight"; status_code := 202
+			if phase == "completed" { action = "ability.execute"; status_code = 200 }
+			_ = write_audit(ctx, req, action, status_code, "ability", ability["name"], {"ability_id": invocation["ability_id"], "ability_version": invocation["ability_version"], "definition_digest": invocation["definition_digest"], "trace_id": invocation["trace_id"], "phase": phase})
+			return {"ok": true, "written": true, "phase": phase}
+		},
+		"begin_idempotency": func(key_digest, request_digest, invocation) { return {"state": "started"} },
+		"complete_idempotency": func(key_digest, request_digest, receipt) {
+			response_payload := {"ok": true, "data": {"ability": ability["name"], "result": receipt["result"], "receipt": receipt}}
+			completion := idempotency_complete(req, ctx, 200, response_payload)
+			return {"ok": completion["ok"]}
+		}
+	}
+}
+
+func run_cms_ability_through_runtime(req, ctx, ability, input) {
+	registry_result := cms_ability_runtime_registry(req, ctx, ability)
+	if registry_result["ok"] == false { return registry_result }
+	return execute_ability(registry_result["registry"], cms_ability_invocation(req, ability, input), cms_ability_runtime_services(req, ctx, ability))
+}
+
 export register_ability_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/abilities/categories", func(req) {
 		guard := guard_request(req, ctx, "cms.read")
@@ -501,16 +596,18 @@ export register_ability_routes := func(server, ctx) {
 		for ability in resolved_ability_registry(ctx) { if category == "" || ability["category"] == category { items = push(items, ability) } }
 		return ok(ctx["cfg"], {"items": items, "count": len(items), "categories": ability_categories()})
 	})
-	server = server.route("GET", "/v1/abilities/definitions", func(req) {
+		server = server.route("GET", "/v1/abilities/definitions", func(req) {
 		guard := guard_request(req, ctx, "cms.read")
 		if guard["ok"] == false { return guard["response"] }
 		definitions := []
+		digests := {}
 		for ability in resolved_ability_registry(ctx) {
 			definition_result := validate_ability_definition(ability["definition"])
 			if definition_result["ok"] == false { return fail(ctx["cfg"], 500, "invalid_ability_definition", "Registered Ability definition is invalid", {"ability": ability["name"], "reason": definition_result["code"]}) }
 			definitions = push(definitions, ability["definition"])
+			digests[ability["definition"]["id"] + "@" + ability["definition"]["version"]] := ability["definition_digest"]
 		}
-		return ok(ctx["cfg"], {"schema": ABILITY_SCHEMA_ID, "items": definitions, "count": len(definitions)})
+		return ok(ctx["cfg"], {"schema": ABILITY_SCHEMA_ID, "items": definitions, "digests": digests, "count": len(definitions)})
 	})
 	server = server.route("GET", "/v1/abilities/:namespace/:ability", func(req) {
 		params := dict_get_or(req, "params", {})
@@ -537,14 +634,22 @@ export register_ability_routes := func(server, ctx) {
 			if input_result["code"] == "confirmation_required" { input_status = 409 }
 			return fail(ctx["cfg"], input_status, input_result["code"], input_result["message"], input_result["details"])
 		}
-		result := execute_ability(req, ctx, ability, input)
-		if result["ok"] == false { return fail(ctx["cfg"], result["status"], result["code"], result["message"], {}) }
-		output_result := validate_ability_value(result["result"], ability["output_schema"], "output")
-		if output_result["ok"] == false { return fail(ctx["cfg"], 502, output_result["code"], output_result["message"], output_result["details"]) }
-		_ = write_audit(ctx, req, "ability.execute", 200, "ability", ability["name"], {"readonly": ability["annotations"]["readonly"], "confirmed": dict_get_or(input, "confirmed", false)})
-		response_payload := {"ok": true, "data": {"ability": ability["name"], "result": result["result"]}}
-		_ = idempotency_complete(req, ctx, 200, response_payload)
-		return ok(ctx["cfg"], response_payload["data"])
+		runtime_result := run_cms_ability_through_runtime(req, ctx, ability, input)
+		if has_key(runtime_result, "receipt") == 0 { return fail(ctx["cfg"], 500, dict_get_or(runtime_result, "code", "ability_runtime_failed"), dict_get_or(runtime_result, "message", "Ability runtime failed"), dict_get_or(runtime_result, "details", {})) }
+		receipt := runtime_result["receipt"]
+		if receipt["status"] != "succeeded" {
+			error_value := dict_get_or(receipt, "error", {})
+			error_details := dict_get_or(error_value, "details", {})
+			status_code := to_int(dict_get_or(error_details, "http_status", 500))
+			if receipt["status"] == "rejected" { status_code = 403 }
+			if receipt["status"] == "approval_required" { status_code = 409 }
+			if receipt["status"] == "timed_out" { status_code = 504 }
+			if receipt["status"] == "cancelled" { status_code = 409 }
+			return fail(ctx["cfg"], status_code, dict_get_or(error_value, "code", "ability_execution_failed"), dict_get_or(error_value, "message", "Ability execution failed"), {"receipt": receipt})
+		}
+		response_data := {"ability": ability["name"], "result": receipt["result"], "receipt": receipt}
+		if ability["definition"]["idempotency"]["mode"] != "keyed" { _ = idempotency_complete(req, ctx, 200, {"ok": true, "data": response_data}) }
+		return ok(ctx["cfg"], response_data)
 	})
 	server = server.route("PATCH", "/v1/abilities/:namespace/:ability", func(req) {
 		guard := guard_request(req, ctx, "admin.settings")

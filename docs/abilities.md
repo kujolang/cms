@@ -12,6 +12,7 @@ CMS Abilities expose bounded semantic operations without making HTTP, MCP, or We
 Each resolved CMS Ability has separate concerns:
 
 - `definition` is the portable `kujo.ability/v1` semantic contract;
+- `definition_digest` is the canonical SHA-256 identity of that exact definition;
 - the CMS descriptor keeps legacy route name, category, permission, enablement, source, and annotations;
 - core or plugin bindings implement execution;
 - CMS authentication, permissions, confirmation, tenancy, rate limits, and audit remain application policy;
@@ -44,11 +45,24 @@ All four routes require an authenticated principal with `cms.read` or the more s
 3. apply request rate limiting and supported idempotency handling;
 4. require `confirmed: true` for every descriptor marked `requires_confirmation`, including plugin Abilities;
 5. validate input against the advertised schema;
-6. invoke the core or plugin binding;
-7. validate output against the advertised schema;
-8. write the CMS audit event and complete any idempotency receipt.
+6. build the exact definition, handler binding, and REST exposure in the shared
+   Ability registry;
+7. execute through the canonical Ability runtime;
+8. validate output against the advertised closed schema;
+9. write preflight and completion audit evidence; and
+10. return and, for keyed writes, atomically persist the normalized Ability receipt.
 
-Input schema violations return `ability_input_invalid`. Handler output contract violations fail closed with `ability_output_invalid` and HTTP 502. Unsupported schemas or invalid registered definitions fail rather than becoming silently advisory metadata.
+Input schema violations return `ability_input_invalid`. Handler output contract
+violations fail closed with `ability_output_invalid` and HTTP 502. Unsupported
+schemas or invalid registered definitions fail rather than becoming silently
+advisory metadata. Successful responses preserve the legacy `ability` and
+`result` fields and add a normalized `receipt` containing the canonical ID,
+exact version, definition digest, handler version, principal, request ID,
+trace ID, policy decision, timing, audit state, and idempotency state.
+
+Abilities whose definition declares `idempotency.mode = keyed` require an
+`Idempotency-Key` header. CMS creates the durable pending record before the
+handler runs and commits the normalized receipt on completion.
 
 The current compatibility confirmation is a boolean inside `input`. It is enforced generically, but it is not a substitute for a future request-bound approval token. Product policy remains responsible for deciding when approval is required.
 

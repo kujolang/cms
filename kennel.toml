@@ -4,7 +4,7 @@ command = ""
 output = "dist"
 
 [dependencies.ability]
-commit = "94453dfdf74e8b81c009ef3adf8a429876cfaea9"
+commit = "8f82496f48ac01fb93d6e2a6eb9e3c9d01f7fdaa"
 source = "github:kujolang/ability"
 
 [dev-dependencies]
@@ -30,8 +30,8 @@ repository = "https://github.com/kujolang/cms"
 version = "1.1.0"
 
 [package.exports]
-runtime = "backend/runtime/main.kujo"
 ability_contract = "backend/modules/ability_contract.kujo"
+runtime = "backend/runtime/main.kujo"
 
 [package.metadata]
 
@@ -54,8 +54,8 @@ mirrors = []
 publish = ""
 
 [scripts]
-test = '"$KUJO_BIN" test-run tests/cms_contract_tests.kujo -v'
 release-gate = 'CMS_GATE_RUN_PERF=false KUJO_BIN="$KUJO_BIN" bash scripts/run-release-gate.sh'
+test = '"$KUJO_BIN" test-run tests/cms_contract_tests.kujo -v'
 
 [trust]
 checksum = ""
