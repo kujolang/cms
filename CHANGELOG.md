@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Pin the production-stable Ability 1.0.0 runtime with validated replay and
+  terminal idempotency hardening.
 - Replace boolean Ability confirmation as a security boundary with durable,
   short-lived, request-bound, one-time approvals; bind approvals to canonical
   invocation digests and tenant-aware principals; and migrate approval storage
