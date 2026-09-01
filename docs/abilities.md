@@ -1,5 +1,10 @@
 # CMS Abilities
 
+The portable definition contract is maintained by
+[`kujolang/ability`](https://github.com/kujolang/ability). CMS owns the product
+bindings, permissions, confirmation policy, REST/CLI exposure, and audit data;
+the shared package does not.
+
 CMS Abilities expose bounded semantic operations without making HTTP, MCP, or WebMCP the source of their meaning.
 
 ## Contract layers

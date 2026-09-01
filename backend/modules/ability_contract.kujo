@@ -9,8 +9,7 @@ func failure(code, message, details) {
 func valid_identifier_segment(value) {
 	segment := trim(to_string(value))
 	if len(segment) < 1 || len(segment) > 64 { return false }
-	if starts_with(segment, "-") || starts_with(segment, "_") { return false }
-	return regex_replace(segment, "[^a-z0-9_-]", "") == segment
+	return regex_replace(segment, "^[a-z][a-z0-9_-]*$", "") == ""
 }
 
 export valid_ability_id := func(value) {
