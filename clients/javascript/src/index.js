@@ -45,6 +45,7 @@ export class KujoCmsClient {
   ingestExtension(filename, activate = false) { return this.request("POST", "/v1/extensions/packages/ingest", { filename, activate }); }
   uploadExtension(dataBase64, activate = false) { return this.request("POST", "/v1/extensions/packages/upload", { data_base64: dataBase64, activate }); }
   abilities(category = "") { return this.request("GET", `/v1/abilities${category ? `?category=${encodeURIComponent(category)}` : ""}`); }
+  abilityDefinitions() { return this.request("GET", "/v1/abilities/definitions"); }
   runAbility(name, input = {}) { const [namespace, ability] = String(name).split("/"); return this.request("POST", `/v1/abilities/${encodeURIComponent(namespace)}/${encodeURIComponent(ability)}/run`, { input }); }
   setAbility(name, enabled) { const [namespace, ability] = String(name).split("/"); return this.request("PATCH", `/v1/abilities/${encodeURIComponent(namespace)}/${encodeURIComponent(ability)}`, { enabled }); }
   connectors() { return this.request("GET", "/v1/ai/connectors"); }

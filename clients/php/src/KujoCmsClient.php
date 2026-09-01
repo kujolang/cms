@@ -45,6 +45,7 @@ final class KujoCmsClient
     public function extensionNavigation(): mixed { return $this->request('GET', '/v1/extensions/navigation'); }
     public function ingestExtension(string $filename, bool $activate = false): mixed { return $this->request('POST', '/v1/extensions/packages/ingest', compact('filename', 'activate')); }
     public function uploadExtension(string $dataBase64, bool $activate = false): mixed { return $this->request('POST', '/v1/extensions/packages/upload', ['data_base64' => $dataBase64, 'activate' => $activate]); }
+    public function abilityDefinitions(): mixed { return $this->request('GET', '/v1/abilities/definitions'); }
     public function runAbility(string $name, array $input = []): mixed { [$namespace, $ability] = explode('/', $name, 2); return $this->request('POST', "/v1/abilities/{$namespace}/{$ability}/run", compact('input')); }
     public function connectorHealth(string $key): mixed { return $this->request('POST', '/v1/ai/connectors/'.rawurlencode($key).'/health', []); }
     public function ingestMedia(string $filename, string $altText = ''): mixed { return $this->request('POST', '/v1/media/ingest', ['filename' => $filename, 'alt_text' => $altText]); }

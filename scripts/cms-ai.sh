@@ -17,6 +17,7 @@ usage() {
     '  connector:disable <key>             Deactivate a connector.' \
     '  connector:health <key>              Probe a configured connector health endpoint.' \
     '  categories                          List ability categories.' \
+    '  definitions                         List portable kujo.ability/v1 definitions.' \
     '  list [category]                     List abilities, optionally by category.' \
     '  get <namespace/name>                Inspect one ability.' \
     '  run <namespace/name> [input-json]   Execute an ability with a JSON input object.' \
@@ -76,6 +77,7 @@ case "${command}" in
     request POST "/v1/ai/connectors/${key}/health" '{}'
     ;;
   categories) require_token; request GET '/v1/abilities/categories' ;;
+  definitions) require_token; request GET '/v1/abilities/definitions' ;;
   list)
     require_token
     category="${2:-}"

@@ -37,7 +37,7 @@ The current codebase is intentionally backend-first. Active source lives under `
 - Tenants and workspaces with isolation controls
 - Public delivery and discovery routes (`/.well-known/security.txt`, `/.well-known/llms.txt`, `/robots.txt`, `/sitemap.xml`, `/sitemap-index.xml`, `/rss.xml`, `/health`, `/v1`, `/v1/contract`, `/v1/openapi.json`)
 - Scheduler, revisions, rollback, and entry locking
-- A namespaced Abilities API with JSON Schema contracts, permission-scoped execution, confirmation-gated mutations, audit receipts, MCP-ready tool descriptors, and a secret-safe Kujo connector registry
+- A namespaced Abilities API with validated `kujo.ability/v1` semantic contracts, permission-scoped execution, generic confirmation-gated mutations, enforced input/output schemas, idempotency receipts, MCP-ready tool descriptors, and a secret-safe Kujo connector registry
 - Built-in WebMCP discovery and browser tools for site information, search, content listing, and exact published-record retrieval
 
 ## Showcase Positioning
@@ -183,10 +183,10 @@ Portable extension workflows:
 
 AI and agent interoperability:
 
-- `GET /v1/abilities` and `GET /v1/abilities/categories` provide authenticated discovery; `GET|PATCH /v1/abilities/:namespace/:ability` reads or administratively enables/disables one contract.
-- `POST /v1/abilities/:namespace/:ability/run` executes the registered handler through its declared permission. Mutating abilities require `confirmed: true` inside the input and write an audit event.
+- `GET /v1/abilities`, `GET /v1/abilities/definitions`, and `GET /v1/abilities/categories` provide authenticated discovery; portable definitions use the strict `kujo.ability/v1` contract documented in [`docs/abilities.md`](docs/abilities.md). `GET|PATCH /v1/abilities/:namespace/:ability` reads or administratively enables/disables one CMS descriptor.
+- `POST /v1/abilities/:namespace/:ability/run` executes the registered handler through its declared permission. Mutating core and plugin abilities require `confirmed: true` inside the input; input and output schemas are enforced before success is returned; successful calls write an audit event and complete supported idempotency receipts.
 - `GET /v1/ai/connectors` reports Kujo integration availability and configuration status without returning endpoint values or secrets; `PATCH /v1/ai/connectors/:key` activates or deactivates a configured connector.
-- Active plugins can contribute secret-free ability and connector descriptors to those same discovery APIs. CMS can enable or disable each contribution, execute abilities through the plugin's configured service runtime with the same permission and confirmation boundary, probe connector health, and publish enabled abilities as MCP-ready tools. Runtime bearer credentials stay in server environment variables and never enter package manifests or browser responses.
+- Active plugins can contribute strictly validated, secret-free ability and connector descriptors to those same discovery APIs. CMS converts plugin descriptors into portable Ability definitions while keeping method/path and permission in CMS-owned binding and policy layers. CMS can enable or disable each contribution, execute abilities through the plugin's configured service runtime with the same permission, confirmation, and schema boundaries, probe connector health, and publish enabled abilities as MCP-ready tools. Runtime bearer credentials stay in server environment variables and never enter package manifests or browser responses.
 - `GET /v1/ai/mcp/tools` translates the same registry into MCP-ready tool descriptors, keeping REST, CLI, and agent surfaces on one source of truth.
 - `bash scripts/cms-ai.sh help` exposes status, connector, discovery, enable/disable, inspection, execution, and MCP descriptor commands for terminal agents. Disabled abilities cannot execute and are omitted from MCP descriptors.
 
