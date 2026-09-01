@@ -4,7 +4,7 @@ command = ""
 output = "dist"
 
 [dependencies.ability]
-commit = "8f82496f48ac01fb93d6e2a6eb9e3c9d01f7fdaa"
+commit = "db5895a7e2117f364b54acd87283f9d45dec9862"
 source = "github:kujolang/ability"
 
 [dev-dependencies]
