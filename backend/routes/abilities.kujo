@@ -45,37 +45,37 @@ export ability_registry := func() {
 		{
 			"name": "cms/site-info", "label": "Get site information", "description": "Return CMS identity, version, site URL, and aggregate resource counts.", "category": "cms", "permission": "cms.read",
 			"input_schema": {"type": "object", "additionalProperties": false},
-			"output_schema": {"type": "object"},
+			"output_schema": {"type": "object", "required": ["service", "version", "site_url", "counts"], "properties": {"service": {"type": "string"}, "version": {"type": "string"}, "site_url": {"type": "string"}, "counts": {"type": "object"}}, "additionalProperties": false},
 			"annotations": {"readonly": true, "destructive": false, "idempotent": true, "requires_confirmation": false}
 		},
 		{
 			"name": "content/list", "label": "List content", "description": "Search a bounded page of content without exposing arbitrary SQL or filesystem access.", "category": "content", "permission": "cms.read",
 			"input_schema": {"type": "object", "properties": {"query": {"type": "string", "maxLength": 200}, "status": {"type": "string", "maxLength": 40}, "content_type": {"type": "string", "maxLength": 80}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}}, "additionalProperties": false},
-			"output_schema": {"type": "object"},
+			"output_schema": {"type": "object", "required": ["items", "count", "limit"], "properties": {"items": {"type": "array", "items": {"type": "object"}}, "count": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}}, "additionalProperties": false},
 			"annotations": {"readonly": true, "destructive": false, "idempotent": true, "requires_confirmation": false}
 		},
 		{
 			"name": "seo/audit-summary", "label": "Get SEO audit summary", "description": "Return aggregate SEO coverage and the highest-priority entries needing work.", "category": "seo", "permission": "cms.read",
 			"input_schema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50}}, "additionalProperties": false},
-			"output_schema": {"type": "object"},
+			"output_schema": {"type": "object", "required": ["summary", "priority_items", "limit"], "properties": {"summary": {"type": "object"}, "priority_items": {"type": "array", "items": {"type": "object"}}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}}, "additionalProperties": false},
 			"annotations": {"readonly": true, "destructive": false, "idempotent": true, "requires_confirmation": false}
 		},
 		{
 			"name": "seo/update-entry", "label": "Update entry SEO", "description": "Apply validated SEO metadata to one unlocked entry.", "category": "seo", "permission": "cms.write",
 			"input_schema": {"type": "object", "required": ["entry_id", "changes", "confirmed"], "properties": {"entry_id": {"type": "integer", "minimum": 1}, "changes": {"type": "object"}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
-			"output_schema": {"type": "object"},
+			"output_schema": {"type": "object", "required": ["ok", "entry_id", "seo"], "properties": {"ok": {"type": "boolean", "const": true}, "entry_id": {"type": "integer", "minimum": 1}, "seo": {"type": "object"}}, "additionalProperties": false},
 			"annotations": {"readonly": false, "destructive": false, "idempotent": true, "requires_confirmation": true}
 		},
 		{
 			"name": "seo/bulk-update", "label": "Bulk update entry SEO", "description": "Apply the same validated SEO metadata to as many as 200 selected entries.", "category": "seo", "permission": "cms.write",
 			"input_schema": {"type": "object", "required": ["entry_ids", "changes", "confirmed"], "properties": {"entry_ids": {"type": "array", "minItems": 1, "maxItems": 200, "items": {"type": "integer", "minimum": 1}}, "changes": {"type": "object"}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
-			"output_schema": {"type": "object"},
+			"output_schema": {"type": "object", "required": ["updated_ids", "updated_count", "errors"], "properties": {"updated_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}}, "updated_count": {"type": "integer", "minimum": 0}, "errors": {"type": "array", "items": {"type": "object"}}}, "additionalProperties": false},
 			"annotations": {"readonly": false, "destructive": false, "idempotent": true, "requires_confirmation": true}
 		},
 		{
 			"name": "ai/integration-status", "label": "Get AI integration status", "description": "Return the installed Kujo integration surface without exposing connector secrets.", "category": "ai", "permission": "admin.settings",
 			"input_schema": {"type": "object", "additionalProperties": false},
-			"output_schema": {"type": "object"},
+			"output_schema": {"type": "object", "required": ["connectors", "configured_count", "ability_count", "mcp_tool_count", "secrets_exposed"], "properties": {"connectors": {"type": "array", "items": {"type": "object"}}, "configured_count": {"type": "integer", "minimum": 0}, "ability_count": {"type": "integer", "minimum": 0}, "mcp_tool_count": {"type": "integer", "minimum": 0}, "secrets_exposed": {"type": "boolean", "const": false}}, "additionalProperties": false},
 			"annotations": {"readonly": true, "destructive": false, "idempotent": true, "requires_confirmation": false}
 		}
 	]
