@@ -1,0 +1,63 @@
+[build]
+artifacts = []
+command = ""
+output = "dist"
+
+[dependencies.ability]
+commit = "94453dfdf74e8b81c009ef3adf8a429876cfaea9"
+source = "github:kujolang/ability"
+
+[dev-dependencies]
+
+[kujo]
+entry = "backend/runtime/main.kujo"
+excludes = [".git", "kennel_packages", "dist", "build", "node_modules"]
+includes = ["README.md", "backend", "docs", "examples", "schemas", "scripts", "tests"]
+minimum_version = "0.1.0"
+sources = ["backend", "."]
+
+[package]
+authors = ["Kujolang <contact@kujolang.ai>"]
+categories = ["content-management", "developer-tools"]
+description = "Server-first Kujo content management showcase and API."
+documentation = "https://github.com/kujolang/cms/blob/main/README.md"
+homepage = "https://github.com/kujolang/cms"
+keywords = ["kujo", "cms", "content", "api", "abilities"]
+license = "MIT"
+name = "cms"
+readme = "README.md"
+repository = "https://github.com/kujolang/cms"
+version = "1.1.0"
+
+[package.exports]
+runtime = "backend/runtime/main.kujo"
+ability_contract = "backend/modules/ability_contract.kujo"
+
+[package.metadata]
+
+[package.status]
+notes = "Production-oriented showcase; deployment governance and infrastructure controls remain operator responsibilities."
+public_api = true
+stability = "stable"
+stage = "production"
+
+[policy.resolution]
+semver_ranges = false
+
+[policy.source]
+allow_mutable_refs = false
+strict_mutable_refs = false
+
+[registry]
+index = ""
+mirrors = []
+publish = ""
+
+[scripts]
+test = '"$KUJO_BIN" test-run tests/cms_contract_tests.kujo -v'
+release-gate = 'CMS_GATE_RUN_PERF=false KUJO_BIN="$KUJO_BIN" bash scripts/run-release-gate.sh'
+
+[trust]
+checksum = ""
+signature = ""
+signing_key = ""

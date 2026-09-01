@@ -17,7 +17,12 @@ Each resolved CMS Ability has separate concerns:
 - CMS authentication, permissions, confirmation, tenancy, rate limits, and audit remain application policy;
 - REST and MCP-ready records are explicit exposure projections.
 
-The canonical JSON Schema is [`schemas/ability.schema.json`](../schemas/ability.schema.json). A definition requires a dotted ID, semantic version, bounded description, input/output schemas, one or more semantic effects, and an idempotency mode.
+The canonical JSON Schema and runtime validators are installed from the exact
+Ability commit recorded in [`kennel.lock`](../kennel.lock). CMS imports the
+package through `from ability import ...`; it no longer maintains a copied
+contract. A definition requires a dotted ID, semantic version, bounded
+description, input/output schemas, one or more semantic effects, and an
+idempotency mode.
 
 Effect kinds are intentionally limited to `read`, `write`, `delete`, and `external`. Idempotency modes are `intrinsic`, `keyed`, and `none`. Permissions, roles, credentials, handlers, URLs, providers, timeouts, approvals, and protocol names do not belong to the portable definition.
 

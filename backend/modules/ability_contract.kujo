@@ -1,6 +1,12 @@
 from backend.core.utils import dict_get_or
+from ability import ABILITY_SCHEMA_ID, valid_ability_id, valid_ability_version, validate_ability_definition, validate_ability_value, ability_definition_digest
 
-export ABILITY_SCHEMA_ID := "kujo.ability/v1"
+export ABILITY_SCHEMA_ID := ABILITY_SCHEMA_ID
+export valid_ability_id := valid_ability_id
+export valid_ability_version := valid_ability_version
+export validate_ability_definition := validate_ability_definition
+export validate_ability_value := validate_ability_value
+export ability_definition_digest := ability_definition_digest
 
 func failure(code, message, details) {
 	return {"ok": false, "code": code, "message": message, "details": details}
@@ -12,27 +18,6 @@ func valid_identifier_segment(value) {
 	return regex_replace(segment, "^[a-z][a-z0-9_-]*$", "") == ""
 }
 
-export valid_ability_id := func(value) {
-	raw := trim(to_string(value))
-	if raw == "" || raw != to_lower(raw) || len(raw) > 240 { return false }
-	parts := split(raw, ".")
-	if len(parts) < 3 { return false }
-	for part in parts {
-		if valid_identifier_segment(part) == false { return false }
-	}
-	return true
-}
-
-export valid_ability_version := func(value) {
-	raw := trim(to_string(value))
-	parts := split(raw, ".")
-	if len(parts) != 3 { return false }
-	for part in parts {
-		if part == "" || regex_replace(part, "[^0-9]", "") != part { return false }
-	}
-	return true
-}
-
 func schema_is_supported(schema, field_name) {
 	if type(schema) != "dict" { return failure("invalid_ability_schema", field_name + " must be an object", {"field": field_name}) }
 	if len(to_json(schema)) > 65536 { return failure("invalid_ability_schema", field_name + " exceeds 64 KiB", {"field": field_name}) }
@@ -41,53 +26,6 @@ func schema_is_supported(schema, field_name) {
 	try { report = json_schema_validate({}, schema) } except e { validation_error = e }
 	if type(validation_error) != "null" { return failure("unsupported_ability_schema", field_name + " uses an unsupported JSON Schema contract", {"field": field_name}) }
 	if type(report) != "dict" || type(dict_get_or(report, "valid", null)) != "bool" { return failure("invalid_ability_schema", field_name + " could not be validated", {"field": field_name}) }
-	return {"ok": true}
-}
-
-export validate_ability_definition := func(definition) {
-	if type(definition) != "dict" { return failure("invalid_ability_definition", "Ability definition must be an object", {}) }
-	allowed := ["schema", "id", "version", "title", "description", "input_schema", "output_schema", "effects", "idempotency"]
-	for key in keys(definition) {
-		known := false
-		for allowed_key in allowed { if key == allowed_key { known = true } }
-		if known == false { return failure("unknown_ability_field", "Ability definition contains an unsupported field", {"field": key}) }
-	}
-	if trim(to_string(dict_get_or(definition, "schema", ""))) != ABILITY_SCHEMA_ID { return failure("invalid_ability_schema_id", "schema must be " + ABILITY_SCHEMA_ID, {}) }
-	if valid_ability_id(dict_get_or(definition, "id", "")) == false { return failure("invalid_ability_id", "id must be a lowercase dotted identifier with at least three segments", {}) }
-	if valid_ability_version(dict_get_or(definition, "version", "")) == false { return failure("invalid_ability_version", "version must be numeric major.minor.patch text", {}) }
-	description := trim(to_string(dict_get_or(definition, "description", "")))
-	if len(description) < 3 || len(description) > 1000 { return failure("invalid_ability_description", "description must contain 3 to 1000 characters", {}) }
-	title := trim(to_string(dict_get_or(definition, "title", "")))
-	if title != "" && len(title) > 160 { return failure("invalid_ability_title", "title must contain at most 160 characters", {}) }
-	input_result := schema_is_supported(dict_get_or(definition, "input_schema", null), "input_schema")
-	if input_result["ok"] == false { return input_result }
-	output_result := schema_is_supported(dict_get_or(definition, "output_schema", null), "output_schema")
-	if output_result["ok"] == false { return output_result }
-	effects := dict_get_or(definition, "effects", [])
-	if type(effects) != "array" || len(effects) < 1 || len(effects) > 16 { return failure("invalid_ability_effects", "effects must contain 1 to 16 declarations", {}) }
-	for effect in effects {
-		if type(effect) != "dict" { return failure("invalid_ability_effect", "Each effect must be an object", {}) }
-		for effect_key in keys(effect) { if effect_key != "kind" && effect_key != "resource" { return failure("unknown_ability_effect_field", "Effect contains an unsupported field", {"field": effect_key}) } }
-		kind := trim(to_string(dict_get_or(effect, "kind", "")))
-		if kind != "read" && kind != "write" && kind != "delete" && kind != "external" { return failure("invalid_ability_effect_kind", "Effect kind must be read, write, delete, or external", {"kind": kind}) }
-		if valid_ability_id(dict_get_or(effect, "resource", "")) == false { return failure("invalid_ability_effect_resource", "Effect resource must be a lowercase dotted identifier", {}) }
-	}
-	idempotency := dict_get_or(definition, "idempotency", {})
-	if type(idempotency) != "dict" { return failure("invalid_ability_idempotency", "idempotency must be an object", {}) }
-	for idempotency_key in keys(idempotency) { if idempotency_key != "mode" { return failure("unknown_ability_idempotency_field", "Idempotency contains an unsupported field", {"field": idempotency_key}) } }
-	mode := trim(to_string(dict_get_or(idempotency, "mode", "")))
-	if mode != "intrinsic" && mode != "keyed" && mode != "none" { return failure("invalid_ability_idempotency_mode", "idempotency.mode must be intrinsic, keyed, or none", {}) }
-	return {"ok": true, "definition": definition}
-}
-
-export validate_ability_value := func(value, schema, value_kind) {
-	schema_result := schema_is_supported(schema, value_kind + "_schema")
-	if schema_result["ok"] == false { return schema_result }
-	report := null
-	validation_error := null
-	try { report = json_schema_validate(value, schema) } except e { validation_error = e }
-	if type(validation_error) != "null" { return failure("ability_" + value_kind + "_schema_error", "Ability " + value_kind + " schema could not be evaluated", {}) }
-	if dict_get_or(report, "valid", false) != true { return failure("ability_" + value_kind + "_invalid", "Ability " + value_kind + " does not satisfy its schema", {"errors": dict_get_or(report, "errors", [])}) }
 	return {"ok": true}
 }
 
