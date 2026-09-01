@@ -4,7 +4,7 @@ command = ""
 output = "dist"
 
 [dependencies.ability]
-commit = "c7665e056e7893bfd3db7e5a408df362cae804b8"
+commit = "e74ed82bbf4133381c9717f0802b9a964f37a6b2"
 source = "github:kujolang/ability"
 
 [dev-dependencies]
@@ -13,7 +13,7 @@ source = "github:kujolang/ability"
 entry = "backend/runtime/main.kujo"
 excludes = [".git", "kennel_packages", "dist", "build", "node_modules"]
 includes = ["README.md", "backend", "docs", "examples", "schemas", "scripts", "tests"]
-minimum_version = "0.1.0"
+minimum_version = "1.2.0"
 sources = ["backend", "."]
 
 [package]
