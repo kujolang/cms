@@ -29,18 +29,8 @@ func schema_is_supported(schema, field_name) {
 	return {"ok": true}
 }
 
-export validate_ability_confirmation := func(ability, input) {
-	annotations := dict_get_or(ability, "annotations", {})
-	if dict_get_or(annotations, "requires_confirmation", false) == true && dict_get_or(input, "confirmed", false) != true {
-		return failure("confirmation_required", "This ability requires confirmed=true", {})
-	}
-	return {"ok": true}
-}
-
 export validate_ability_invocation := func(ability, input) {
 	if type(input) != "dict" { return failure("ability_input_invalid", "Ability input must be an object", {}) }
-	confirmation_result := validate_ability_confirmation(ability, input)
-	if confirmation_result["ok"] == false { return confirmation_result }
 	return validate_ability_value(input, dict_get_or(ability, "input_schema", null), "input")
 }
 

@@ -159,14 +159,14 @@ test "ability definitions enforce the portable semantic contract" {
 	assert_equal(validate_ability_definition(definition)["code"], "invalid_ability_effect_kind")
 }
 
-test "ability invocation preflight enforces confirmation and schemas before handlers" {
+test "ability invocation preflight enforces schemas while approval remains runtime policy" {
 	plugin_write := {
-		"input_schema": {"type": "object", "required": ["status", "confirmed"], "properties": {"status": {"type": "string", "enum": ["read", "spam"]}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
+		"input_schema": {"type": "object", "required": ["status"], "properties": {"status": {"type": "string", "enum": ["read", "spam"]}}, "additionalProperties": false},
 		"annotations": {"requires_confirmation": true}
 	}
-	assert_equal(validate_ability_invocation(plugin_write, {"status": "spam"})["code"], "confirmation_required")
-	assert_equal(validate_ability_invocation(plugin_write, {"status": "invalid", "confirmed": true})["code"], "ability_input_invalid")
-	assert_equal(validate_ability_invocation(plugin_write, {"status": "spam", "confirmed": true})["ok"], true)
+	assert_equal(validate_ability_invocation(plugin_write, {})["code"], "ability_input_invalid")
+	assert_equal(validate_ability_invocation(plugin_write, {"status": "invalid"})["code"], "ability_input_invalid")
+	assert_equal(validate_ability_invocation(plugin_write, {"status": "spam"})["ok"], true)
 	assert_equal(validate_ability_value("not-an-object", {"type": "object"}, "output")["code"], "ability_output_invalid")
 }
 
@@ -577,13 +577,15 @@ test "database bootstrap applies schema version and auth seeds" {
 	version_result := get_schema_version(db)
 	assert_equal(version_result["ok"], true)
 	assert_true(to_bool(version_result["version"] >= TARGET_SCHEMA_VERSION))
+	approval_table_result := db_query_safe(db, "SELECT COUNT(*) AS total FROM ability_approvals", [])
+	assert_equal(approval_table_result["ok"], true)
 
 	plugin_manifest := {"schema": "kujo.plugin/v1", "key": "test_agent_plugin", "name": "Test Agent Plugin", "abilities": [{"name": "test.records.list", "label": "List test records", "description": "List records", "method": "GET", "path": "/v1/records", "permission": "cms.read"}], "connectors": [{"key": "records", "label": "Records", "purpose": "Test connector", "mode": "plugin_runtime"}], "admin": {"icon": "", "navigation": []}}
 	plugin_insert := db_execute_safe(db, "INSERT INTO plugins (plugin_key, name, version, status, capabilities_json, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", ["test_agent_plugin", "Test Agent Plugin", "1.0.0", "active", "[]", to_json({"package_manifest": plugin_manifest}), now(), now()])
 	assert_equal(plugin_insert["ok"], true)
 	resolved_abilities := resolved_ability_registry({"db": db, "cfg": cfg})
 	assert_true(to_bool(len(resolved_abilities) > len(ability_registry())))
-	assert_equal(resolved_abilities[len(resolved_abilities) - 1]["name"], "test/records-list")
+	assert_equal(resolved_abilities[len(resolved_abilities) - 1]["name"], "plugin-test_agent_plugin/test-records-list")
 	resolved_connectors := resolved_connector_registry({"db": db, "cfg": cfg})
 	assert_equal(resolved_connectors[len(resolved_connectors) - 1]["key"], "test_agent_plugin-records")
 	assert_equal(resolved_connectors[len(resolved_connectors) - 1]["manageable"], true)

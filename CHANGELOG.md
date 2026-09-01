@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Replace boolean Ability confirmation as a security boundary with durable,
+  short-lived, request-bound, one-time approvals; bind approvals to canonical
+  invocation digests and tenant-aware principals; and migrate approval storage
+  in schema version 13.
+
 ## 1.1.0 - 2026-08-30
 
 - Add framework-neutral identity providers, revocable CMS sessions, role-derived permissions, and administration capabilities.

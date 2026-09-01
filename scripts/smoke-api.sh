@@ -48,6 +48,7 @@ request() {
 	local path="$2"
 	local data="${3:-}"
 	local auth="${4:-0}"
+	local idempotency_key="${5:-}"
 
 	local curl_args=(
 		-sS
@@ -59,6 +60,9 @@ request() {
 
 	if [[ "${auth}" == "1" ]]; then
 		curl_args+=( -H "Authorization: Bearer ${TOKEN}" )
+	fi
+	if [[ -n "${idempotency_key}" ]]; then
+		curl_args+=( -H "Idempotency-Key: ${idempotency_key}" )
 	fi
 	if [[ -n "${data}" ]]; then
 		curl_args+=( --data "${data}" )
@@ -239,9 +243,27 @@ request "POST" "/v1/abilities/content/list/run" '{"input":{"unexpected":true}}' 
 assert_status "400" "Ability input schema enforced"
 assert_contains '"code":"ability_input_invalid"' "Ability input schema error"
 
-request "POST" "/v1/abilities/seo/update-entry/run" '{"input":{"entry_id":1,"changes":{}}}' "1"
-assert_status "409" "Ability mutation confirmation enforced"
-assert_contains '"code":"confirmation_required"' "Ability confirmation error"
+request "POST" "/v1/entries" '{"content_type_key":"smoke","title":"Ability Approval Fixture","slug":"ability-approval-fixture","status":"draft","body":"Approval fixture"}' "1"
+assert_status "201" "Ability approval fixture"
+ABILITY_ENTRY_ID="$(jq -r '.data.id' <<<"${BODY}")"
+
+ABILITY_INPUT="{\"entry_id\":${ABILITY_ENTRY_ID},\"changes\":{\"description\":\"Approved SEO description\"}}"
+request "POST" "/v1/abilities/seo/update-entry/run" "{\"input\":${ABILITY_INPUT}}" "1"
+assert_status "409" "Ability mutation requires request-bound approval"
+assert_contains '"code":"ability_approval_required"' "Ability approval requirement"
+ABILITY_INVOCATION_ID="$(jq -r '.error.details.receipt.invocation_id' <<<"${BODY}")"
+
+request "POST" "/v1/abilities/seo/update-entry/approvals" "{\"invocation_id\":\"${ABILITY_INVOCATION_ID}\"}" "1"
+assert_status "201" "Ability approval issued"
+ABILITY_APPROVAL_ID="$(jq -r '.data.approval_id' <<<"${BODY}")"
+
+request "POST" "/v1/abilities/seo/update-entry/run" "{\"invocation_id\":\"${ABILITY_INVOCATION_ID}\",\"approval_id\":\"${ABILITY_APPROVAL_ID}\",\"input\":${ABILITY_INPUT}}" "1" "ability-approval-success"
+assert_status "200" "Approved Ability executes"
+assert_contains '"approval_id":"' "Ability receipt records approval"
+
+request "POST" "/v1/abilities/seo/update-entry/run" "{\"invocation_id\":\"${ABILITY_INVOCATION_ID}\",\"approval_id\":\"${ABILITY_APPROVAL_ID}\",\"input\":${ABILITY_INPUT}}" "1" "ability-approval-replay"
+assert_status "409" "Ability approval is one-time"
+assert_contains '"code":"ability_approval_replayed"' "Ability approval replay blocked"
 
 request "POST" "/v1/abilities/content/list/run" '{"input":{"limit":5}}' "1"
 assert_status "200" "Ability execution validates output"

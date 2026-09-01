@@ -21,6 +21,9 @@ usage() {
     '  list [category]                     List abilities, optionally by category.' \
     '  get <namespace/name>                Inspect one ability.' \
     '  run <namespace/name> [input-json]   Execute an ability with a JSON input object.' \
+    '  approve <namespace/name> <invocation-id>  Approve a pending mutating invocation.' \
+    '  run-approved <namespace/name> <invocation-id> <approval-id> <idempotency-key> [input-json]' \
+    '                                      Execute the exact approved invocation once.' \
     '  mcp-tools                           List MCP-ready tool descriptors.' \
     '  webmcp                              Show the public WebMCP manifest.' \
     '  webmcp-tools                        List public browser tool descriptors.' \
@@ -33,9 +36,13 @@ request() {
   local method="$1"
   local path="$2"
   local body="${3:-}"
+  local idempotency_key="${4:-}"
+  local approval_id="${5:-}"
   local args=(--fail-with-body --silent --show-error -X "${method}" -H 'Accept: application/json')
   if [[ -n "${CMS_AI_TOKEN}" ]]; then args+=(-H "Authorization: Bearer ${CMS_AI_TOKEN}"); fi
   if [[ -n "${body}" ]]; then args+=(-H 'Content-Type: application/json' --data "${body}"); fi
+  if [[ -n "${idempotency_key}" ]]; then args+=(-H "Idempotency-Key: ${idempotency_key}"); fi
+  if [[ -n "${approval_id}" ]]; then args+=(-H "X-Ability-Approval: ${approval_id}"); fi
   curl "${args[@]}" "${CMS_AI_BASE_URL%/}${path}"
   printf '\n'
 }
@@ -96,6 +103,24 @@ case "${command}" in
     input="${3:-}"
     if [[ -z "${input}" ]]; then input='{}'; fi
     request POST "/v1/abilities/${name}/run" "{\"input\":${input}}"
+    ;;
+  approve)
+    require_token
+    name="$(ability_path "${2:-}")"
+    invocation_id="${3:-}"
+    if [[ -z "${invocation_id}" ]]; then usage >&2; exit 2; fi
+    request POST "/v1/abilities/${name}/approvals" "{\"invocation_id\":\"${invocation_id}\"}"
+    ;;
+  run-approved)
+    require_token
+    name="$(ability_path "${2:-}")"
+    invocation_id="${3:-}"
+    approval_id="${4:-}"
+    idempotency_key="${5:-}"
+    input="${6:-}"
+    if [[ -z "${input}" ]]; then input='{}'; fi
+    if [[ -z "${invocation_id}" || -z "${approval_id}" || -z "${idempotency_key}" ]]; then usage >&2; exit 2; fi
+    request POST "/v1/abilities/${name}/run" "{\"invocation_id\":\"${invocation_id}\",\"input\":${input}}" "${idempotency_key}" "${approval_id}"
     ;;
   mcp-tools) require_token; request GET '/v1/ai/mcp/tools' ;;
   webmcp) request GET '/v1/webmcp' ;;

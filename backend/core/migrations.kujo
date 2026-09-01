@@ -1,4 +1,4 @@
-export TARGET_SCHEMA_VERSION := 12
+export TARGET_SCHEMA_VERSION := 13
 
 func db_query_safe(sql_db, sql_text, sql_params) {
 	rows := []
@@ -465,6 +465,21 @@ export run_post_bootstrap_migrations := func(db) {
 		if mark_v12["ok"] == false { return mark_v12 }
 		current_version = 12
 		applied = push(applied, "v12_identity_sessions")
+	}
+
+	if current_version < 13 {
+		steps_v13 := [
+			"CREATE TABLE IF NOT EXISTS ability_approvals (invocation_id TEXT PRIMARY KEY, approval_id TEXT UNIQUE, ability_id TEXT NOT NULL, ability_version TEXT NOT NULL, definition_digest TEXT NOT NULL, binding_digest TEXT NOT NULL, invocation_json TEXT NOT NULL, status TEXT NOT NULL, requested_by TEXT NOT NULL, approved_by TEXT, approval_json TEXT, request_expires_at_ms INTEGER NOT NULL, approval_expires_at_ms INTEGER, consumed_at_ms INTEGER, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)",
+			"CREATE INDEX IF NOT EXISTS idx_ability_approvals_status_expiry ON ability_approvals(status, request_expires_at_ms)"
+		]
+		for step_v13 in steps_v13 {
+			result_v13 := db_execute_safe(db, step_v13, [])
+			if result_v13["ok"] == false { return result_v13 }
+		}
+		mark_v13 := set_schema_version(db, 13)
+		if mark_v13["ok"] == false { return mark_v13 }
+		current_version = 13
+		applied = push(applied, "v13_request_bound_ability_approvals")
 	}
 
 	return {

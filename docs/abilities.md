@@ -2,7 +2,7 @@
 
 The portable definition contract is maintained by
 [`kujolang/ability`](https://github.com/kujolang/ability). CMS owns the product
-bindings, permissions, confirmation policy, REST/CLI exposure, and audit data;
+bindings, permissions, approval policy, REST/CLI exposure, and audit data;
 the shared package does not.
 
 CMS Abilities expose bounded semantic operations without making HTTP, MCP, or WebMCP the source of their meaning.
@@ -15,7 +15,7 @@ Each resolved CMS Ability has separate concerns:
 - `definition_digest` is the canonical SHA-256 identity of that exact definition;
 - the CMS descriptor keeps legacy route name, category, permission, enablement, source, and annotations;
 - core or plugin bindings implement execution;
-- CMS authentication, permissions, confirmation, tenancy, rate limits, and audit remain application policy;
+- CMS authentication, permissions, request-bound approval, tenancy, rate limits, and audit remain application policy;
 - REST and MCP-ready records are explicit exposure projections.
 
 The canonical JSON Schema and runtime validators are installed from the exact
@@ -43,8 +43,8 @@ All four routes require an authenticated principal with `cms.read` or the more s
 1. resolve the server-owned descriptor and reject disabled Abilities;
 2. authenticate and authorize through the descriptor permission;
 3. apply request rate limiting and supported idempotency handling;
-4. require `confirmed: true` for every descriptor marked `requires_confirmation`, including plugin Abilities;
-5. validate input against the advertised schema;
+4. validate input against the advertised schema;
+5. require a short-lived, request-bound approval for every descriptor marked `requires_confirmation`;
 6. build the exact definition, handler binding, and REST exposure in the shared
    Ability registry;
 7. execute through the canonical Ability runtime;
@@ -61,10 +61,22 @@ exact version, definition digest, handler version, principal, request ID,
 trace ID, policy decision, timing, audit state, and idempotency state.
 
 Abilities whose definition declares `idempotency.mode = keyed` require an
-`Idempotency-Key` header. CMS creates the durable pending record before the
-handler runs and commits the normalized receipt on completion.
+`Idempotency-Key` header for the approved execution. CMS creates the durable
+pending record before the handler runs and commits the normalized receipt on
+completion. An approval-required preflight releases any HTTP idempotency claim
+so the approved retry can use the same key safely.
 
-The current compatibility confirmation is a boolean inside `input`. It is enforced generically, but it is not a substitute for a future request-bound approval token. Product policy remains responsible for deciding when approval is required.
+Mutating Abilities use a two-step flow. The first execution returns HTTP 409
+with an `approval_required` receipt and stable `invocation_id`. An authorized
+administrator issues a five-minute approval with
+`POST /v1/abilities/:namespace/:ability/approvals`. The caller then retries the
+exact input and invocation ID with the returned approval ID (body field or
+`X-Ability-Approval`) and an idempotency key. The canonical runtime binds the
+approval to Ability ID/version, definition digest, input, principal, tenant,
+and invocation ID; CMS consumes it atomically once. Reuse, expiry, changed
+input, changed principal, and cross-Ability use fail closed. The legacy
+`confirmed: true` input remains accepted by core write schemas for compatibility
+but grants no authority and is no longer a security boundary.
 
 ## Plugin compatibility
 
@@ -78,7 +90,7 @@ The current compatibility confirmation is a boolean inside `input`. It is enforc
 - supported input/output JSON Schemas;
 - no unknown fields or sensitive values.
 
-CMS converts each active plugin descriptor into a portable definition while keeping HTTP method/path and permission in the plugin binding and policy descriptor. `GET` maps conservatively to a `read` effect with intrinsic idempotency. Other methods map to a `write` effect with no automatic idempotency guarantee unless a future plugin contract declares stronger semantics.
+CMS converts each active plugin descriptor into a portable definition while keeping HTTP method/path and permission in the plugin binding and policy descriptor. Local exposure names are prefixed with `plugin-<plugin-key>/` so two plugins cannot collide with each other or with a core CMS Ability. `GET` maps conservatively to a `read` effect with intrinsic idempotency. Other methods map to a `write` effect with no automatic idempotency guarantee unless a future plugin contract declares stronger semantics.
 
 ## WebMCP boundary
 

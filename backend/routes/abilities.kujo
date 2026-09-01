@@ -1,11 +1,11 @@
 from backend.core.database import db_execute_safe, db_query_safe
-from backend.core.http import fail, guard_request, idempotency_complete, ok, parse_json_body, write_audit
+from backend.core.http import created, fail, get_header, guard_request, idempotency_complete, ok, parse_json_body, write_audit
 from backend.core.utils import dict_get_or
 from backend.modules.ability_contract import ABILITY_SCHEMA_ID, validate_ability_definition, validate_ability_invocation, validate_ability_value, ability_definition_digest
 from backend.routes.entries import apply_seo_changes, normalize_seo_changes
 from backend.routes.extensions import extension_ai_registry, extension_plugin_runtime
 from backend.routes.plugins import validate_handler_url_policy
-from ability import create_ability_registry, register_ability_definition, register_ability_binding, register_ability_exposure, execute_ability
+from ability import ABILITY_APPROVAL_SCHEMA_ID, approval_binding_digest, validate_ability_approval, create_ability_registry, register_ability_definition, register_ability_binding, register_ability_exposure, execute_ability
 
 export ability_categories := func() {
 	return [
@@ -63,13 +63,13 @@ export ability_registry := func() {
 		},
 		{
 			"name": "seo/update-entry", "label": "Update entry SEO", "description": "Apply validated SEO metadata to one unlocked entry.", "category": "seo", "permission": "cms.write",
-			"input_schema": {"type": "object", "required": ["entry_id", "changes", "confirmed"], "properties": {"entry_id": {"type": "integer", "minimum": 1}, "changes": {"type": "object"}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
+			"input_schema": {"type": "object", "required": ["entry_id", "changes"], "properties": {"entry_id": {"type": "integer", "minimum": 1}, "changes": {"type": "object"}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
 			"output_schema": {"type": "object", "required": ["ok", "entry_id", "seo"], "properties": {"ok": {"type": "boolean", "const": true}, "entry_id": {"type": "integer", "minimum": 1}, "seo": {"type": "object"}}, "additionalProperties": false},
 			"annotations": {"readonly": false, "destructive": false, "idempotent": true, "requires_confirmation": true}
 		},
 		{
 			"name": "seo/bulk-update", "label": "Bulk update entry SEO", "description": "Apply the same validated SEO metadata to as many as 200 selected entries.", "category": "seo", "permission": "cms.write",
-			"input_schema": {"type": "object", "required": ["entry_ids", "changes", "confirmed"], "properties": {"entry_ids": {"type": "array", "minItems": 1, "maxItems": 200, "items": {"type": "integer", "minimum": 1}}, "changes": {"type": "object"}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
+			"input_schema": {"type": "object", "required": ["entry_ids", "changes"], "properties": {"entry_ids": {"type": "array", "minItems": 1, "maxItems": 200, "items": {"type": "integer", "minimum": 1}}, "changes": {"type": "object"}, "confirmed": {"type": "boolean", "const": true}}, "additionalProperties": false},
 			"output_schema": {"type": "object", "required": ["updated_ids", "updated_count", "errors"], "properties": {"updated_ids": {"type": "array", "items": {"type": "integer", "minimum": 1}}, "updated_count": {"type": "integer", "minimum": 0}, "errors": {"type": "array", "items": {"type": "object"}}}, "additionalProperties": false},
 			"annotations": {"readonly": false, "destructive": false, "idempotent": true, "requires_confirmation": true}
 		},
@@ -138,13 +138,14 @@ export resolved_ability_registry := func(ctx) {
 			"effects": [{"kind": plugin_effect, "resource": plugin_resource}], "idempotency": {"mode": plugin_idempotency}
 		}
 		digest_result := ability_definition_digest(definition)
+		qualified_plugin_name := "plugin-" + raw["source_key"] + "/" + namespace + "-" + external_name
 		items = push(items, {
-			"name": namespace + "/" + external_name, "label": trim(to_string(dict_get_or(raw, "label", raw_name))),
+			"name": qualified_plugin_name, "label": trim(to_string(dict_get_or(raw, "label", raw_name))),
 			"description": description,
 			"category": "plugin", "permission": trim(to_string(dict_get_or(raw, "permission", "admin.plugins"))),
 			"input_schema": input_schema, "output_schema": output_schema, "definition": definition, "definition_digest": dict_get_or(digest_result, "digest", ""),
 			"annotations": {"readonly": readonly, "destructive": false, "idempotent": false, "requires_confirmation": readonly == false},
-			"enabled": feature_state(ctx["db"], "ability", namespace + "/" + external_name, true), "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": true,
+			"enabled": feature_state(ctx["db"], "ability", qualified_plugin_name, true), "source": "plugin", "source_key": raw["source_key"], "source_name": raw["source_name"], "manageable": true,
 			"external_execution": {"method": method, "path": trim(to_string(dict_get_or(raw, "path", ""))), "runtime": "plugin"}
 		})
 	}
@@ -459,7 +460,6 @@ func execute_cms_ability_handler(req, ctx, ability, input) {
 		return {"ok": true, "result": {"connectors": connectors, "configured_count": configured, "ability_count": len(resolved_ability_registry(ctx)), "mcp_tool_count": len(resolved_mcp_tool_descriptors(ctx)), "secrets_exposed": false}}
 	}
 	if name == "seo/update-entry" {
-		if dict_get_or(input, "confirmed", false) != true { return {"ok": false, "status": 409, "code": "confirmation_required", "message": "This ability requires confirmed=true"} }
 		entry_id := to_int(dict_get_or(input, "entry_id", 0))
 		if entry_id <= 0 { return {"ok": false, "status": 400, "code": "invalid_entry_id", "message": "entry_id must be positive"} }
 		normalized := normalize_seo_changes(dict_get_or(input, "changes", {}))
@@ -473,7 +473,6 @@ func execute_cms_ability_handler(req, ctx, ability, input) {
 		return {"ok": true, "result": result}
 	}
 	if name == "seo/bulk-update" {
-		if dict_get_or(input, "confirmed", false) != true { return {"ok": false, "status": 409, "code": "confirmation_required", "message": "This ability requires confirmed=true"} }
 		entry_ids := dict_get_or(input, "entry_ids", [])
 		if type(entry_ids) != "array" || len(entry_ids) < 1 || len(entry_ids) > 200 { return {"ok": false, "status": 400, "code": "invalid_entry_ids", "message": "entry_ids must contain 1 to 200 IDs"} }
 		normalized := normalize_seo_changes(dict_get_or(input, "changes", {}))
@@ -525,31 +524,71 @@ func cms_ability_runtime_registry(req, ctx, ability) {
 	return {"ok": true, "registry": step["registry"], "definition_digest": dict_get_or(step, "digest", "")}
 }
 
-func cms_ability_invocation(req, ability, input) {
+func ability_principal(req) {
 	auth_context := dict_get_or(req, "auth_context", {})
+	tenant_id := "global"
+	for permission in dict_get_or(auth_context, "permissions", []) {
+		permission_text := trim(to_string(permission))
+		if starts_with(permission_text, "tenant:") && len(permission_text) > 7 { tenant_id = substring(permission_text, 7, len(permission_text)) }
+	}
+	return {
+		"type": "cms",
+		"id": to_string(dict_get_or(auth_context, "actor", "unknown")),
+		"tenant_id": tenant_id,
+		"claims": {"role_key": dict_get_or(auth_context, "role_key", ""), "permissions": dict_get_or(auth_context, "permissions", [])}
+	}
+}
+
+func load_ability_approval(ctx, approval_id, invocation_id) {
+	if approval_id == "" { return {"ok": true, "approval": {}} }
+	lookup := db_query_safe(ctx["db"], "SELECT approval_json FROM ability_approvals WHERE approval_id = ? AND invocation_id = ? LIMIT 1", [approval_id, invocation_id])
+	if lookup["ok"] == false { return {"ok": false, "code": "ability_approval_lookup_failed", "message": "Ability approval lookup failed"} }
+	if len(lookup["rows"]) == 0 { return {"ok": false, "code": "ability_approval_not_found", "message": "Ability approval was not found for this invocation"} }
+	approval := null; parse_error := null
+	try { approval = parse_json(to_string(lookup["rows"][0]["approval_json"])) } except e { parse_error = e }
+	if type(parse_error) != "null" || type(approval) != "dict" { return {"ok": false, "code": "ability_approval_invalid", "message": "Stored Ability approval is invalid"} }
+	return {"ok": true, "approval": approval}
+}
+
+func cms_ability_invocation(req, ctx, ability, input, request_body) {
 	request_id := to_string(dict_get_or(req, "request_id", ""))
 	if request_id == "" { request_id = substring(sha256(ability["definition"]["id"] + ":" + to_string(current_timestamp())), 0, 24) }
+	invocation_id := trim(to_string(dict_get_or(request_body, "invocation_id", "")))
+	if invocation_id == "" { invocation_id = "cms-" + request_id }
+	approval_id := trim(to_string(dict_get_or(request_body, "approval_id", "")))
+	if approval_id == "" { approval_id = trim(to_string(get_header(req, "X-Ability-Approval"))) }
+	if approval_id == "" { approval_id = trim(to_string(get_header(req, "x-ability-approval"))) }
+	approval_result := load_ability_approval(ctx, approval_id, invocation_id)
+	if approval_result["ok"] == false { return approval_result }
 	idempotency_context := dict_get_or(req, "idempotency_context", {})
-	return {
+	return {"ok": true, "invocation": {
 		"schema": "kujo.ability.invocation/v1",
-		"invocation_id": "cms-" + request_id,
+		"invocation_id": invocation_id,
 		"ability_id": ability["definition"]["id"],
 		"ability_version": ability["definition"]["version"],
-		"definition_digest": "",
+		"definition_digest": ability["definition_digest"],
 		"input": input,
-		"principal": {
-			"type": "cms",
-			"id": to_string(dict_get_or(auth_context, "actor", "unknown")),
-			"tenant_id": "",
-			"claims": {"role_key": dict_get_or(auth_context, "role_key", ""), "permissions": dict_get_or(auth_context, "permissions", [])}
-		},
+		"principal": ability_principal(req),
 		"request_id": request_id,
 		"trace_id": to_string(dict_get_or(req, "trace_id", request_id)),
 		"surface": "rest",
 		"idempotency_key": to_string(dict_get_or(idempotency_context, "scoped_key", "")),
-		"approval": {},
+		"approval": approval_result["approval"],
 		"metadata": {"legacy_name": ability["name"]}
-	}
+	}}
+}
+
+func ensure_ability_approval_request(req, ctx, ability, invocation) {
+	binding_digest := approval_binding_digest(invocation)
+	now_ms := current_timestamp()
+	_ = db_execute_safe(ctx["db"], "DELETE FROM ability_approvals WHERE status = 'requested' AND request_expires_at_ms <= ?", [now_ms])
+	write_result := db_execute_safe(ctx["db"], "INSERT OR IGNORE INTO ability_approvals (invocation_id, approval_id, ability_id, ability_version, definition_digest, binding_digest, invocation_json, status, requested_by, approved_by, approval_json, request_expires_at_ms, approval_expires_at_ms, consumed_at_ms, created_at, updated_at) VALUES (?, NULL, ?, ?, ?, ?, ?, 'requested', ?, NULL, NULL, ?, NULL, NULL, ?, ?)", [invocation["invocation_id"], invocation["ability_id"], invocation["ability_version"], invocation["definition_digest"], binding_digest, to_json(invocation), invocation["principal"]["id"], now_ms + 86400000, now(), now()])
+	if write_result["ok"] == false { return {"ok": false, "code": "ability_approval_request_failed", "message": "Could not persist Ability approval request"} }
+	lookup := db_query_safe(ctx["db"], "SELECT binding_digest, ability_id, ability_version FROM ability_approvals WHERE invocation_id = ? LIMIT 1", [invocation["invocation_id"]])
+	if lookup["ok"] == false || len(lookup["rows"]) == 0 { return {"ok": false, "code": "ability_approval_request_failed", "message": "Could not read Ability approval request"} }
+	row := lookup["rows"][0]
+	if row["binding_digest"] != binding_digest || row["ability_id"] != invocation["ability_id"] || row["ability_version"] != invocation["ability_version"] { return {"ok": false, "code": "ability_approval_request_conflict", "message": "Invocation ID is already bound to a different approval request"} }
+	return {"ok": true, "binding_digest": binding_digest}
 }
 
 func cms_ability_runtime_services(req, ctx, ability) {
@@ -557,7 +596,21 @@ func cms_ability_runtime_services(req, ctx, ability) {
 		"clock_ms": func() { return current_timestamp() },
 		"id_factory": func(kind, invocation) { return kind + "-" + substring(sha256(kind + ":" + invocation["invocation_id"] + ":" + invocation["definition_digest"]), 0, 24) },
 		"policy": func(definition, invocation, exposure) {
+			if dict_get_or(ability["annotations"], "requires_confirmation", false) == true {
+				request_result := ensure_ability_approval_request(req, ctx, ability, invocation)
+				if request_result["ok"] == false { return {"schema": "kujo.ability.policy-decision/v1", "decision_id": "cms-policy-error-" + substring(sha256(invocation["invocation_id"]), 0, 20), "outcome": "deny", "reason": request_result["message"], "requirements": [request_result["code"]], "policy_id": "kujo.cms.request-bound-approval", "policy_version": "1.0.0"} }
+				return {"schema": "kujo.ability.policy-decision/v1", "decision_id": "cms-policy-approval-" + substring(sha256(invocation["invocation_id"]), 0, 20), "outcome": "approval_required", "reason": "This Ability requires a request-bound, one-time approval.", "requirements": [{"kind": "request_bound_approval", "invocation_id": invocation["invocation_id"], "approval_endpoint": "/v1/abilities/" + ability["name"] + "/approvals"}], "policy_id": "kujo.cms.request-bound-approval", "policy_version": "1.0.0"}
+			}
 			return {"schema": "kujo.ability.policy-decision/v1", "decision_id": "cms-policy-" + substring(sha256(invocation["invocation_id"] + ":" + ability["permission"]), 0, 20), "outcome": "allow", "reason": "CMS request guard authorized the server-owned Ability permission.", "requirements": [], "policy_id": "kujo.cms.request-guard", "policy_version": "1.0.0"}
+		},
+		"consume_approval": func(approval, invocation) {
+			now_ms := current_timestamp()
+			consume := db_execute_safe(ctx["db"], "UPDATE ability_approvals SET status = 'consumed', consumed_at_ms = ?, updated_at = ? WHERE invocation_id = ? AND approval_id = ? AND status = 'approved' AND consumed_at_ms IS NULL AND approval_expires_at_ms > ?", [now_ms, now(), invocation["invocation_id"], approval["approval_id"], now_ms])
+			if consume["ok"] == false { return {"ok": false} }
+			changed := db_query_safe(ctx["db"], "SELECT changes() AS changed", [])
+			consumed := false
+			if changed["ok"] == true && len(changed["rows"]) > 0 && to_int(changed["rows"][0]["changed"]) == 1 { consumed = true }
+			return {"ok": consumed}
 		},
 		"audit_required": true,
 		"audit": func(phase, invocation, payload) {
@@ -575,10 +628,46 @@ func cms_ability_runtime_services(req, ctx, ability) {
 	}
 }
 
-func run_cms_ability_through_runtime(req, ctx, ability, input) {
+func run_cms_ability_through_runtime(req, ctx, ability, input, request_body) {
 	registry_result := cms_ability_runtime_registry(req, ctx, ability)
 	if registry_result["ok"] == false { return registry_result }
-	return execute_ability(registry_result["registry"], cms_ability_invocation(req, ability, input), cms_ability_runtime_services(req, ctx, ability))
+	invocation_result := cms_ability_invocation(req, ctx, ability, input, request_body)
+	if invocation_result["ok"] == false { return invocation_result }
+	return execute_ability(registry_result["registry"], invocation_result["invocation"], cms_ability_runtime_services(req, ctx, ability))
+}
+
+func issue_ability_approval(req, ctx, ability, invocation_id) {
+	now_ms := current_timestamp()
+	lookup := db_query_safe(ctx["db"], "SELECT binding_digest, invocation_json, requested_by, request_expires_at_ms, status FROM ability_approvals WHERE invocation_id = ? AND ability_id = ? AND ability_version = ? LIMIT 1", [invocation_id, ability["definition"]["id"], ability["definition"]["version"]])
+	if lookup["ok"] == false { return {"ok": false, "status": 500, "code": "ability_approval_lookup_failed", "message": "Could not read Ability approval request"} }
+	if len(lookup["rows"]) == 0 { return {"ok": false, "status": 404, "code": "ability_approval_request_not_found", "message": "Ability approval request was not found"} }
+	row := lookup["rows"][0]
+	if to_int(row["request_expires_at_ms"]) <= now_ms { return {"ok": false, "status": 409, "code": "ability_approval_request_expired", "message": "Ability approval request has expired"} }
+	if row["status"] != "requested" { return {"ok": false, "status": 409, "code": "ability_approval_request_resolved", "message": "Ability approval request is no longer pending"} }
+	approver := ability_principal(req)
+	approval_id := "approval-" + substring(sha256(invocation_id + ":" + approver["id"] + ":" + to_string(now_ms)), 0, 32)
+	expires_at_ms := now_ms + 300000
+	approval := {
+		"schema": ABILITY_APPROVAL_SCHEMA_ID,
+		"approval_id": approval_id,
+		"binding_digest": row["binding_digest"],
+		"approved_by": approver,
+		"issued_at_ms": now_ms,
+		"expires_at_ms": expires_at_ms,
+		"nonce": substring(sha256(approval_id + ":" + to_string(current_timestamp())), 0, 32),
+		"evidence": {"source": "cms", "request_id": to_string(dict_get_or(req, "request_id", "")), "requested_by": row["requested_by"]}
+	}
+	stored_invocation := null; invocation_parse_error := null
+	try { stored_invocation = parse_json(to_string(row["invocation_json"])) } except e { invocation_parse_error = e }
+	if type(invocation_parse_error) != "null" || type(stored_invocation) != "dict" { return {"ok": false, "status": 500, "code": "ability_approval_request_invalid", "message": "Stored Ability approval request is invalid"} }
+	approval_validation := validate_ability_approval(approval, stored_invocation, now_ms)
+	if approval_validation["ok"] == false { return {"ok": false, "status": 500, "code": "ability_approval_issue_invalid", "message": "Generated Ability approval is invalid"} }
+	write_result := db_execute_safe(ctx["db"], "UPDATE ability_approvals SET approval_id = ?, status = 'approved', approved_by = ?, approval_json = ?, approval_expires_at_ms = ?, updated_at = ? WHERE invocation_id = ? AND status = 'requested'", [approval_id, approver["id"], to_json(approval), expires_at_ms, now(), invocation_id])
+	if write_result["ok"] == false { return {"ok": false, "status": 500, "code": "ability_approval_issue_failed", "message": "Could not persist Ability approval"} }
+	changed := db_query_safe(ctx["db"], "SELECT changes() AS changed", [])
+	if changed["ok"] == false || len(changed["rows"]) == 0 || to_int(changed["rows"][0]["changed"]) != 1 { return {"ok": false, "status": 409, "code": "ability_approval_request_resolved", "message": "Ability approval request is no longer pending"} }
+	_ = write_audit(ctx, req, "ability.approval.issue", 201, "ability", ability["name"], {"invocation_id": invocation_id, "approval_id": approval_id, "requested_by": row["requested_by"], "approved_by": approver["id"], "expires_at_ms": expires_at_ms})
+	return {"ok": true, "approval_id": approval_id, "invocation_id": invocation_id, "expires_at_ms": expires_at_ms}
 }
 
 export register_ability_routes := func(server, ctx) {
@@ -624,32 +713,65 @@ export register_ability_routes := func(server, ctx) {
 		if ability["enabled"] != true { return fail(ctx["cfg"], 409, "ability_disabled", "Ability is disabled by an administrator", {}) }
 		guard := guard_request(req, ctx, ability["permission"])
 		if guard["ok"] == false { return guard["response"] }
+		req["auth_context"] := guard["auth"]
+		req["idempotency_context"] := dict_get_or(guard, "idempotency_context", {})
 		body_result := parse_json_body(req, ctx["cfg"])
 		if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
 		input := dict_get_or(body_result["data"], "input", {})
 		if type(input) != "dict" { return fail(ctx["cfg"], 400, "invalid_input", "input must be an object", {}) }
 		input_result := validate_ability_invocation(ability, input)
 		if input_result["ok"] == false {
-			input_status := 400
-			if input_result["code"] == "confirmation_required" { input_status = 409 }
-			return fail(ctx["cfg"], input_status, input_result["code"], input_result["message"], input_result["details"])
+			return fail(ctx["cfg"], 400, input_result["code"], input_result["message"], input_result["details"])
 		}
-		runtime_result := run_cms_ability_through_runtime(req, ctx, ability, input)
-		if has_key(runtime_result, "receipt") == 0 { return fail(ctx["cfg"], 500, dict_get_or(runtime_result, "code", "ability_runtime_failed"), dict_get_or(runtime_result, "message", "Ability runtime failed"), dict_get_or(runtime_result, "details", {})) }
+		runtime_result := run_cms_ability_through_runtime(req, ctx, ability, input, body_result["data"])
+		if has_key(runtime_result, "receipt") == 0 {
+			idempotency_context := dict_get_or(req, "idempotency_context", {})
+			scoped_key := to_string(dict_get_or(idempotency_context, "scoped_key", ""))
+			if scoped_key != "" { _ = db_execute_safe(ctx["db"], "DELETE FROM idempotency_keys WHERE idempotency_key = ? AND status = 'pending'", [scoped_key]) }
+			runtime_status := 500
+			runtime_code := dict_get_or(runtime_result, "code", "ability_runtime_failed")
+			if runtime_code == "ability_approval_not_found" || runtime_code == "ability_approval_invalid" { runtime_status = 400 }
+			if runtime_code == "ability_approval_replayed" || runtime_code == "ability_approval_expired" || runtime_code == "ability_approval_binding_mismatch" { runtime_status = 409 }
+			return fail(ctx["cfg"], runtime_status, runtime_code, dict_get_or(runtime_result, "message", "Ability runtime failed"), dict_get_or(runtime_result, "details", {}))
+		}
 		receipt := runtime_result["receipt"]
 		if receipt["status"] != "succeeded" {
 			error_value := dict_get_or(receipt, "error", {})
 			error_details := dict_get_or(error_value, "details", {})
+			error_code := dict_get_or(error_value, "code", "ability_execution_failed")
 			status_code := to_int(dict_get_or(error_details, "http_status", 500))
 			if receipt["status"] == "rejected" { status_code = 403 }
-			if receipt["status"] == "approval_required" { status_code = 409 }
+			if error_code == "ability_input_invalid" || error_code == "ability_idempotency_key_required" { status_code = 400 }
+			if error_code == "ability_approval_replayed" || error_code == "ability_approval_expired" || error_code == "ability_approval_binding_mismatch" || error_code == "ability_invocation_in_progress" || error_code == "ability_idempotency_conflict" { status_code = 409 }
+			if receipt["status"] == "approval_required" {
+				status_code = 409
+				idempotency_context := dict_get_or(req, "idempotency_context", {})
+				scoped_key := to_string(dict_get_or(idempotency_context, "scoped_key", ""))
+				if scoped_key != "" { _ = db_execute_safe(ctx["db"], "DELETE FROM idempotency_keys WHERE idempotency_key = ? AND status = 'pending'", [scoped_key]) }
+			}
 			if receipt["status"] == "timed_out" { status_code = 504 }
 			if receipt["status"] == "cancelled" { status_code = 409 }
-			return fail(ctx["cfg"], status_code, dict_get_or(error_value, "code", "ability_execution_failed"), dict_get_or(error_value, "message", "Ability execution failed"), {"receipt": receipt})
+			return fail(ctx["cfg"], status_code, error_code, dict_get_or(error_value, "message", "Ability execution failed"), {"receipt": receipt})
 		}
 		response_data := {"ability": ability["name"], "result": receipt["result"], "receipt": receipt}
 		if ability["definition"]["idempotency"]["mode"] != "keyed" { _ = idempotency_complete(req, ctx, 200, {"ok": true, "data": response_data}) }
 		return ok(ctx["cfg"], response_data)
+	})
+	server = server.route("POST", "/v1/abilities/:namespace/:ability/approvals", func(req) {
+		params := dict_get_or(req, "params", {})
+		ability := find_resolved_ability(ctx, dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
+		if type(ability) == "null" { return fail(ctx["cfg"], 404, "ability_not_found", "Ability not found", {}) }
+		if dict_get_or(ability["annotations"], "requires_confirmation", false) != true { return fail(ctx["cfg"], 409, "ability_approval_not_required", "Ability does not require approval", {}) }
+		guard := guard_request(req, ctx, "admin.settings")
+		if guard["ok"] == false { return guard["response"] }
+		req["auth_context"] := guard["auth"]
+		body_result := parse_json_body(req, ctx["cfg"])
+		if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
+		invocation_id := trim(to_string(dict_get_or(body_result["data"], "invocation_id", "")))
+		if invocation_id == "" || len(invocation_id) > 240 { return fail(ctx["cfg"], 400, "invalid_ability_invocation_id", "invocation_id is required and must be at most 240 characters", {}) }
+		result := issue_ability_approval(req, ctx, ability, invocation_id)
+		if result["ok"] == false { return fail(ctx["cfg"], result["status"], result["code"], result["message"], {}) }
+		return created(ctx["cfg"], result)
 	})
 	server = server.route("PATCH", "/v1/abilities/:namespace/:ability", func(req) {
 		guard := guard_request(req, ctx, "admin.settings")
