@@ -20,7 +20,7 @@ node -e '
 	const fs = require("node:fs");
 	const net = require("node:net");
 	const server = net.createServer();
-	server.listen(0, "127.0.0.1", () => fs.writeFileSync(process.argv[1], String(server.address().port)));
+	server.listen(0, "0.0.0.0", () => fs.writeFileSync(process.argv[1], String(server.address().port)));
 ' "${PORT_FILE}" &
 LISTENER_PID="$!"
 
