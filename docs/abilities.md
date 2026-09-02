@@ -96,6 +96,21 @@ CMS converts each active plugin descriptor into a portable definition while keep
 
 Public CMS WebMCP remains a separate allowlisted surface. The four built-in site tools are same-origin, read-only, published-only, bounded, and untrusted-content aware. CMS never exports an Ability to WebMCP merely because it is annotated read-only. Authenticated, private, and mutating operations remain behind the Abilities API.
 
+## Agent hosts
+
+The portable host package in Kujo MCP connects Codex, Cursor, VS Code, and
+generic STDIO MCP clients to this authenticated gateway. Kujo Pi provides the
+same discovery and execution flow through opt-in native tools. Hosts first read
+`GET /v1/ai/mcp/tools`, then call the descriptor's same-origin `execution`
+path. They may add prompts, skills, secret inputs, and an independent approval
+UI, but they do not change the canonical Ability contract or replace CMS
+authorization, request-bound approval, idempotency, or audit policy.
+
+Use loopback HTTP only for local development. Customer-hosted deployments must
+use HTTPS and a distinct least-privilege token per human or workload. The
+public `mcp.kujolang.ai` catalog is unrelated to this privileged execution
+boundary and must not receive CMS credentials.
+
 ## Compatibility
 
 Legacy names such as `content/list` and `seo/update-entry`, existing REST routes, CLI forms, and client helpers remain supported. Canonical IDs such as `kujo.cms.content.list` are additive identity. Protocol adapters may derive local names but must preserve canonical ID/version metadata and reject collisions.
