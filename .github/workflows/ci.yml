@@ -22,17 +22,10 @@ jobs:
           sudo apt-get install --yes ripgrep
 
       - name: Install Kujo runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP"
-          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz
-          echo "3f9d69779fef64c8f329c69301ac666cf74499ff083f1a5f25f729368b318fcb  kujo-v1.2.0-linux-x64.tar.gz" | sha256sum --check --strict
-          mkdir -p "$RUNNER_TEMP/kujo-bin"
-          tar -xzf kujo-v1.2.0-linux-x64.tar.gz -C "$RUNNER_TEMP/kujo-bin"
-          chmod +x "$RUNNER_TEMP/kujo-bin/kujo"
-          "$RUNNER_TEMP/kujo-bin/kujo" --version
-          echo "$RUNNER_TEMP/kujo-bin" >> "$GITHUB_PATH"
+        id: kujo
+        uses: kujolang/kujo/.github/actions/setup-kujo@4776ac77aa8252ce1ca8924034512c29e0715ac0
+        with:
+          version: v1.2.1
 
       - name: Install pinned dependencies
         shell: bash
@@ -56,7 +49,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          kujo_path="$RUNNER_TEMP/kujo-bin/kujo"
+          kujo_path="${{ steps.kujo.outputs.kujo-path }}"
           test -x "$kujo_path"
           echo "path=$kujo_path" >> "$GITHUB_OUTPUT"
 
@@ -85,17 +78,10 @@ jobs:
           sudo apt-get install --yes ripgrep
 
       - name: Install Kujo runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "$RUNNER_TEMP"
-          curl -fsSLO https://github.com/kujolang/kujo/releases/download/v1.2.0/kujo-v1.2.0-linux-x64.tar.gz
-          echo "3f9d69779fef64c8f329c69301ac666cf74499ff083f1a5f25f729368b318fcb  kujo-v1.2.0-linux-x64.tar.gz" | sha256sum --check --strict
-          mkdir -p "$RUNNER_TEMP/kujo-bin"
-          tar -xzf kujo-v1.2.0-linux-x64.tar.gz -C "$RUNNER_TEMP/kujo-bin"
-          chmod +x "$RUNNER_TEMP/kujo-bin/kujo"
-          "$RUNNER_TEMP/kujo-bin/kujo" --version
-          echo "$RUNNER_TEMP/kujo-bin" >> "$GITHUB_PATH"
+        id: kujo
+        uses: kujolang/kujo/.github/actions/setup-kujo@4776ac77aa8252ce1ca8924034512c29e0715ac0
+        with:
+          version: v1.2.1
 
       - name: Install pinned dependencies
         shell: bash
@@ -119,7 +105,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          kujo_path="$RUNNER_TEMP/kujo-bin/kujo"
+          kujo_path="${{ steps.kujo.outputs.kujo-path }}"
           test -x "$kujo_path"
           echo "path=$kujo_path" >> "$GITHUB_OUTPUT"
 
