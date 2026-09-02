@@ -6,6 +6,8 @@ Source revision: `11fb5ee`
 
 CMS package version: `1.1.0` (unreleased)
 
+Ability Pack: `kujo.cms.core@1.0.0`
+
 Canonical Ability dependency: `1.0.1`, pinned through `kennel.toml` and `kennel.lock`
 
 Owner: Kujo CMS owns handlers, permissions, gateway policy, durable approval/idempotency/audit state, and product data. `kujolang/ability` owns the definition and runtime contracts.

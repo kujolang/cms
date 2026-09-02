@@ -7,7 +7,7 @@ the shared package does not.
 
 CMS Abilities expose bounded semantic operations without making HTTP, MCP, or WebMCP the source of their meaning.
 
-The six core capabilities have a dated local reference-gateway certification record in [`ability-pack-certification-2026-09-02.md`](ability-pack-certification-2026-09-02.md). That evidence does not certify a production deployment or an agent host.
+The six core capabilities are independently cataloged as `kujo.cms.core@1.0.0` in [`ability-pack.json`](../ability-pack.json) and have a dated local reference-gateway certification record in [`ability-pack-certification-2026-09-02.md`](ability-pack-certification-2026-09-02.md). That evidence does not certify a production deployment or an agent host.
 
 ## Contract layers
 

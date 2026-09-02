@@ -138,6 +138,11 @@ test "abilities are discoverable, namespaced, schema-described, and MCP-ready" {
 }
 
 test "ability definitions enforce the portable semantic contract" {
+	pack := parse_json(read_file("ability-pack.json"))
+	assert_equal(pack["schema"], "kujo.ability-pack/v1")
+	assert_equal(pack["pack_id"], "kujo.cms.core")
+	assert_equal(pack["pack_version"], "1.0.0")
+	assert_equal(len(pack["definitions"]), 6)
 	contract_schema := parse_json(read_file("kennel_packages/ability/schema/ability.schema.json"))
 	definition := {
 		"schema": ABILITY_SCHEMA_ID,

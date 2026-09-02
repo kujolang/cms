@@ -1,0 +1,16 @@
+{
+  "schema": "kujo.ability-pack/v1",
+  "pack_id": "kujo.cms.core",
+  "pack_version": "1.0.0",
+  "ability_contract": "1.0.1",
+  "description": "Six bounded CMS reference workflows with CMS-owned authorization, approval, idempotency, receipts, and audit.",
+  "definitions": [
+    { "id": "kujo.cms.site.inspect", "version": "1.0.0", "permission": "cms.read", "approval_required": false },
+    { "id": "kujo.cms.content.list", "version": "1.0.0", "permission": "cms.read", "approval_required": false },
+    { "id": "kujo.cms.seo.audit", "version": "1.0.0", "permission": "cms.read", "approval_required": false },
+    { "id": "kujo.cms.seo.update-entry", "version": "1.0.0", "permission": "cms.write", "approval_required": true },
+    { "id": "kujo.cms.seo.bulk-update", "version": "1.0.0", "permission": "cms.write", "approval_required": true },
+    { "id": "kujo.cms.integrations.inspect", "version": "1.0.0", "permission": "admin.settings", "approval_required": false }
+  ],
+  "publication_status": "repository-local"
+}
