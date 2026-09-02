@@ -7,6 +7,8 @@ the shared package does not.
 
 CMS Abilities expose bounded semantic operations without making HTTP, MCP, or WebMCP the source of their meaning.
 
+The six core capabilities have a dated local reference-gateway certification record in [`ability-pack-certification-2026-09-02.md`](ability-pack-certification-2026-09-02.md). That evidence does not certify a production deployment or an agent host.
+
 ## Contract layers
 
 Each resolved CMS Ability has separate concerns:
