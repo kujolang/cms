@@ -2,7 +2,9 @@
 
 Certification level: local reference-gateway conformance
 
-Source revision: `11fb5ee`
+Gateway certification source revision: `11fb5ee`
+
+Versioned pack envelope introduced at revision: `189438b`
 
 CMS package version: `1.1.0` (unreleased)
 
