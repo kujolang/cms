@@ -58,27 +58,12 @@ run_step() {
 
 require_port_available() {
 	local port="$1"
-	if node -e '
-		const net = require("node:net");
-		const port = Number(process.argv[1]);
-		const socket = net.createConnection({host: "127.0.0.1", port});
-		const finish = (code) => {
-			socket.destroy();
-			process.exit(code);
-		};
-		socket.setTimeout(1000, () => finish(1));
-		socket.once("connect", () => finish(0));
-		socket.once("error", () => finish(1));
-	' "${port}"; then
-		echo "Release gate port ${port} is already in use. Set CMS_GATE_PORT_BASE to an unused range; no existing process was stopped." >&2
-		exit 1
-	fi
 	if ! node -e '
 		const net = require("node:net");
 		const port = Number(process.argv[1]);
 		const server = net.createServer();
 		server.once("error", () => process.exit(1));
-		server.listen(port, "127.0.0.1", () => server.close(() => process.exit(0)));
+		server.listen(port, "0.0.0.0", () => server.close(() => process.exit(0)));
 	' "${port}"; then
 		echo "Release gate port ${port} is already in use. Set CMS_GATE_PORT_BASE to an unused range; no existing process was stopped." >&2
 		exit 1
