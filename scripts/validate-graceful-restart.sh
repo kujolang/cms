@@ -32,21 +32,25 @@ cleanup() {
 }
 trap cleanup EXIT
 
-clear_port() {
-	local existing
-	existing="$(lsof -tiTCP:"${PORT}" -sTCP:LISTEN 2>/dev/null || true)"
-	if [[ -n "${existing}" ]]; then
-		for pid in ${existing}; do
-			kill "${pid}" >/dev/null 2>&1 || true
-		done
-	fi
+require_port_available() {
+	for _ in $(seq 1 50); do
+		if node -e '
+			const net = require("node:net");
+			const server = net.createServer();
+			server.once("error", () => process.exit(1));
+			server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close(() => process.exit(0)));
+		' "${PORT}"; then return 0; fi
+		sleep 0.2
+	done
+	echo "[FAIL] test port ${PORT} is already in use; refusing to stop an unrelated process"
+	exit 1
 }
 
 start_server() {
-	clear_port
+	require_port_available
 	(
 		cd "${ROOT_DIR}"
-		CMS_API_PORT="${PORT}" \
+		exec env CMS_API_PORT="${PORT}" \
 		CMS_SITE_URL="${BASE_URL}" \
 		CMS_DB_PATH="${DB_PATH}" \
 		CMS_API_TOKEN="${TOKEN}" \

@@ -47,15 +47,19 @@ stop_server() {
 	SERVER_PID=""
 }
 
-clear_port() {
+require_port_available() {
 	local port="$1"
-	local existing_pids
-	existing_pids="$(lsof -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
-	if [[ -n "${existing_pids}" ]]; then
-		for existing_pid in ${existing_pids}; do
-			kill "${existing_pid}" >/dev/null 2>&1 || true
-		done
-	fi
+	for _ in $(seq 1 50); do
+		if node -e '
+			const net = require("node:net");
+			const server = net.createServer();
+			server.once("error", () => process.exit(1));
+			server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close(() => process.exit(0)));
+		' "${port}"; then return 0; fi
+		sleep 0.2
+	done
+	echo "[FAIL] test port ${port} is already in use; refusing to stop an unrelated process"
+	exit 1
 }
 
 start_server() {
@@ -64,11 +68,11 @@ start_server() {
 	local log_file="$3"
 	local mode="$4"
 	local site_url="http://127.0.0.1:${port}"
-	clear_port "${port}"
+	require_port_available "${port}"
 
 	(
 		cd "${ROOT_DIR}"
-		CMS_API_PORT="${port}" \
+		exec env CMS_API_PORT="${port}" \
 		CMS_SITE_URL="${site_url}" \
 		CMS_DB_PATH="${db_path}" \
 		CMS_API_TOKEN="${TOKEN}" \

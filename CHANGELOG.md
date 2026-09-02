@@ -8,6 +8,9 @@
   short-lived, request-bound, one-time approvals; bind approvals to canonical
   invocation digests and tenant-aware principals; and migrate approval storage
   in schema version 13.
+- Make release and restart gates refuse occupied ports without terminating
+  unrelated processes, and bind server lifecycle cleanup to the exact Kujo
+  process started by each test.
 
 ## 1.1.0 - 2026-08-30
 

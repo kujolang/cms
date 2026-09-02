@@ -43,6 +43,7 @@ GRACEFUL_PORT="$((BASE_PORT + 40))"
 OPS_LOAD_PERF_PORT="$((BASE_PORT + 50))"
 OPS_LOAD_MIGRATION_PORT="$((BASE_PORT + 51))"
 OPS_LOAD_PORT="$((BASE_PORT + 52))"
+WEBHOOK_SINK_PORT="$((WEBHOOK_PIPELINE_PORT + 100))"
 
 RUN_PERF="${CMS_GATE_RUN_PERF:-true}"
 PERF_RUNS="${CMS_GATE_PERF_RUNS:-5}"
@@ -55,7 +56,26 @@ run_step() {
 	"$@"
 }
 
+require_port_available() {
+	local port="$1"
+	if ! node -e '
+		const net = require("node:net");
+		const port = Number(process.argv[1]);
+		const server = net.createServer();
+		server.once("error", () => process.exit(1));
+		server.listen(port, "127.0.0.1", () => server.close(() => process.exit(0)));
+	' "${port}"; then
+		echo "Release gate port ${port} is already in use. Set CMS_GATE_PORT_BASE to an unused range; no existing process was stopped." >&2
+		exit 1
+	fi
+}
+
 cd "${ROOT_DIR}"
+
+for offset in $(seq 0 16) 20 21 22 23 24 25 30 40 50 51 52; do
+	require_port_available "$((BASE_PORT + offset))"
+done
+require_port_available "${WEBHOOK_SINK_PORT}"
 
 run_step "Brand isolation" \
 	bash scripts/check-brand-isolation.sh

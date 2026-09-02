@@ -113,4 +113,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          KUJO_BIN="${{ steps.kujo.outputs.path }}" bash scripts/test-release-port-safety.sh
           CMS_GATE_RUN_PERF=true CMS_GATE_PERF_RUNS=5 CMS_GATE_RUN_PERF_BUDGET=true KUJO_BIN="${{ steps.kujo.outputs.path }}" bash scripts/run-release-gate.sh
