@@ -73,7 +73,8 @@ export load_session_auth := func(db, token) {
 	if expires_at <= current_timestamp() { return {"ok": false, "error": "Session expired"} }
 	permissions := parse_permissions(row["permissions_json"])
 	permissions = push(permissions, "auth.session")
-	_ := db_execute_safe(db, "UPDATE identity_sessions SET last_seen_at = ? WHERE id = ?", [now(), row["session_id"]])
+	now_value := now()
+	_ := db_execute_safe(db, "UPDATE identity_sessions SET last_seen_at = ? WHERE id = ? AND (last_seen_at IS NULL OR CAST(last_seen_at AS REAL) < ?)", [now_value, row["session_id"], now_value - 60])
 	return {
 		"ok": true,
 		"actor": "user:" + to_string(row["user_id"]),
@@ -167,7 +168,8 @@ func load_token_auth(db, token) {
 	}
 
 	permissions := parse_permissions(role_result["rows"][0]["permissions_json"])
-	_ := db_execute_safe(db, "UPDATE api_tokens SET last_used_at = ?, updated_at = ? WHERE id = ?", [now(), now(), row["id"]])
+	now_value := now()
+	_ := db_execute_safe(db, "UPDATE api_tokens SET last_used_at = ?, updated_at = ? WHERE id = ? AND (last_used_at IS NULL OR CAST(last_used_at AS REAL) < ?)", [now_value, now_value, row["id"], now_value - 60])
 
 	return {
 		"ok": true,

@@ -447,6 +447,8 @@ test "identity sessions carry core permissions and framework-neutral capabilitie
 	assert_equal(contains(effective_admin_capabilities(auth["permissions"]), "view_content"), true)
 	assert_equal(contains(effective_admin_capabilities(auth["permissions"]), "edit_content"), true)
 	assert_equal(contains(effective_admin_capabilities(auth["permissions"]), "manage_users"), false)
+	seen_rows := db_query(db, "SELECT CAST(last_seen_at AS INTEGER) AS last_seen_at, CAST(? AS INTEGER) AS expected_last_seen_at FROM identity_sessions WHERE id = ?", [now_ts, auth["session_id"]])
+	assert_equal(seen_rows[0]["last_seen_at"], seen_rows[0]["expected_last_seen_at"])
 	if file_exists(db_path) { delete_file(db_path) }
 	if file_exists(db_path + "-wal") { delete_file(db_path + "-wal") }
 	if file_exists(db_path + "-shm") { delete_file(db_path + "-shm") }
