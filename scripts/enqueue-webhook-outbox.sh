@@ -148,7 +148,7 @@ if [[ -z "${LAST_AUDIT_ID}" ]]; then
 	LAST_AUDIT_ID="0"
 fi
 
-AUDIT_ROWS="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, action, target_id, hex(details_json) FROM audit_log WHERE id > ${LAST_AUDIT_ID} AND status_code >= 200 AND status_code < 300 AND action IN ('entry.create', 'entry.update', 'entry.patch', 'entry.delete') ORDER BY id ASC LIMIT ${LIMIT};")"
+AUDIT_ROWS="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, action, target_id, hex(details_json) FROM audit_log WHERE id > ${LAST_AUDIT_ID} AND status_code >= 200 AND status_code < 300 AND action IN ('entry.create', 'entry.update', 'entry.patch', 'entry.compose', 'entry.delete') ORDER BY id ASC LIMIT ${LIMIT};")"
 
 if [[ -z "${AUDIT_ROWS}" ]]; then
 	echo "${SCRIPT_LABEL}: no new audit events"
@@ -183,7 +183,7 @@ while IFS='|' read -r audit_id action target_id details_hex; do
 		continue
 	fi
 
-	if [[ "${action}" == "entry.update" || "${action}" == "entry.patch" ]]; then
+	if [[ "${action}" == "entry.update" || "${action}" == "entry.patch" || "${action}" == "entry.compose" ]]; then
 		if [[ -z "${content_type_key}" || -z "${slug}" ]]; then
 			SKIPPED_TOTAL=$((SKIPPED_TOTAL + 1))
 			continue

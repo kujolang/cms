@@ -45,6 +45,8 @@ func ingest_media_path(ctx, filename_value, alt_text_value) {
 
 export register_media_storage_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/media/files/:object_key", func(req) {
+		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		if ctx["cfg"]["media_storage_adapter"] != "filesystem" { return fail(ctx["cfg"], 404, "media_not_found", "Media file not found", {}) }
 		object_key := safe_media_filename(dict_get_or(dict_get_or(req, "params", {}), "object_key", "")); if object_key == "" { return fail(ctx["cfg"], 404, "media_not_found", "Media file not found", {}) }
 		rows := []; try { rows = db_query(ctx["db"], "SELECT mime_type FROM media_items WHERE json_valid(meta_json) AND json_extract(meta_json, '$.storage_adapter') = 'filesystem' AND json_extract(meta_json, '$.object_key') = ? LIMIT 1", [object_key]) } except e { return fail(ctx["cfg"], 500, "media_lookup_failed", "Media file could not be resolved", {}) }

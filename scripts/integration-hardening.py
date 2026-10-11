@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 """Behavior regressions for the October hardening pass; stdlib only."""
+import base64
+import io
+import zipfile
 import datetime
 import json
 import http.server
@@ -38,7 +41,9 @@ def request(method, path, body=None, headers=None, status=200):
 with tempfile.TemporaryDirectory(prefix='hardening-', dir=ROOT / 'results') as directory:
     db = Path(directory) / 'cms.db'
     env = dict(os.environ, CMS_API_PORT=str(port), CMS_DB_PATH=str(db), CMS_API_TOKEN=TOKEN,
-               CMS_PLUGIN_HOOK_ALLOW_HTTP='true', CMS_RATE_MAX_REQUESTS='1000', CMS_STRUCTURED_LOGS='false', CMS_AUDIT_LOG='true')
+               CMS_PLUGIN_HOOK_ALLOW_HTTP='true', CMS_RATE_MAX_REQUESTS='1000', CMS_RATE_LIMIT_MODE='sqlite',
+               CMS_EXTENSION_INBOX_DIR=str(Path(directory)/'inbox'), CMS_EXTENSION_STORE_DIR=str(Path(directory)/'installed'),
+               CMS_MEDIA_INBOX_DIR=str(Path(directory)/'media-inbox'), CMS_MEDIA_STORE_DIR=str(Path(directory)/'media-store'), CMS_STRUCTURED_LOGS='false', CMS_AUDIT_LOG='true')
     with open(ROOT / 'results/hardening-integration.log', 'w') as log:
         server = subprocess.Popen([os.environ.get('KUJO_BIN') or shutil.which('kujo'), 'run', '--interpreter', 'backend/runtime/main.kujo'], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
@@ -76,6 +81,72 @@ with tempfile.TemporaryDirectory(prefix='hardening-', dir=ROOT / 'results') as d
             metrics = request('GET', '/metrics')['data']['metrics']
             assert metrics['requests_total'] > 10 and metrics['unauthorized_total'] >= 2, metrics
             print('PASS persisted session audit identity, request ID and live metrics')
+            entry = request('POST', '/v1/entries', {'content_type_key': 'hardening', 'title': 'Compose version', 'slug': 'compose-version', 'body': 'Body', 'status': 'draft'}, status=201)['data']
+            compose_path = f'/v1/entries/{entry["id"]}/compose'
+            composed = request('PATCH', compose_path, {'expected_updated_at': entry['updated_at'], 'term_ids': [ids['alpha']]})['data']['entry']
+            assert str(composed['updated_at']) != str(entry['updated_at']), 'term-only compose retained stale version'
+            request('PATCH', compose_path, {'expected_updated_at': entry['updated_at'], 'term_ids': [ids['bravo']]}, status=409)
+            second = request('PATCH', compose_path, {'expected_updated_at': composed['updated_at'], 'entry': {'title': 'Second compose'}})['data']['entry']
+            assert str(second['updated_at']) != str(composed['updated_at']), 'rapid compose reused version'
+            with sqlite3.connect(db) as connection:
+                details = json.loads(connection.execute("SELECT details_json FROM audit_log WHERE action='entry.compose' ORDER BY id DESC LIMIT 1").fetchone()[0])
+                assert details['slug'] == 'compose-version' and details['content_type_key'] == 'hardening'
+                connection.execute("INSERT INTO plugins (plugin_key,name,version,status,capabilities_json,config_json,created_at,updated_at) VALUES ('compose_hook','Compose hook','1.0.0','active','[]','{}',0,0)")
+                plugin_id = connection.execute("SELECT id FROM plugins WHERE plugin_key='compose_hook'").fetchone()[0]
+                connection.execute("INSERT INTO plugin_hooks (plugin_id,hook_name,handler_url,shared_secret,enabled,created_at,updated_at) VALUES (?, 'entry.updated','https://example.test/hook','fixture-secret',1,0,0)", (plugin_id,))
+            subprocess.run(['bash', 'scripts/enqueue-webhook-outbox.sh'], cwd=ROOT, env=env, check=True, stdout=subprocess.DEVNULL)
+            with sqlite3.connect(db) as connection:
+                assert connection.execute("SELECT COUNT(*) FROM webhook_outbox WHERE event_type='entry.updated'").fetchone()[0] == 2
+            subprocess.run(['bash', 'scripts/enqueue-webhook-outbox.sh'], cwd=ROOT, env=env, check=True, stdout=subprocess.DEVNULL)
+            with sqlite3.connect(db) as connection:
+                assert connection.execute("SELECT COUNT(*) FROM webhook_outbox WHERE event_type='entry.updated'").fetchone()[0] == 2
+            print('PASS compose versions, stale-write rejection and webhook enqueue deduplication')
+            archive = io.BytesIO()
+            manifest = json.loads((ROOT / 'examples/extensions/starter-plugin/kujo-plugin.json').read_text())
+            manifest['key'] = 'cleanup_probe'
+            with zipfile.ZipFile(archive, 'w') as package:
+                package.writestr('kujo-plugin.json', json.dumps(manifest))
+                package.writestr('nested/asset.txt', 'fixture')
+            payload = {'data_base64': base64.b64encode(archive.getvalue()).decode()}
+            installed = request('POST', '/v1/extensions/packages/upload', payload)['data']
+            old_root = Path(installed['storage']['install_root'])
+            victim = Path(directory) / 'victim'
+            victim.mkdir()
+            sentinel = victim / 'sentinel.txt'
+            sentinel.write_text('must survive')
+            forged = str(old_root) + '/../../victim'
+            request('PATCH', f'/v1/plugins/{installed["extension"]["id"]}', {'config': {'storage': {'install_root': forged}}})
+            replacement = request('POST', '/v1/extensions/packages/upload', payload)['data']
+            assert sentinel.exists(), 'client-controlled cleanup deleted an outside file'
+            legit_root = Path(replacement['storage']['install_root'])
+            request('POST', '/v1/extensions/packages/upload', payload)
+            assert not legit_root.exists(), 'legitimate owned package replacement did not clean up'
+            linked_root = Path(directory) / 'installed' / ('package-' + 'a' * 32)
+            linked_root.symlink_to(victim, target_is_directory=True)
+            request('PATCH', f'/v1/plugins/{installed["extension"]["id"]}', {'config': {'storage': {'install_root': str(linked_root)}}})
+            request('POST', '/v1/extensions/packages/upload', payload)
+            assert sentinel.exists(), 'cleanup followed a package symlink'
+
+            for kind, key in [('plugin', 'another_plugin'), ('theme', 'cleanup_probe')]:
+                other_manifest = json.loads((ROOT / f'examples/extensions/starter-{kind}/kujo-{kind}.json').read_text())
+                other_manifest['key'] = key
+                other_archive = io.BytesIO()
+                with zipfile.ZipFile(other_archive, 'w') as package:
+                    package.writestr(f'kujo-{kind}.json', json.dumps(other_manifest))
+                protected = request('POST', '/v1/extensions/packages/upload', {'data_base64': base64.b64encode(other_archive.getvalue()).decode()})['data']
+                protected_root = Path(protected['storage']['install_root'])
+                request('PATCH', f'/v1/plugins/{installed["extension"]["id"]}', {'config': {'storage': {'install_root': str(protected_root)}}})
+                request('POST', '/v1/extensions/packages/upload', payload)
+                assert (protected_root / f'kujo-{kind}.json').exists(), 'cleanup crossed extension ownership'
+            legacy_root = Path(directory) / 'installed' / ('package-' + 'b' * 32)
+            legacy_root.mkdir()
+            (legacy_root / 'legacy.txt').write_text('unproven ownership')
+            request('PATCH', f'/v1/plugins/{installed["extension"]["id"]}', {'config': {'storage': {'install_root': str(legacy_root)}}})
+            request('POST', '/v1/extensions/packages/upload', payload)
+            assert (legacy_root / 'legacy.txt').exists(), 'unmarked legacy tree was deleted'
+            print('PASS forged package cleanup containment and legitimate replacement')
+
+
             class Sink(http.server.BaseHTTPRequestHandler):
                 hits = 0
                 def do_GET(self):
@@ -99,6 +170,15 @@ with tempfile.TemporaryDirectory(prefix='hardening-', dir=ROOT / 'results') as d
                 finally:
                     sink.shutdown()
                     thread.join()
+            media = request('POST', '/v1/media/upload', {'filename': 'fixture.png', 'data_base64': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jpZkAAAAASUVORK5CYII='})['data']
+            object_key = json.loads(media['meta_json'])['object_key']
+            media_path = '/v1/media/files/' + object_key
+            request('GET', media_path, headers={})
+            with sqlite3.connect(db) as connection:
+                connection.execute('UPDATE rate_limit_buckets SET count=1000')
+            request('GET', media_path, headers={}, status=429)
+            print('PASS public media reads enforce request quota')
+
 
         finally:
             server.terminate()

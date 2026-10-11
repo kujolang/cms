@@ -60,16 +60,27 @@ export register_content_workflow_routes := func(server, ctx) {
 		workflow_error := null
 		try {
 			db_execute(ctx["db"], "BEGIN IMMEDIATE", [])
+			fresh_rows := db_query(ctx["db"], "SELECT * FROM entries WHERE id = ? LIMIT 1", [entry_id_value])
+			if len(fresh_rows) == 0 || to_json(fresh_rows[0]) != to_json(existing_entry) {
+				db_execute(ctx["db"], "ROLLBACK", [])
+				return fail(ctx["cfg"], 409, "entry_changed", "Entry changed during composition", {})
+			}
+			fresh_locks := db_query(ctx["db"], "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id_value, current_timestamp()])
+			if len(fresh_locks) > 0 {
+				db_execute(ctx["db"], "ROLLBACK", [])
+				return fail(ctx["cfg"], 409, "entry_locked", "Entry is currently locked", {})
+			}
 			db_execute(ctx["db"], "INSERT INTO entry_revisions (entry_id, title, slug, status, excerpt, body, meta_json, author_id, published_at, revision_note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [entry_id_value, existing_entry["title"], existing_entry["slug"], existing_entry["status"], existing_entry["excerpt"], existing_entry["body"], existing_entry["meta_json"], existing_entry["author_id"], existing_entry["published_at"], revision_note_value, now()])
-			if has_entry_changes { db_execute(ctx["db"], "UPDATE entries SET title = ?, slug = ?, status = ?, excerpt = ?, body = ?, meta_json = ?, published_at = ?, unpublish_at = ?, updated_at = ? WHERE id = ?", [title_value, slug_value, status_value, excerpt_value, content_value, meta_value, published_value, unpublish_value, now(), entry_id_value]) }
+			if has_entry_changes { db_execute(ctx["db"], "UPDATE entries SET title = ?, slug = ?, status = ?, excerpt = ?, body = ?, meta_json = ?, published_at = ?, unpublish_at = ? WHERE id = ?", [title_value, slug_value, status_value, excerpt_value, content_value, meta_value, published_value, unpublish_value, entry_id_value]) }
 			if has_term_changes { db_execute(ctx["db"], "DELETE FROM entry_terms WHERE entry_id = ?", [entry_id_value]); for term_id_value in term_ids_value { db_execute(ctx["db"], "INSERT INTO entry_terms (entry_id, term_id, created_at) VALUES (?, ?, ?)", [entry_id_value, term_id_value, now()]) } }
+			db_execute(ctx["db"], "UPDATE entries SET updated_at = printf('%.3f', MAX(CAST(updated_at AS REAL) + 0.001, ?)) WHERE id = ?", [current_timestamp() / 1000.0, entry_id_value])
 			db_execute(ctx["db"], "COMMIT", [])
 		} except e { workflow_error = e }
 		if type(workflow_error) != "null" { try { db_execute(ctx["db"], "ROLLBACK", []) } except rollback_error { _ = rollback_error }; return fail(ctx["cfg"], 409, "compose_failed", "Atomic entry composition failed", {}) }
 		updated_entry_rows := db_query(ctx["db"], "SELECT * FROM entries WHERE id = ? LIMIT 1", [entry_id_value])
 		updated_terms_rows := db_query(ctx["db"], "SELECT t.id, t.name, t.slug, tx.taxonomy_key FROM taxonomy_terms t INNER JOIN taxonomies tx ON tx.id = t.taxonomy_id INNER JOIN entry_terms et ON et.term_id = t.id WHERE et.entry_id = ? ORDER BY tx.taxonomy_key, t.name", [entry_id_value])
 		revision_rows := db_query(ctx["db"], "SELECT id, revision_note, created_at FROM entry_revisions WHERE entry_id = ? ORDER BY id DESC LIMIT 1", [entry_id_value])
-		_ = write_audit(ctx, req, "entry.compose", 200, "entry", entry_id_value, {"entry_changed": has_entry_changes, "terms_changed": has_term_changes, "term_count": len(updated_terms_rows), "revision_id": revision_rows[0]["id"]})
+		_ = write_audit(ctx, req, "entry.compose", 200, "entry", entry_id_value, {"content_type_key": existing_entry["content_type_key"], "slug": slug_value, "status": status_value, "published_at": published_value, "entry_changed": has_entry_changes, "terms_changed": has_term_changes, "term_count": len(updated_terms_rows), "revision_id": revision_rows[0]["id"]})
 		return ok(ctx["cfg"], {"entry": updated_entry_rows[0], "terms": updated_terms_rows, "revision": revision_rows[0]})
 	})
 	server = server.route("POST", "/v1/taxonomies/:id/terms/bulk", func(req) {

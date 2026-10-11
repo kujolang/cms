@@ -24,16 +24,37 @@ func parse_extension_manifest(path_value) {
 	return {"ok": false, "code": "invalid_package_schema", "message": "Package manifest schema must be kujo.theme/v1 or kujo.plugin/v1"}
 }
 
-func remove_managed_package_tree(store_root, install_root) {
-	store_prefix := path_join(store_root, "package-")
-	if starts_with(install_root, store_prefix) == false || path_is_dir(install_root) == false { return false }
-	entries := list_dir(install_root); if type(entries) == "error" { return false }
+func managed_package_id(store_root, install_root) {
+	prefix := path_join(store_root, "package-")
+	if starts_with(install_root, prefix) == false { return "" }
+	identifier := substring(install_root, len(prefix), len(install_root))
+	if len(identifier) != 32 || regex_replace(identifier, "[a-f0-9]", "") != "" { return "" }
+	if path_exists(install_root) == false || path_is_symlink(install_root) != false { return "" }
+	return identifier
+}
+
+func remove_package_contents(directory) {
+	if path_is_symlink(directory) != false { return false }
+	entries := list_dir(directory); if type(entries) == "error" { return false }
 	for entry in entries {
-		child_path := path_join(install_root, entry)
-		if path_is_dir(child_path) { _ = remove_managed_package_tree(store_root, child_path) } else if path_is_file(child_path) { _ = delete_file(child_path) }
+		child_path := path_join(directory, entry)
+		if path_is_symlink(child_path) == true { _ = delete_file(child_path) }
+		else if path_is_dir(child_path) { _ = remove_package_contents(child_path) }
+		else if path_is_file(child_path) { _ = delete_file(child_path) }
 	}
-	if path_is_dir(install_root) { _ = os_rmdir(install_root) }
-	return path_exists(install_root) == false
+	_ = os_rmdir(directory)
+	return path_exists(directory) == false
+}
+
+func remove_managed_package_tree(store_root, install_root) {
+	identifier := managed_package_id(store_root, install_root)
+	if identifier == "" || path_is_dir(install_root) == false { return false }
+	removed := remove_package_contents(install_root)
+	if removed {
+		owner_path := path_join(store_root, ".cms-owner-" + identifier + ".json")
+		if file_exists(owner_path) { _ = delete_file(owner_path) }
+	}
+	return removed
 }
 
 func prior_package_root(ctx, kind, extension_key) {
@@ -42,7 +63,16 @@ func prior_package_root(ctx, kind, extension_key) {
 	parsed := null; parse_error := null; try { parsed = parse_json(to_string(dict_get_or(rows["rows"][0], "config_json", "{}"))) } except e { parse_error = e }
 	if type(parse_error) != "null" || type(parsed) != "dict" { return "" }
 	storage := dict_get_or(parsed, "storage", {}); if type(storage) != "dict" { return "" }
-	return trim(to_string(dict_get_or(storage, "install_root", "")))
+	install_root := trim(to_string(dict_get_or(storage, "install_root", "")))
+	store_root := ctx["cfg"]["extension_store_dir"]
+	identifier := managed_package_id(store_root, install_root)
+	if identifier == "" { return "" }
+	owner_path := path_join(store_root, ".cms-owner-" + identifier + ".json")
+	if path_is_file(owner_path) == false || path_is_symlink(owner_path) != false { return "" }
+	owner := null
+	try { owner = parse_json(read_file(owner_path)) } except e { return "" }
+	if type(owner) != "dict" || dict_get_or(owner, "kind", "") != kind || dict_get_or(owner, "key", "") != extension_key { return "" }
+	return install_root
 }
 
 func persist_ingested_extension(ctx, kind, manifest, receipt, install_root, activate) {
@@ -97,6 +127,10 @@ export ingest_extension_archive := func(ctx, filename_value, activate, allowed_k
 	receipt_raw := {"format": "zip", "filename": filename, "size_bytes": archive_size, "uncompressed_bytes": expanded_bytes, "file_count": len(extracted_files), "manifest_path": manifest_relative, "sha256": digest}
 	receipt_result := validate_package_receipt(receipt_raw, manifest_result["kind"])
 	if receipt_result["ok"] == false { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 422, "code": receipt_result["code"], "message": receipt_result["message"]} }
+	// Store ownership outside uploaded content and mutable extension configuration.
+	owner_path := path_join(store_root, ".cms-owner-" + managed_package_id(store_root, install_root) + ".json")
+	owner_write := write_file(owner_path, to_json({"kind": manifest_result["kind"], "key": manifest_result["manifest"]["key"]}))
+	if type(owner_write) == "error" { _ = remove_managed_package_tree(store_root, install_root); return {"ok": false, "status": 500, "code": "package_ownership_failed", "message": "Could not record package ownership"} }
 	previous_root := prior_package_root(ctx, manifest_result["kind"], manifest_result["manifest"]["key"])
 	persisted := persist_ingested_extension(ctx, manifest_result["kind"], manifest_result["manifest"], receipt_result["value"], install_root, activate)
 	if persisted["ok"] == false { _ = remove_managed_package_tree(store_root, install_root); persisted["status"] = 409; return persisted }
