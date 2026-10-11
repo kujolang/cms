@@ -47,3 +47,16 @@ This document tracks runtime or platform constraints that may need Kujo-level im
 4. Add standard library helpers for feed/sitemap-safe XML generation.
 5. Add optional background worker/runtime patterns for delayed or retryable tasks.
 6. Add parser/runtime support for nested module imports to unblock direct backend folder module loading.
+
+## Request state and clock conventions
+
+Kujo dictionaries use value semantics across function and route calls. A guard
+must return its enriched request, and its caller must consume `guard["request"]`.
+CMS keeps process-local metrics and memory-mode rate buckets in a shared native
+SQLite in-memory handle; ordinary dictionary mutation is not shared state.
+Memory mode resets on restart. SQLite rate mode persists in the configured CMS
+database and fails closed if its state cannot be read or updated.
+
+Use `current_timestamp()` for comparisons and arithmetic against parsed epoch
+milliseconds (credential expiry, schedules, and lock deadlines). `now()` remains
+the existing seconds representation for ordinary creation/activity fields.
