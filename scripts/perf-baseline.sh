@@ -99,11 +99,12 @@ measure_endpoint() {
 echo "Starting CMS API for performance baseline..."
 (
 	cd "${ROOT_DIR}"
+	CMS_RATE_MAX_REQUESTS="$((RUNS * 14 + 100))" \
 	CMS_API_PORT="${PORT}" \
 	CMS_SITE_URL="${BASE_URL}" \
 	CMS_DB_PATH="${DB_PATH}" \
 	CMS_API_TOKEN="${TOKEN}" \
-	"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
+	exec "${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
 ) &
 SERVER_PID="$!"
 

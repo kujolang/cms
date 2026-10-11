@@ -63,7 +63,7 @@ require_port_available() {
 		const port = Number(process.argv[1]);
 		const server = net.createServer();
 		server.once("error", () => process.exit(1));
-		server.listen(port, "0.0.0.0", () => server.close(() => process.exit(0)));
+		server.listen(port, "127.0.0.1", () => server.close(() => process.exit(0)));
 	' "${port}"; then
 		echo "Release gate port ${port} is already in use. Set CMS_GATE_PORT_BASE to an unused range; no existing process was stopped." >&2
 		exit 1
@@ -72,7 +72,7 @@ require_port_available() {
 
 cd "${ROOT_DIR}"
 
-for offset in $(seq 0 16) 20 21 22 23 24 25 30 40 50 51 52; do
+for offset in $(seq 0 19) 20 21 22 23 24 25 30 40 50 51 52; do
 	require_port_available "$((BASE_PORT + offset))"
 done
 require_port_available "${WEBHOOK_SINK_PORT}"
@@ -82,6 +82,12 @@ run_step "Brand isolation" \
 
 run_step "Contract tests" \
 	"${KUJO_BIN_PATH}" test-run tests/cms_contract_tests.kujo
+
+run_step "JavaScript client contracts" node --test clients/javascript/test/client.test.js
+run_step "PHP client contracts" php -d zend.assertions=1 -d assert.exception=1 clients/php/tests/client_test.php
+run_step "Performance budget validation" node scripts/test-perf-budget.mjs
+run_step "Hardening regressions" env CMS_TEST_PORT="$((BASE_PORT + 17))" KUJO_BIN="${KUJO_BIN_PATH}" python3 scripts/integration-hardening.py
+run_step "Durable rate limiting" env CMS_TEST_PORT_SQLITE="$((BASE_PORT + 18))" CMS_TEST_PORT_MEMORY="$((BASE_PORT + 19))" KUJO_BIN="${KUJO_BIN_PATH}" bash scripts/integration-rate-limit-durable.sh
 
 run_step "Stage 1 integration" \
 	env CMS_TEST_PORT="${STAGE1_PORT}" KUJO_BIN="${KUJO_BIN_PATH}" \

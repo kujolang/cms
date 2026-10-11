@@ -140,7 +140,7 @@ echo "Starting CMS API for multi-tenant integration checks..."
 	CMS_TENANT_MAX_COUNT="2" \
 	CMS_TENANT_WORKSPACE_MAX_COUNT="1" \
 	CMS_AUDIT_LOG="true" \
-	"${RUN_CMD[@]}" >"${LOG_FILE}" 2>&1
+	exec "${RUN_CMD[@]}" >"${LOG_FILE}" 2>&1
 ) &
 SERVER_PID="$!"
 

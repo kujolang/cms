@@ -45,7 +45,7 @@ echo "Verifying startup compatibility via backend/runtime/main.kujo entrypoint..
 	CMS_SITE_URL="${BASE_URL}" \
 	CMS_DB_PATH="${DB_PATH}" \
 	CMS_API_TOKEN="${TOKEN}" \
-	"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
+	exec "${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
 ) &
 SERVER_PID="$!"
 

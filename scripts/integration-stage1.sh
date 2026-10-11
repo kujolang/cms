@@ -147,7 +147,7 @@ echo "Starting CMS API for Stage 1 integration checks..."
 	CMS_DB_PATH="${DB_PATH}" \
 	CMS_API_TOKEN="${TOKEN}" \
 	CMS_AUDIT_LOG="true" \
-	"${RUN_CMD[@]}" >"${LOG_FILE}" 2>&1
+	exec "${RUN_CMD[@]}" >"${LOG_FILE}" 2>&1
 ) &
 SERVER_PID="$!"
 

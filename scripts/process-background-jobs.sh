@@ -132,33 +132,29 @@ write_audit_row() {
 
 run_scheduler_job() {
 	local payload_json="$1"
-	local now_ms now_epoch_sec published_ids unpublished_ids published_count unpublished_count
-
+	local now_epoch_sec now_ms
 	now_epoch_sec="$(date +%s)"
 	now_ms="$((now_epoch_sec * 1000))"
 
-	published_ids="$(sqlite3 "${DB_PATH}" "SELECT id FROM entries WHERE status = 'draft' AND published_at IS NOT NULL AND CASE WHEN instr(CAST(published_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', published_at) AS INTEGER) * 1000 ELSE CAST(published_at AS INTEGER) END <= ${now_ms} ORDER BY id ASC LIMIT 500;")"
-	published_count=0
-	if [[ -n "${published_ids}" ]]; then
-		while IFS= read -r entry_id; do
-			[[ -z "${entry_id}" ]] && continue
-			sqlite3 "${DB_PATH}" "UPDATE entries SET status = 'published', updated_at = '${now_epoch_sec}' WHERE id = ${entry_id};"
-			published_count=$((published_count + 1))
-		done <<< "${published_ids}"
-	fi
-
-	unpublished_ids="$(sqlite3 "${DB_PATH}" "SELECT id FROM entries WHERE status = 'published' AND unpublish_at IS NOT NULL AND CASE WHEN instr(CAST(unpublish_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', unpublish_at) AS INTEGER) * 1000 ELSE CAST(unpublish_at AS INTEGER) END <= ${now_ms} ORDER BY id ASC LIMIT 500;")"
-	unpublished_count=0
-	if [[ -n "${unpublished_ids}" ]]; then
-		while IFS= read -r entry_id; do
-			[[ -z "${entry_id}" ]] && continue
-			sqlite3 "${DB_PATH}" "UPDATE entries SET status = 'archived', unpublish_at = NULL, updated_at = '${now_epoch_sec}' WHERE id = ${entry_id};"
-			unpublished_count=$((unpublished_count + 1))
-		done <<< "${unpublished_ids}"
-	fi
-
-	echo "{\"task\":\"scheduler.run\",\"ok\":true,\"processed_at\":\"${now_epoch_sec}\",\"published_count\":${published_count},\"unpublished_count\":${unpublished_count}}"
-	return 0
+	# One write transaction keeps selection, state checks and counts consistent.
+	sqlite3 -cmd ".timeout 5000" "${DB_PATH}" "
+		BEGIN IMMEDIATE;
+		CREATE TEMP TABLE scheduler_counts (kind TEXT, total INTEGER);
+		UPDATE entries SET status = 'published', updated_at = '${now_epoch_sec}'
+		WHERE id IN (SELECT id FROM entries WHERE status = 'scheduled' AND published_at IS NOT NULL
+		AND CASE WHEN instr(CAST(published_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', published_at) AS INTEGER) * 1000 ELSE CAST(published_at AS INTEGER) END <= ${now_ms}
+		ORDER BY id ASC LIMIT 500);
+		INSERT INTO scheduler_counts VALUES ('published', changes());
+		UPDATE entries SET status = 'archived', unpublish_at = NULL, updated_at = '${now_epoch_sec}'
+		WHERE id IN (SELECT id FROM entries WHERE status = 'published' AND unpublish_at IS NOT NULL
+		AND CASE WHEN instr(CAST(unpublish_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', unpublish_at) AS INTEGER) * 1000 ELSE CAST(unpublish_at AS INTEGER) END <= ${now_ms}
+		ORDER BY id ASC LIMIT 500);
+		INSERT INTO scheduler_counts VALUES ('unpublished', changes());
+		COMMIT;
+		SELECT json_object('task', 'scheduler.run', 'ok', json('true'), 'processed_at', '${now_epoch_sec}',
+		'published_count', (SELECT total FROM scheduler_counts WHERE kind = 'published'),
+		'unpublished_count', (SELECT total FROM scheduler_counts WHERE kind = 'unpublished'));
+	"
 }
 
 run_webhook_enqueue_job() {

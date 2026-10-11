@@ -182,7 +182,6 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 	shared_secret="$(decode_hex "${shared_secret_hex}")"
 
 	signature="$(printf '%s' "${payload_json}.${shared_secret}" | shasum -a 256 | awk '{print $1}')"
-	response_file="$(mktemp)"
 	policy_error=""
 	resolved_target=""
 	if ! resolved_target="$(resolve_handler_target "${handler_url}")"; then
@@ -199,7 +198,7 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 			curl_resolution_args+=( --resolve "${resolved_host}:${resolved_port}:${resolved_ip}" )
 		fi
 		set +e
-		http_status="$(curl "${curl_resolution_args[@]}" -sS -o "${response_file}" -w "%{http_code}" -X POST "${handler_url}" \
+		http_status="$(curl "${curl_resolution_args[@]}" -sS -o /dev/null -w "%{http_code}" -X POST "${handler_url}" \
 			-H "Content-Type: application/json" \
 			-H "X-CMS-Webhook-Event: ${event_type}" \
 			-H "X-CMS-Webhook-Id: ${event_id}" \
@@ -217,10 +216,9 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 	if [[ ${curl_exit_code} -eq 0 && "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
 		next_attempt_count=$((attempt_count + 1))
 		updated="$(sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'delivered', attempt_count = ${next_attempt_count}, last_error = NULL, last_status_code = ${http_status}, delivered_at = '${now_value}', updated_at = '${now_value}', claim_token = NULL, claim_expires_at = NULL WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; SELECT changes();")"
-		if [[ "${updated}" != "1" ]]; then rm -f "${response_file}"; continue; fi
+		if [[ "${updated}" != "1" ]]; then continue; fi
 		delivered=$((delivered + 1))
 		delivery_status "DELIVERED" "${outbox_id}" "${event_type}" "status=${http_status}"
-		rm -f "${response_file}"
 		continue
 	fi
 
@@ -237,18 +235,17 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 
 	if [[ ${next_attempt_count} -ge ${max_attempts} ]]; then
 		updated="$(sqlite3 "${DB_PATH}" "BEGIN IMMEDIATE; UPDATE webhook_outbox SET status = 'dead_letter', attempt_count = ${next_attempt_count}, last_error = '${escaped_error}', last_status_code = ${http_status:-0}, updated_at = '${now_value}' WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; SELECT changes(); INSERT OR REPLACE INTO webhook_dead_letters (outbox_id, hook_id, event_id, event_type, payload_json, handler_url, shared_secret, attempt_count, last_error, last_status_code, failed_at, created_at) SELECT id, hook_id, event_id, event_type, payload_json, handler_url, shared_secret, attempt_count, '${escaped_error}', ${http_status:-0}, '${now_value}', '${now_value}' FROM webhook_outbox WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; UPDATE webhook_outbox SET claim_token = NULL, claim_expires_at = NULL WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; COMMIT;")"
-		if [[ "${updated}" != "1" ]]; then rm -f "${response_file}"; continue; fi
+		if [[ "${updated}" != "1" ]]; then continue; fi
 		dead_lettered=$((dead_lettered + 1))
 		delivery_status "DEAD-LETTER" "${outbox_id}" "${event_type}" "attempts=${next_attempt_count}/${max_attempts}"
 	else
 		next_attempt_at=$((now_value + (RETRY_BASE_SEC * next_attempt_count)))
 		updated="$(sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'retry', attempt_count = ${next_attempt_count}, last_error = '${escaped_error}', last_status_code = ${http_status:-0}, next_attempt_at = '${next_attempt_at}', updated_at = '${now_value}', claim_token = NULL, claim_expires_at = NULL WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; SELECT changes();")"
-		if [[ "${updated}" != "1" ]]; then rm -f "${response_file}"; continue; fi
+		if [[ "${updated}" != "1" ]]; then continue; fi
 		retried=$((retried + 1))
 		delivery_status "RETRY" "${outbox_id}" "${event_type}" "attempts=${next_attempt_count}/${max_attempts}"
 	fi
 
-	rm -f "${response_file}"
 done <<< "${rows}"
 
 echo "${SCRIPT_LABEL} summary: processed=${processed} delivered=${delivered} retried=${retried} dead_lettered=${dead_lettered}"

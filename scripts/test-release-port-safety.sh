@@ -20,7 +20,7 @@ node -e '
 	const fs = require("node:fs");
 	const net = require("node:net");
 	const server = net.createServer();
-	server.listen(0, "0.0.0.0", () => fs.writeFileSync(process.argv[1], String(server.address().port)));
+	server.listen(0, "127.0.0.1", () => fs.writeFileSync(process.argv[1], String(server.address().port)));
 ' "${PORT_FILE}" &
 LISTENER_PID="$!"
 
@@ -31,7 +31,7 @@ done
 [[ -s "${PORT_FILE}" ]] || { echo "[FAIL] fixture listener did not start"; exit 1; }
 BASE_PORT="$(cat "${PORT_FILE}")"
 
-if CMS_GATE_PORT_BASE="${BASE_PORT}" CMS_GATE_RUN_PERF=false KUJO_BIN="${KUJO_BIN:-/bin/false}" bash "${ROOT_DIR}/scripts/run-release-gate.sh" >"${OUTPUT_FILE}" 2>&1; then
+if CMS_GATE_PORT_BASE="${BASE_PORT}" CMS_GATE_RUN_PERF=false KUJO_BIN="${KUJO_BIN:-$(type -P false)}" bash "${ROOT_DIR}/scripts/run-release-gate.sh" >"${OUTPUT_FILE}" 2>&1; then
 	echo "[FAIL] release gate accepted an occupied port"
 	exit 1
 fi

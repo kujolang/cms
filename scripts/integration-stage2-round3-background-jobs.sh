@@ -138,7 +138,7 @@ start_api() {
 		CMS_DB_PATH="${DB_PATH}" \
 		CMS_API_TOKEN="${TOKEN}" \
 		CMS_AUDIT_LOG="true" \
-		"${RUN_CMD[@]}" >"${LOG_FILE}" 2>&1
+		exec "${RUN_CMD[@]}" >"${LOG_FILE}" 2>&1
 	) &
 	SERVER_PID="$!"
 }
@@ -169,8 +169,11 @@ request "POST" "/v1/content-types" "{\"type_key\":\"${CONTENT_TYPE_KEY}\",\"labe
 assert_status "201" "create background jobs content type"
 
 PAST_PUBLISH_AT="$(( ($(date +%s) * 1000) - 60000 ))"
-request "POST" "/v1/entries" "{\"content_type_key\":\"${CONTENT_TYPE_KEY}\",\"title\":\"Scheduled Publish Entry\",\"slug\":\"scheduled-publish-entry\",\"status\":\"draft\",\"published_at\":\"${PAST_PUBLISH_AT}\",\"body\":\"Publish me by scheduler\"}" "1"
+request "POST" "/v1/entries" "{\"content_type_key\":\"${CONTENT_TYPE_KEY}\",\"title\":\"Scheduled Publish Entry\",\"slug\":\"scheduled-publish-entry\",\"status\":\"scheduled\",\"published_at\":\"${PAST_PUBLISH_AT}\",\"body\":\"Publish me by scheduler\"}" "1"
 assert_status "201" "create scheduled entry"
+request "POST" "/v1/entries" "{\"content_type_key\":\"${CONTENT_TYPE_KEY}\",\"title\":\"Withdrawn Draft\",\"slug\":\"withdrawn-draft\",\"status\":\"draft\",\"published_at\":\"${PAST_PUBLISH_AT}\",\"body\":\"Must remain private\"}" "1"
+assert_status "201" "create withdrawn draft with retained publication timestamp"
+
 
 (
 	cd "${ROOT_DIR}"
@@ -201,6 +204,8 @@ fi
 	wait "${worker_one}"
 	wait "${worker_two}"
 )
+
+assert_sql_equals "SELECT status FROM entries WHERE slug = 'withdrawn-draft';" "draft" "scheduler preserves withdrawn draft"
 
 assert_sql_equals "SELECT COUNT(*) FROM background_jobs WHERE status = 'completed';" "4" "four background jobs completed"
 assert_sql_equals "SELECT COUNT(*) FROM background_jobs WHERE status = 'dead_letter';" "1" "unsupported background job dead-lettered"

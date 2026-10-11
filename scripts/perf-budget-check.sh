@@ -31,21 +31,31 @@ if (!rows.length) {
 }
 
 const failures = [];
+const names = new Set();
 for (const row of rows) {
 	const name = String(row.name || "");
 	const limits = Object.assign({}, defaults, overrides[name] || {});
-	const avg = Number(row.avg_s || 0);
-	const p95 = Number(row.p95_s || 0);
-	const max = Number(row.max_s || 0);
+	if (!name || names.has(name)) failures.push(`Invalid or duplicate performance row: ${name}`);
+	names.add(name);
+	for (const metric of ["min_s", "avg_s", "p95_s", "max_s"]) {
+		if (typeof row[metric] !== "number" || !Number.isFinite(row[metric]) || row[metric] < 0) failures.push(`${name}: invalid ${metric}`);
+	}
+	for (const metric of ["avg_s", "p95_s", "max_s"]) {
+		if (typeof limits[metric] !== "number" || !Number.isFinite(limits[metric]) || limits[metric] <= 0) failures.push(`${name}: invalid ${metric} budget`);
+	}
+	const avg = row.avg_s;
+	const p95 = row.p95_s;
+	const max = row.max_s;
+	if (row.min_s > avg || avg > max || row.min_s > p95 || p95 > max) failures.push(`${name}: inconsistent timing statistics`);
 
 	if (typeof limits.avg_s === "number" && avg > limits.avg_s) {
-		failures.push(`${name}: avg_s ${avg.toFixed(6)} > budget ${limits.avg_s.toFixed(6)}`);
+		failures.push(`${name}: avg_s ${Number(avg).toFixed(6)} > budget ${limits.avg_s.toFixed(6)}`);
 	}
 	if (typeof limits.p95_s === "number" && p95 > limits.p95_s) {
-		failures.push(`${name}: p95_s ${p95.toFixed(6)} > budget ${limits.p95_s.toFixed(6)}`);
+		failures.push(`${name}: p95_s ${Number(p95).toFixed(6)} > budget ${limits.p95_s.toFixed(6)}`);
 	}
 	if (typeof limits.max_s === "number" && max > limits.max_s) {
-		failures.push(`${name}: max_s ${max.toFixed(6)} > budget ${limits.max_s.toFixed(6)}`);
+		failures.push(`${name}: max_s ${Number(max).toFixed(6)} > budget ${limits.max_s.toFixed(6)}`);
 	}
 }
 
