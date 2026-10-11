@@ -230,24 +230,30 @@ func public_guard(req, ctx) {
 }
 
 export register_webmcp_routes := func(server, ctx) {
-	server = server.route("GET", "/.well-known/kujo-webmcp.json", func(req) { guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }; return api_json(200, build_webmcp_manifest(ctx["cfg"]), ctx["cfg"]) })
+	server = server.route("GET", "/.well-known/kujo-webmcp.json", func(req) { guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]; return api_json(200, build_webmcp_manifest(ctx["cfg"]), ctx["cfg"]) })
 	server = server.route("GET", "/assets/js/kujo-webmcp.js", func(req) {
 		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		response := api_text(200, build_webmcp_runtime_source(), ctx["cfg"])
 		response = set_header(response, "Content-Type", "application/javascript; charset=utf-8")
 		response = set_header(response, "Cache-Control", "public, max-age=3600")
 		return response
 	})
-	server = server.route("GET", "/v1/webmcp", func(req) { guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }; return ok(ctx["cfg"], build_webmcp_manifest(ctx["cfg"])) })
-	server = server.route("GET", "/v1/webmcp/tools", func(req) { guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }; tools := webmcp_tool_registry(); return ok(ctx["cfg"], {"tools": tools, "count": len(tools), "extension_registry": "backend/routes/webmcp.kujo:webmcp_tool_registry"}) })
+	server = server.route("GET", "/v1/webmcp", func(req) { guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]; return ok(ctx["cfg"], build_webmcp_manifest(ctx["cfg"])) })
+	server = server.route("GET", "/v1/webmcp/tools", func(req) { guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]; tools := webmcp_tool_registry(); return ok(ctx["cfg"], {"tools": tools, "count": len(tools), "extension_registry": "backend/routes/webmcp.kujo:webmcp_tool_registry"}) })
 	server = server.route("GET", "/v1/webmcp/site", func(req) {
 		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		loaded := load_public_records(ctx, ctx["cfg"]["webmcp_max_scan_records"])
 		if loaded["ok"] == false { return fail(ctx["cfg"], 500, "webmcp_query_failed", "Failed to load public WebMCP content", {}) }
 		return ok(ctx["cfg"], site_payload(ctx, loaded))
 	})
 	server = server.route("GET", "/v1/webmcp/search", func(req) {
 		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		query := dict_get_or(req, "query", {})
 		search := trim(to_string(dict_get_or(query, "q", "")))
 		if len(search) < 1 || len(search) > 200 { return fail(ctx["cfg"], 400, "invalid_query", "q must contain 1 to 200 characters", {}) }
@@ -270,6 +276,7 @@ export register_webmcp_routes := func(server, ctx) {
 	})
 	server = server.route("GET", "/v1/webmcp/content", func(req) {
 		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		query := dict_get_or(req, "query", {})
 		type_key := trim(to_string(dict_get_or(query, "type", "")))
 		if type_key == "" || len(type_key) > 80 { return fail(ctx["cfg"], 400, "invalid_type", "type is required and must be 80 characters or fewer", {}) }
@@ -286,6 +293,7 @@ export register_webmcp_routes := func(server, ctx) {
 	})
 	server = server.route("GET", "/v1/webmcp/record", func(req) {
 		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		query := dict_get_or(req, "query", {}); id := trim(to_string(dict_get_or(query, "id", ""))); url := trim(to_string(dict_get_or(query, "url", "")))
 		if (id == "" && url == "") || (id != "" && url != "") { return fail(ctx["cfg"], 400, "invalid_selector", "Provide exactly one of id or url", {}) }
 		if len(id) > 256 || len(url) > 2048 { return fail(ctx["cfg"], 400, "invalid_selector", "Selector exceeds its maximum length", {}) }
@@ -296,6 +304,7 @@ export register_webmcp_routes := func(server, ctx) {
 	})
 	server = server.route("GET", "/.well-known/kujo-site-index.json", func(req) {
 		guard := public_guard(req, ctx); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		query := dict_get_or(req, "query", {})
 		limit_result := parse_bounded_int(dict_get_or(query, "limit", "100"), "limit", 1, ctx["cfg"]["webmcp_index_page_size_max"])
 		offset_result := parse_bounded_int(dict_get_or(query, "offset", "0"), "offset", 0, 100000000)

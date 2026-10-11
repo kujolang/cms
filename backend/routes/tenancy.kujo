@@ -72,6 +72,7 @@ export register_tenancy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		query := dict_get_or(req, "query", {})
@@ -171,6 +172,7 @@ export register_tenancy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -319,6 +321,7 @@ export register_tenancy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -462,6 +465,7 @@ export register_tenancy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -534,6 +538,7 @@ export register_tenancy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -606,6 +611,7 @@ export register_tenancy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		query := dict_get_or(req, "query", {})
@@ -707,6 +713,7 @@ export register_tenancy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]

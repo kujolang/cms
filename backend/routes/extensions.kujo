@@ -304,11 +304,15 @@ export extension_plugin_runtime := func(db, plugin_key) {
 }
 
 export register_extension_routes := func(server, ctx) {
-	server = server.route("GET", "/v1/extensions/contracts", func(req) { guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }; return ok(ctx["cfg"], extension_contracts()) })
-	server = server.route("GET", "/v1/extensions/navigation", func(req) { guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }; items := extension_navigation(ctx["db"]); return ok(ctx["cfg"], {"items": items, "count": len(items)}) })
-	server = server.route("GET", "/v1/extensions/ai", func(req) { guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }; registry := extension_ai_registry(ctx["db"]); return ok(ctx["cfg"], {"abilities": registry["abilities"], "connectors": registry["connectors"], "counts": {"abilities": len(registry["abilities"]), "connectors": len(registry["connectors"])}}) })
+	server = server.route("GET", "/v1/extensions/contracts", func(req) { guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]; return ok(ctx["cfg"], extension_contracts()) })
+	server = server.route("GET", "/v1/extensions/navigation", func(req) { guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]; items := extension_navigation(ctx["db"]); return ok(ctx["cfg"], {"items": items, "count": len(items)}) })
+	server = server.route("GET", "/v1/extensions/ai", func(req) { guard := guard_request(req, ctx, "cms.read"); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]; registry := extension_ai_registry(ctx["db"]); return ok(ctx["cfg"], {"abilities": registry["abilities"], "connectors": registry["connectors"], "counts": {"abilities": len(registry["abilities"]), "connectors": len(registry["connectors"])}}) })
 	server = server.route("POST", "/v1/themes/validate", func(req) {
 		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		body := null; err := null; try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { err = e }
 		if type(err) != "null" { return fail(ctx["cfg"], 400, "invalid_body", "Invalid JSON body", {}) }
 		result := validate_theme_manifest(body); if result["ok"] == false { return fail(ctx["cfg"], 400, result["code"], result["message"], result["details"]) }
@@ -316,6 +320,7 @@ export register_extension_routes := func(server, ctx) {
 	})
 	server = server.route("POST", "/v1/plugins/validate", func(req) {
 		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		body := null; err := null; try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { err = e }
 		if type(err) != "null" { return fail(ctx["cfg"], 400, "invalid_body", "Invalid JSON body", {}) }
 		result := validate_plugin_manifest(body); if result["ok"] == false { return fail(ctx["cfg"], 400, result["code"], result["message"], result["details"]) }
@@ -323,6 +328,7 @@ export register_extension_routes := func(server, ctx) {
 	})
 	server = server.route("POST", "/v1/themes/install", func(req) {
 		guard := guard_request(req, ctx, "admin.settings"); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		body := null; err := null; try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { err = e }
 		if type(err) != "null" || type(body) != "dict" { return fail(ctx["cfg"], 400, "invalid_body", "Invalid JSON body", {}) }
 		manifest_raw := dict_get_or(body, "manifest", body); result := validate_theme_manifest(manifest_raw); if result["ok"] == false { return fail(ctx["cfg"], 400, result["code"], result["message"], result["details"]) }
@@ -339,6 +345,7 @@ export register_extension_routes := func(server, ctx) {
 	})
 	server = server.route("POST", "/v1/plugins/install", func(req) {
 		guard := guard_request(req, ctx, "admin.plugins"); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		body := null; err := null; try { body = parse_json(to_string(dict_get_or(req, "body", ""))) } except e { err = e }
 		if type(err) != "null" || type(body) != "dict" { return fail(ctx["cfg"], 400, "invalid_body", "Invalid JSON body", {}) }
 		manifest_raw := dict_get_or(body, "manifest", body); result := validate_plugin_manifest(manifest_raw); if result["ok"] == false { return fail(ctx["cfg"], 400, result["code"], result["message"], result["details"]) }
@@ -352,17 +359,20 @@ export register_extension_routes := func(server, ctx) {
 		return ok(ctx["cfg"], {"plugin": installed[0], "manifest": manifest, "installed": true, "active": is_active})
 	})
 	server = server.route("GET", "/v1/themes/:id/export", func(req) {
-		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }; id := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if id <= 0 { return fail(ctx["cfg"], 400, "invalid_theme_id", "id must be positive", {}) }
+		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]; id := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if id <= 0 { return fail(ctx["cfg"], 400, "invalid_theme_id", "id must be positive", {}) }
 		rows := db_query_safe(ctx["db"], "SELECT * FROM themes WHERE id = ? LIMIT 1", [id]); if rows["ok"] == false { return fail(ctx["cfg"], 500, "export_failed", "Could not export theme", {}) }; if len(rows["rows"]) == 0 { return fail(ctx["cfg"], 404, "not_found", "Theme not found", {}) }
 		return ok(ctx["cfg"], {"filename": rows["rows"][0]["theme_key"] + ".kujo-theme.json", "manifest": theme_manifest_from_row(rows["rows"][0]), "secrets_included": false})
 	})
 	server = server.route("GET", "/v1/plugins/:id/export", func(req) {
-		guard := guard_request(req, ctx, "admin.plugins"); if guard["ok"] == false { return guard["response"] }; id := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if id <= 0 { return fail(ctx["cfg"], 400, "invalid_plugin_id", "id must be positive", {}) }
+		guard := guard_request(req, ctx, "admin.plugins"); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]; id := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if id <= 0 { return fail(ctx["cfg"], 400, "invalid_plugin_id", "id must be positive", {}) }
 		rows := db_query_safe(ctx["db"], "SELECT * FROM plugins WHERE id = ? LIMIT 1", [id]); if rows["ok"] == false { return fail(ctx["cfg"], 500, "export_failed", "Could not export plugin", {}) }; if len(rows["rows"]) == 0 { return fail(ctx["cfg"], 404, "not_found", "Plugin not found", {}) }
 		return ok(ctx["cfg"], {"filename": rows["rows"][0]["plugin_key"] + ".kujo-plugin.json", "manifest": plugin_manifest_from_row(rows["rows"][0]), "secrets_included": false})
 	})
 	server = server.route("GET", "/v1/extensions/catalog", func(req) {
 		guard := guard_request(req, ctx, false); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		theme_rows := db_query_safe(ctx["db"], "SELECT * FROM themes ORDER BY status ASC, name ASC", []); plugin_rows := db_query_safe(ctx["db"], "SELECT * FROM plugins WHERE status = 'active' ORDER BY name ASC", [])
 		if theme_rows["ok"] == false || plugin_rows["ok"] == false { return fail(ctx["cfg"], 500, "catalog_failed", "Could not build extension catalog", {}) }
 		themes := []; plugins := []; for row in theme_rows["rows"] { themes = push(themes, {"id": row["id"], "status": row["status"], "manifest": theme_manifest_from_row(row)}) }; for row in plugin_rows["rows"] { plugins = push(plugins, {"id": row["id"], "status": row["status"], "manifest": plugin_manifest_from_row(row)}) }
@@ -370,6 +380,7 @@ export register_extension_routes := func(server, ctx) {
 	})
 	server = server.route("GET", "/v1/extensions/manage", func(req) {
 		guard := guard_request(req, ctx, "admin.settings"); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		theme_rows := db_query_safe(ctx["db"], "SELECT * FROM themes ORDER BY status ASC, name ASC", []); plugin_rows := db_query_safe(ctx["db"], "SELECT * FROM plugins ORDER BY status ASC, name ASC", [])
 		if theme_rows["ok"] == false || plugin_rows["ok"] == false { return fail(ctx["cfg"], 500, "catalog_failed", "Could not build extension management catalog", {}) }
 		themes := []; plugins := []

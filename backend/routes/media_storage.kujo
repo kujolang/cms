@@ -55,6 +55,7 @@ export register_media_storage_routes := func(server, ctx) {
 	})
 	server = server.route("POST", "/v1/media/upload", func(req) {
 		guard := guard_request(req, ctx, "media.create"); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		if ctx["cfg"]["media_storage_adapter"] != "filesystem" { return fail(ctx["cfg"], 409, "filesystem_storage_disabled", "This CMS uses an external media storage adapter", {}) }
 		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }; body_value := body_result["data"]
 		original_filename := safe_media_filename(dict_get_or(body_value, "filename", "")); encoded_media := to_string(dict_get_or(body_value, "data_base64", "")); alt_text_value := trim(to_string(dict_get_or(body_value, "alt_text", "")))
@@ -71,6 +72,7 @@ export register_media_storage_routes := func(server, ctx) {
 	})
 	server = server.route("POST", "/v1/media/ingest", func(req) {
 		guard := guard_request(req, ctx, "media.create"); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		if ctx["cfg"]["media_storage_adapter"] != "filesystem" { return fail(ctx["cfg"], 409, "filesystem_storage_disabled", "This CMS uses an external media storage adapter", {}) }
 		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
 		filename_value := safe_media_filename(dict_get_or(body_result["data"], "filename", "")); if filename_value == "" { return fail(ctx["cfg"], 400, "invalid_filename", "filename must be a simple supported media filename", {}) }
@@ -82,6 +84,7 @@ export register_media_storage_routes := func(server, ctx) {
 
 	server = server.route("POST", "/v1/media/register-external", func(req) {
 		guard := guard_request(req, ctx, "media.create"); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		if ctx["cfg"]["media_storage_adapter"] != "external" { return fail(ctx["cfg"], 409, "external_storage_disabled", "This CMS uses filesystem media storage", {}) }
 		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }; body_value := body_result["data"]
 		filename_value := safe_media_filename(dict_get_or(body_value, "filename", "")); adapter_value := to_lower(trim(to_string(dict_get_or(body_value, "adapter", "external")))); mime_value := to_lower(trim(to_string(dict_get_or(body_value, "mime_type", "")))); public_url_value := trim(to_string(dict_get_or(body_value, "public_url", ""))); object_key := trim(to_string(dict_get_or(body_value, "object_key", ""))); digest_value := to_lower(trim(to_string(dict_get_or(body_value, "sha256", "")))); size_value := to_int(dict_get_or(body_value, "size_bytes", 0))

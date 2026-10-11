@@ -110,7 +110,7 @@ export normalize_seo_changes := func(raw) {
 }
 
 export apply_seo_changes := func(db, entry_id, changes) {
-	lock_rows := db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, now()])
+	lock_rows := db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, current_timestamp()])
 	if len(lock_rows) > 0 { return {"ok": false, "code": "entry_locked", "message": "Entry is currently locked"} }
 	rows := db_query(db, "SELECT id, meta_json FROM entries WHERE id = ? LIMIT 1", [entry_id])
 	if len(rows) == 0 { return {"ok": false, "code": "not_found", "message": "Entry not found"} }
@@ -130,6 +130,7 @@ export register_entry_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/seo/entries", func(req) {
 		guard := guard_request(req, ctx, true)
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		cfg := ctx["cfg"]
 		db := ctx["db"]
 		query := dict_get_or(req, "query", {})
@@ -179,6 +180,7 @@ export register_entry_routes := func(server, ctx) {
 	server = server.route("POST", "/v1/seo/entries/bulk", func(req) {
 		guard := guard_request(req, ctx, true)
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		cfg := ctx["cfg"]
 		body_text := trim(to_string(dict_get_or(req, "body", "")))
 		body := null
@@ -207,6 +209,7 @@ export register_entry_routes := func(server, ctx) {
 	server = server.route("PATCH", "/v1/entries/:id/seo", func(req) {
 		guard := guard_request(req, ctx, true)
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		cfg := ctx["cfg"]
 		params := dict_get_or(req, "params", {})
 		entry_id := to_int(dict_get_or(params, "id", 0))
@@ -235,6 +238,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -543,6 +547,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -760,6 +765,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -771,7 +777,7 @@ export register_entry_routes := func(server, ctx) {
 			publish_rows = db_query(
 				db,
 				"SELECT id FROM entries WHERE status = 'scheduled' AND published_at IS NOT NULL AND CASE WHEN instr(CAST(published_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', published_at) AS INTEGER) * 1000 ELSE CAST(published_at AS INTEGER) END <= ? ORDER BY id ASC LIMIT 500",
-				[now_ts]
+				[current_timestamp()]
 			)
 		} except e {
 			publish_err = e
@@ -810,7 +816,7 @@ export register_entry_routes := func(server, ctx) {
 			unpublish_rows = db_query(
 				db,
 				"SELECT id FROM entries WHERE status = 'published' AND unpublish_at IS NOT NULL AND CASE WHEN instr(CAST(unpublish_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', unpublish_at) AS INTEGER) * 1000 ELSE CAST(unpublish_at AS INTEGER) END <= ? ORDER BY id ASC LIMIT 500",
-				[now_ts]
+				[current_timestamp()]
 			)
 		} except e {
 			unpublish_err = e
@@ -866,6 +872,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -892,7 +899,7 @@ export register_entry_routes := func(server, ctx) {
 			db_execute(
 				db,
 				"DELETE FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END <= ?",
-				[entry_id, now_ts]
+				[entry_id, current_timestamp()]
 			)
 		} except e {
 			cleanup_err = e
@@ -941,6 +948,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -1006,7 +1014,7 @@ export register_entry_routes := func(server, ctx) {
 			db_execute(
 				db,
 				"DELETE FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END <= ?",
-				[entry_id, now_ts]
+				[entry_id, current_timestamp()]
 			)
 		} except e {
 			cleanup_err = e
@@ -1061,7 +1069,7 @@ export register_entry_routes := func(server, ctx) {
 		}
 		lock_token := substring(sha256(to_string(entry_id) + ":" + actor + ":" + to_string(now_ts) + ":" + lock_note), 0, 32)
 		locked_at := to_string(now_ts)
-		expires_at := to_string(now_ts + (lock_ttl_sec * 1000))
+		expires_at := to_string(current_timestamp() + (lock_ttl_sec * 1000))
 		updated_lock := {
 			"entry_id": entry_id,
 			"lock_token": lock_token,
@@ -1119,6 +1127,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -1186,7 +1195,7 @@ export register_entry_routes := func(server, ctx) {
 			db_execute(
 				db,
 				"DELETE FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END <= ?",
-				[entry_id, now_ts]
+				[entry_id, current_timestamp()]
 			)
 		} except e {
 			cleanup_err = e
@@ -1285,6 +1294,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -1411,6 +1421,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -1472,6 +1483,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -1601,6 +1613,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -1637,7 +1650,7 @@ export register_entry_routes := func(server, ctx) {
 			lock_rows = db_query(
 				db,
 				"SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1",
-				[entry_id, now_ts]
+				[entry_id, current_timestamp()]
 			)
 		} except e {
 			lock_err = e
@@ -1770,6 +1783,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -1833,6 +1847,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -1868,6 +1883,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -1916,7 +1932,7 @@ export register_entry_routes := func(server, ctx) {
 		lock_err := null
 		now_ts := now()
 		try {
-			lock_rows = db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, now_ts])
+			lock_rows = db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, current_timestamp()])
 		} except e {
 			lock_err = e
 		}
@@ -2067,6 +2083,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -2115,7 +2132,7 @@ export register_entry_routes := func(server, ctx) {
 		lock_err := null
 		now_ts := now()
 		try {
-			lock_rows = db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, now_ts])
+			lock_rows = db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, current_timestamp()])
 		} except e {
 			lock_err = e
 		}
@@ -2271,6 +2288,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -2294,7 +2312,7 @@ export register_entry_routes := func(server, ctx) {
 		lock_err := null
 		now_ts := now()
 		try {
-			lock_rows = db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, now_ts])
+			lock_rows = db_query(db, "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id, current_timestamp()])
 		} except e {
 			lock_err = e
 		}
@@ -2332,6 +2350,7 @@ export register_entry_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]

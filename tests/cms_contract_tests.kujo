@@ -1,6 +1,6 @@
 test_setup {
 	from backend.core.utils import is_valid_slug_key, parse_list_query, parse_nonnegative_int_text, parse_positive_int_text
-	from backend.core.http import get_header, parse_bounded_int, req_actor, req_ip
+	from backend.core.http import get_header, parse_bounded_int, req_actor, req_ip, guard_request, create_http_state, load_http_metrics, write_audit
 	from backend.config.config import load_config, load_config_impl, validate_production_runtime_config
 	from backend.modules.auth import authorize_request, effective_admin_capabilities, load_session_auth, permissions_allow
 	from backend.modules.ability_contract import ABILITY_SCHEMA_ID, validate_ability_definition, validate_ability_invocation, validate_ability_value, validate_plugin_ability_descriptor
@@ -813,7 +813,7 @@ test "auth token expiry parsing supports epoch and ISO and rejects invalid forma
 		[103, "article", "Lock 103", "lock-103", "draft", "", "", "{}", "tester", null, null, now(), now()]
 	)
 
-	now_ms := to_int(now())
+	now_ms := current_timestamp()
 	valid_epoch_ms := now_ms + 60000
 
 	_ := db_execute_safe(
@@ -831,7 +831,7 @@ test "auth token expiry parsing supports epoch and ISO and rejects invalid forma
 	_ := db_execute_safe(
 		db,
 		"INSERT INTO api_tokens (token_hash, label, role_key, is_active, created_at, updated_at, expires_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		[sha256("contract-expired-token-123"), "Expired Token", "super_admin", 1, now(), now(), 1, null]
+		[sha256("contract-expired-token-123"), "Expired Token", "super_admin", 1, now(), now(), now_ms - 60000, null]
 	)
 
 	_ := db_execute_safe(
@@ -990,4 +990,41 @@ test "request actor hashing does not disclose bearer secrets" {
 
 	assert_equal(actor, expected_actor)
 	assert_equal(req_actor({"headers": {}}), "anonymous")
+}
+
+
+test "session audit actor uses authenticated context without exposing secrets" {
+	assert_equal(req_actor({"headers": {"X-CMS-Session": "cms_session_private"}, "auth_context": {"ok": true, "actor": "user:42", "session_id": 7}}), "user:42")
+	assert_equal(req_actor({"headers": {"X-CMS-Session": "cms_session_private"}}), "anonymous")
+}
+
+test "memory rate limiter enforces counts and recovers expired capacity" {
+	cfg := load_config({"rate_limit_mode": "memory", "rate_limit_window_sec": 60, "rate_limit_max_requests": 2, "rate_limit_max_keys": 100, "structured_logs": false})
+	state := create_http_state()
+	ctx := {"cfg": cfg, "db": null, "state": state}
+	req := {"method": "GET", "path": "/live", "headers": {}, "peer_ip": "new-peer"}
+	assert_equal(guard_request(req, ctx, false)["ok"], true)
+	assert_equal(guard_request(req, ctx, false)["ok"], true)
+	assert_equal(guard_request(req, ctx, false)["ok"], false)
+	for index in range(0, 99) { db_execute(state["db"], "INSERT INTO rate_limit_buckets VALUES (?, ?, 2, '')", [to_string(index), current_timestamp()]) }
+	other := {"method": "GET", "path": "/live", "headers": {}, "peer_ip": "other-peer"}
+	assert_equal(guard_request(other, ctx, false)["ok"], false)
+	db_execute(state["db"], "UPDATE rate_limit_buckets SET window_start_ms = ? WHERE rate_key != 'new-peer'", [current_timestamp() - 61000])
+	assert_equal(guard_request(other, ctx, false)["ok"], true)
+	assert_equal(guard_request(req, ctx, false)["ok"], false)
+	assert_equal(load_http_metrics(state)["requests_total"], 6)
+	db_execute(state["db"], "DROP TABLE rate_limit_buckets", [])
+	assert_equal(guard_request(other, ctx, false)["ok"], false)
+}
+
+
+test "required audit receipts reflect database persistence failures" {
+	connection := connect_database(load_config({"db_path": ":memory:"}))
+	ctx := {"cfg": {"audit_log": true, "structured_logs": false}, "db": connection["db"]}
+	req := {"headers": {}, "auth_context": {"ok": true, "session_id": 2, "actor": "user:42"}}
+	assert_equal(write_audit(ctx, req, "ability.preflight", 202, "ability", "test", {})["written"], true)
+	rows := db_query(ctx["db"], "SELECT actor FROM audit_log", [])
+	assert_equal(rows[0]["actor"], "user:42")
+	db_execute(ctx["db"], "DROP TABLE audit_log", [])
+	assert_equal(write_audit(ctx, req, "ability.preflight", 202, "ability", "test", {})["ok"], false)
 }

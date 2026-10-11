@@ -7,6 +7,7 @@ export register_taxonomy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -74,6 +75,7 @@ export register_taxonomy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -145,6 +147,7 @@ export register_taxonomy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -186,6 +189,7 @@ export register_taxonomy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -279,6 +283,7 @@ export register_taxonomy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -334,6 +339,7 @@ export register_taxonomy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -431,6 +437,7 @@ export register_taxonomy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -552,6 +559,7 @@ export register_taxonomy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -651,7 +659,7 @@ export register_taxonomy_routes := func(server, ctx) {
 			try {
 				cycle_rows = db_query(
 					db,
-					"WITH RECURSIVE descendants(id) AS (SELECT id FROM taxonomy_terms WHERE parent_id = ? AND taxonomy_id = ? UNION ALL SELECT child.id FROM taxonomy_terms child JOIN descendants parent ON child.parent_id = parent.id WHERE child.taxonomy_id = ?) SELECT id FROM descendants WHERE id = ? LIMIT 1",
+					"WITH RECURSIVE descendants(id) AS (SELECT id FROM taxonomy_terms WHERE parent_id = ? AND taxonomy_id = ? UNION SELECT child.id FROM taxonomy_terms child JOIN descendants parent ON child.parent_id = parent.id WHERE child.taxonomy_id = ?) SELECT id FROM descendants WHERE id = ? LIMIT 1",
 					[term_id, existing["taxonomy_id"], existing["taxonomy_id"], parent_value]
 				)
 			} except e {
@@ -698,6 +706,7 @@ export register_taxonomy_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]

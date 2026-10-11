@@ -280,6 +280,12 @@ func core_connector_endpoint(cfg, connector_key) {
 	return ""
 }
 
+func bounded_runtime_options(method, timeout, headers, allow_private) {
+	options := {"method": method, "timeout": timeout, "_headers": headers, "redirects": "none", "pin_dns": true, "max_response_bytes": 1048576, "destination_policy": "deny_private"}
+	if allow_private == true { options["destination_policy"] = "inherit" }
+	return options
+}
+
 func check_connector_health(ctx, selected) {
 	if selected["enabled"] != true { return {"ok": false, "status": 409, "code": "connector_disabled", "message": "Connector is disabled"} }
 	endpoint := ""
@@ -295,7 +301,8 @@ func check_connector_health(ctx, selected) {
 		while ends_with(endpoint, "/") { endpoint = substring(endpoint, 0, len(endpoint) - 1) }
 		endpoint = endpoint + "/health"
 	}
-	transport_result := http_request(endpoint, {"method": "GET", "timeout": 5.0, "_headers": {"Accept": "application/json", "User-Agent": "Kujo-CMS-Connector-Health/1.0"}})
+	allow_private := selected["source"] == "plugin" && dict_get_or(ctx["cfg"], "plugin_runtime_allow_private", false) == true
+	transport_result := http_request(endpoint, bounded_runtime_options("GET", 5.0, {"Accept": "application/json", "User-Agent": "Kujo-CMS-Connector-Health/1.0"}, allow_private))
 	match transport_result {
 		case Ok(health_response): {
 			health_status := to_int(dict_get_or(health_response, "_status", dict_get_or(health_response, "status", 0)))
@@ -408,7 +415,7 @@ func plugin_runtime_request(ctx, plugin_key, method_value, path_value, input) {
 	runtime_bearer_env := "CMS_PLUGIN_" + to_upper(regex_replace(plugin_key, "[^a-z0-9]", "_")) + "_BEARER"
 	runtime_bearer := trim(env(runtime_bearer_env))
 	if runtime_bearer != "" { runtime_headers["Authorization"] := "Bearer " + runtime_bearer }
-	request_options := {"method": method_text, "timeout": 10.0, "_headers": runtime_headers}
+	request_options := bounded_runtime_options(method_text, 10.0, runtime_headers, dict_get_or(ctx["cfg"], "plugin_runtime_allow_private", false))
 	if method_text == "GET" {
 		plugin_query_separator := "?"
 		for query_key in keys(input) {
@@ -616,8 +623,8 @@ func cms_ability_runtime_services(req, ctx, ability) {
 		"audit": func(phase, invocation, payload) {
 			action := "ability.preflight"; status_code := 202
 			if phase == "completed" { action = "ability.execute"; status_code = 200 }
-			_ = write_audit(ctx, req, action, status_code, "ability", ability["name"], {"ability_id": invocation["ability_id"], "ability_version": invocation["ability_version"], "definition_digest": invocation["definition_digest"], "trace_id": invocation["trace_id"], "phase": phase})
-			return {"ok": true, "written": true, "phase": phase}
+			audit_result := write_audit(ctx, req, action, status_code, "ability", ability["name"], {"ability_id": invocation["ability_id"], "ability_version": invocation["ability_version"], "definition_digest": invocation["definition_digest"], "trace_id": invocation["trace_id"], "phase": phase})
+			return {"ok": audit_result["ok"], "written": audit_result["written"], "phase": phase}
 		},
 		"begin_idempotency": func(key_digest, request_digest, invocation) { return {"state": "started"} },
 		"complete_idempotency": func(key_digest, request_digest, receipt) {
@@ -674,11 +681,13 @@ export register_ability_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/abilities/categories", func(req) {
 		guard := guard_request(req, ctx, "cms.read")
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		return ok(ctx["cfg"], {"items": ability_categories(), "count": len(ability_categories())})
 	})
 	server = server.route("GET", "/v1/abilities", func(req) {
 		guard := guard_request(req, ctx, "cms.read")
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		query := dict_get_or(req, "query", {})
 		category := trim(to_string(dict_get_or(query, "category", "")))
 		items := []
@@ -688,6 +697,7 @@ export register_ability_routes := func(server, ctx) {
 		server = server.route("GET", "/v1/abilities/definitions", func(req) {
 		guard := guard_request(req, ctx, "cms.read")
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		definitions := []
 		digests := {}
 		for ability in resolved_ability_registry(ctx) {
@@ -704,6 +714,7 @@ export register_ability_routes := func(server, ctx) {
 		if type(ability) == "null" { return fail(ctx["cfg"], 404, "ability_not_found", "Ability not found", {}) }
 		guard := guard_request(req, ctx, ability["permission"])
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		return ok(ctx["cfg"], ability)
 	})
 	server = server.route("POST", "/v1/abilities/:namespace/:ability/run", func(req) {
@@ -713,6 +724,7 @@ export register_ability_routes := func(server, ctx) {
 		if ability["enabled"] != true { return fail(ctx["cfg"], 409, "ability_disabled", "Ability is disabled by an administrator", {}) }
 		guard := guard_request(req, ctx, ability["permission"])
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		req["auth_context"] := guard["auth"]
 		req["idempotency_context"] := dict_get_or(guard, "idempotency_context", {})
 		body_result := parse_json_body(req, ctx["cfg"])
@@ -764,6 +776,7 @@ export register_ability_routes := func(server, ctx) {
 		if dict_get_or(ability["annotations"], "requires_confirmation", false) != true { return fail(ctx["cfg"], 409, "ability_approval_not_required", "Ability does not require approval", {}) }
 		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		req["auth_context"] := guard["auth"]
 		body_result := parse_json_body(req, ctx["cfg"])
 		if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
@@ -776,6 +789,7 @@ export register_ability_routes := func(server, ctx) {
 	server = server.route("PATCH", "/v1/abilities/:namespace/:ability", func(req) {
 		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		params := dict_get_or(req, "params", {})
 		ability := find_resolved_ability(ctx, dict_get_or(params, "namespace", ""), dict_get_or(params, "ability", ""))
 		if type(ability) == "null" { return fail(ctx["cfg"], 404, "ability_not_found", "Ability not found", {}) }
@@ -794,12 +808,14 @@ export register_ability_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/ai/connectors", func(req) {
 		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		items := resolved_connector_registry(ctx)
 		return ok(ctx["cfg"], {"items": items, "count": len(items), "secrets_exposed": false})
 	})
 	server = server.route("PATCH", "/v1/ai/connectors/:key", func(req) {
 		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		connector_key := trim(to_string(dict_get_or(dict_get_or(req, "params", {}), "key", "")))
 		selected := null
 		for item in resolved_connector_registry(ctx) { if item["key"] == connector_key { selected = item } }
@@ -820,6 +836,7 @@ export register_ability_routes := func(server, ctx) {
 	server = server.route("POST", "/v1/ai/connectors/:key/health", func(req) {
 		guard := guard_request(req, ctx, "admin.settings")
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		connector_key := trim(to_string(dict_get_or(dict_get_or(req, "params", {}), "key", "")))
 		selected := null
 		for item in resolved_connector_registry(ctx) { if item["key"] == connector_key { selected = item } }
@@ -832,6 +849,7 @@ export register_ability_routes := func(server, ctx) {
 	server = server.route("GET", "/v1/ai/mcp/tools", func(req) {
 		guard := guard_request(req, ctx, "cms.read")
 		if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		tools := resolved_mcp_tool_descriptors(ctx)
 		return ok(ctx["cfg"], {"tools": tools, "count": len(tools), "protocol": "mcp-ready", "transport": "CMS REST abilities"})
 	})

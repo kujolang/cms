@@ -96,7 +96,7 @@ echo "Starting CMS API for Stage 3 Round 3 scheduler checks..."
 	CMS_DB_PATH="${DB_PATH}" \
 	CMS_API_TOKEN="${TOKEN}" \
 	CMS_AUDIT_LOG="true" \
-	"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
+	exec "${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
 ) &
 SERVER_PID="$!"
 
@@ -116,13 +116,14 @@ done
 request "POST" "/v1/content-types" '{"type_key":"timed","label":"Timed","singular_label":"Timed Item"}' "1"
 assert_status "201" "create timed content type"
 
-request "POST" "/v1/entries" '{"content_type_key":"timed","title":"Due Publish","slug":"due-publish","status":"scheduled","excerpt":"Due publish excerpt","body":"Due publish body","published_at":0}' "1"
+PAST_MS="$(( $(date +%s) * 1000 - 60000 ))"
+request "POST" "/v1/entries" '{"content_type_key":"timed","title":"Due Publish","slug":"due-publish","status":"scheduled","excerpt":"Due publish excerpt","body":"Due publish body","published_at":'"${PAST_MS}"'}' "1"
 assert_status "201" "create due scheduled publish entry"
 
 request "POST" "/v1/entries" '{"content_type_key":"timed","title":"Future Publish","slug":"future-publish","status":"scheduled","excerpt":"Future publish excerpt","body":"Future publish body","published_at":9999999999999}' "1"
 assert_status "201" "create future scheduled publish entry"
 
-request "POST" "/v1/entries" '{"content_type_key":"timed","title":"Due Unpublish","slug":"due-unpublish","status":"published","excerpt":"Due unpublish excerpt","body":"Due unpublish body","unpublish_at":0}' "1"
+request "POST" "/v1/entries" '{"content_type_key":"timed","title":"Due Unpublish","slug":"due-unpublish","status":"published","excerpt":"Due unpublish excerpt","body":"Due unpublish body","unpublish_at":'"${PAST_MS}"'}' "1"
 assert_status "201" "create due scheduled unpublish entry"
 
 request "POST" "/v1/entries" '{"content_type_key":"timed","title":"Future Unpublish","slug":"future-unpublish","status":"published","excerpt":"Future unpublish excerpt","body":"Future unpublish body","unpublish_at":9999999999999}' "1"

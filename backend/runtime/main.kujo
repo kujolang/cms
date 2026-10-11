@@ -1,6 +1,6 @@
 from backend.config.config import load_config, validate_production_runtime_config
 from backend.core.database import connect_database
-from backend.core.http import api_text, fail, guard_request, ok
+from backend.core.http import api_text, fail, guard_request, ok, create_http_state, load_http_metrics
 from backend.core.utils import dict_get_or
 from backend.routes.content_types import register_content_type_routes
 from backend.routes.taxonomies import register_taxonomy_routes
@@ -47,23 +47,7 @@ if connection["ok"] == false {
 db := connection["db"]
 schema_version := dict_get_or(connection, "schema_version", 0)
 migrations_applied := dict_get_or(connection, "migrations_applied", [])
-state := {
-	"rate": {},
-	"entry_locks": {},
-	"metrics": {
-		"requests_total": 0,
-		"authorized_total": 0,
-		"unauthorized_total": 0,
-		"rate_limited_total": 0,
-		"responses_401_total": 0,
-		"responses_429_total": 0,
-		"latency_last_ms": 0,
-		"latency_total_ms": 0,
-		"latency_samples": 0,
-		"latency_max_ms": 0,
-		"latency_avg_ms": 0
-	}
-}
+state := create_http_state()
 
 ctx := {
 	"cfg": cfg,
@@ -392,6 +376,7 @@ server = server.route("GET", "/", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 
 	return ok(cfg, {
 		"service": cfg["service_name"],
@@ -446,6 +431,7 @@ server = server.route("GET", "/live", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 
 	return json_response(200, {
 		"ok": true,
@@ -461,6 +447,7 @@ server = server.route("GET", "/ready", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 
 	if readiness_db_checks_enabled(cfg) == false {
 		return json_response(200, {
@@ -499,6 +486,7 @@ server = server.route("GET", "/health", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 
 	if readiness_db_checks_enabled(cfg) == false {
 		return json_response(200, {
@@ -537,6 +525,7 @@ server = server.route("HEAD", "/health", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 	cfg := ctx["cfg"]
 	return api_text(200, "", cfg)
 })
@@ -546,6 +535,7 @@ server = server.route("GET", "/metrics", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 
 	metrics_enabled := true
 	if has_key(cfg, "metrics_enabled") == 1 {
@@ -565,7 +555,7 @@ server = server.route("GET", "/metrics", func(req) {
 	return json_response(200, {
 		"ok": true,
 		"data": {
-		"metrics": dict_get_or(state, "metrics", {}),
+		"metrics": load_http_metrics(state),
 		"dimensions": {
 			"service": cfg["service_name"],
 			"environment": cfg["environment"]
@@ -579,6 +569,7 @@ server = server.route("GET", "/v1", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 
 	return ok(cfg, {
 		"resources": {
@@ -655,6 +646,7 @@ server = server.route("HEAD", "/v1", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 	cfg := ctx["cfg"]
 	return api_text(200, "", cfg)
 })
@@ -664,6 +656,7 @@ server = server.route("GET", "/v1/contract", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 
 	return ok(cfg, build_api_contract(cfg, schema_version))
 })
@@ -673,6 +666,7 @@ server = server.route("HEAD", "/v1/contract", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 	cfg := ctx["cfg"]
 	return api_text(200, "", cfg)
 })
@@ -682,6 +676,7 @@ server = server.route("GET", "/v1/openapi.json", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 
 	return ok(cfg, build_api_contract(cfg, schema_version))
 })
@@ -691,6 +686,7 @@ server = server.route("HEAD", "/v1/openapi.json", func(req) {
 	if guard["ok"] == false {
 		return guard["response"]
 	}
+	req = guard["request"]
 	cfg := ctx["cfg"]
 	return api_text(200, "", cfg)
 })

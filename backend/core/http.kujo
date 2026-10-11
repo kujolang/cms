@@ -89,17 +89,21 @@ export req_ip := func(req) {
 	return ip
 }
 
-export req_actor := func(req) {
+export get_header := func(req, header_name) {
 	headers := dict_get_or(req, "headers", {})
-	authorization := ""
-	if type(headers) == "dict" {
-		if has_key(headers, "Authorization") == 1 {
-			authorization = to_string(headers["Authorization"])
-		}
-		if authorization == "" && has_key(headers, "authorization") == 1 {
-			authorization = to_string(headers["authorization"])
-		}
+	if type(headers) != "dict" { return "" }
+	if has_key(headers, header_name) == 1 { return to_string(headers[header_name]) }
+	wanted := to_lower(header_name)
+	for name in keys(headers) { if to_lower(to_string(name)) == wanted { return to_string(headers[name]) } }
+	return ""
+}
+
+export req_actor := func(req) {
+	auth := dict_get_or(req, "auth_context", {})
+	if type(auth) == "dict" && dict_get_or(auth, "ok", false) == true && has_key(auth, "session_id") == 1 {
+		return to_string(dict_get_or(auth, "actor", "anonymous"))
 	}
+	authorization := get_header(req, "Authorization")
 	if starts_with(authorization, "Bearer ") {
 		token := trim(substring(authorization, 7, len(authorization)))
 		if token != "" {
@@ -109,13 +113,6 @@ export req_actor := func(req) {
 	return "anonymous"
 }
 
-export get_header := func(req, header_name) {
-	headers := dict_get_or(req, "headers", {})
-	if has_key(headers, header_name) == 1 {
-		return to_string(headers[header_name])
-	}
-	return ""
-}
 
 export get_query := func(req, key, default_value) {
 	query := dict_get_or(req, "query", {})
@@ -482,6 +479,18 @@ func idempotency_prepare(req, ctx, cfg, method, path, idempotency_key) {
 			replay_status = 200
 		}
 
+		// Retain the established replay marker alongside the durably stored response.
+		if starts_with(path, "/v1/abilities/") == false {
+			replay_data := dict_get_or(replay_payload, "data", {})
+			if type(replay_data) == "dict" && has_key(replay_data, "idempotency") == 0 {
+				target_id := to_string(dict_get_or(replay_data, "id", ""))
+				actions := {"/v1/entries": ["entry.create", "entry"], "/v1/content-types": ["content_type.create", "content_type"], "/v1/taxonomies": ["taxonomy.create", "taxonomy"], "/v1/plugins": ["plugin.create", "plugin"], "/v1/tenants": ["tenant.create", "tenant"], "/v1/workspaces": ["workspace.create", "workspace"]}
+				action := dict_get_or(actions, path, ["entry.delete", "entry"])
+				if method == "DELETE" { target_id = substring(path, len("/v1/entries/"), len(path)) }
+				replay_data["idempotency"] = {"replayed": true, "action": action[0], "target_type": action[1], "target_id": target_id, "request_id": to_string(dict_get_or(req, "request_id", "")), "status_code": replay_status}
+				replay_payload["data"] = replay_data
+			}
+		}
 		replay_response := api_json(replay_status, replay_payload, cfg)
 		replay_response = set_header(replay_response, "Idempotency-Replayed", "true")
 		return {
@@ -666,30 +675,34 @@ export idempotency_complete := func(req, ctx, status_code, response_payload) {
 	return {"ok": result["ok"], "updated": result["ok"]}
 }
 
+export create_http_state := func() {
+	db := db_connect("sqlite", ":memory:")
+	db_execute(db, "CREATE TABLE rate_limit_buckets (rate_key TEXT PRIMARY KEY, window_start_ms INTEGER NOT NULL, count INTEGER NOT NULL, updated_at TEXT NOT NULL)", [])
+	db_execute(db, "CREATE INDEX rate_window ON rate_limit_buckets(window_start_ms)", [])
+	db_execute(db, "CREATE TABLE http_metrics (name TEXT PRIMARY KEY, value REAL NOT NULL)", [])
+	for name in ["requests_total", "authorized_total", "unauthorized_total", "rate_limited_total", "responses_401_total", "responses_429_total", "latency_last_ms", "latency_total_ms", "latency_samples", "latency_max_ms", "latency_avg_ms"] {
+		db_execute(db, "INSERT INTO http_metrics VALUES (?, 0)", [name])
+	}
+	return {"db": db}
+}
+
+export load_http_metrics := func(state) {
+	metrics := {}
+	for row in db_query(state["db"], "SELECT name, value FROM http_metrics", []) { metrics[row["name"]] = row["value"] }
+	samples := dict_get_or(metrics, "latency_samples", 0)
+	if samples > 0 { metrics["latency_avg_ms"] = metrics["latency_total_ms"] / samples }
+	return metrics
+}
+
 func metric_increment(state, metric_name) {
-	metrics := dict_get_or(state, "metrics", {})
-	current_value := dict_get_or(metrics, metric_name, 0)
-	metrics[metric_name] := current_value + 1
-	state["metrics"] := metrics
+	if has_key(state, "db") == 0 { return null }
+	db_execute(state["db"], "INSERT INTO http_metrics VALUES (?, 1) ON CONFLICT(name) DO UPDATE SET value = value + 1", [metric_name])
 	return null
 }
 
 func metric_observe_latency(state, latency_ms) {
-	metrics := dict_get_or(state, "metrics", {})
-	latency_total := dict_get_or(metrics, "latency_total_ms", 0) + latency_ms
-	latency_samples := dict_get_or(metrics, "latency_samples", 0) + 1
-	latency_max := dict_get_or(metrics, "latency_max_ms", 0)
-
-	if latency_ms > latency_max {
-		latency_max = latency_ms
-	}
-
-	metrics["latency_last_ms"] := latency_ms
-	metrics["latency_total_ms"] := latency_total
-	metrics["latency_samples"] := latency_samples
-	metrics["latency_max_ms"] := latency_max
-	metrics["latency_avg_ms"] := latency_total / latency_samples
-	state["metrics"] := metrics
+	if has_key(state, "db") == 0 { return null }
+	db_execute(state["db"], "UPDATE http_metrics SET value = CASE name WHEN 'latency_last_ms' THEN ? WHEN 'latency_total_ms' THEN value + ? WHEN 'latency_samples' THEN value + 1 WHEN 'latency_max_ms' THEN MAX(value, ?) ELSE value END WHERE name IN ('latency_last_ms', 'latency_total_ms', 'latency_samples', 'latency_max_ms')", [latency_ms, latency_ms, latency_ms])
 	return null
 }
 
@@ -702,119 +715,13 @@ func structured_log(cfg, payload) {
 	return null
 }
 
-func rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key) {
-	rate_map := dict_get_or(state, "rate", {})
-
-	if max_rate_keys < 100 {
-		max_rate_keys = 100
-	}
-	if has_key(rate_map, key) == 0 && len(rate_map) >= max_rate_keys {
-		return {
-			"ok": false,
-			"limit": max_requests,
-			"window_sec": window_sec,
-			"capacity": true
-		}
-	}
-
-	bucket := dict_get_or(rate_map, key, {
-		"window_start": now_ts,
-		"count": 0
-	})
-
-	window_start := dict_get_or(bucket, "window_start", now_ts)
-	if (now_ts - window_start) >= (window_sec * 1000) {
-		bucket["window_start"] := now_ts
-		bucket["count"] := 0
-	}
-
-	bucket["count"] := dict_get_or(bucket, "count", 0) + 1
-	rate_map[key] := bucket
-	state["rate"] := rate_map
-
-	if bucket["count"] > max_requests {
-		return {
-			"ok": false,
-			"limit": max_requests,
-			"window_sec": window_sec
-		}
-	}
-
-	return {"ok": true}
-}
-
-func rate_check_sqlite(ctx, state, window_sec, max_requests, max_rate_keys, now_ts, key) {
-	db := dict_get_or(ctx, "db", null)
-	if type(db) == "null" {
-		return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
-	}
-
-	prune_result := db_execute_safe(
-		db,
-		"DELETE FROM rate_limit_buckets WHERE (window_start_ms + (? * 1000)) <= ?",
-		[window_sec, now_ts]
-	)
-	if prune_result["ok"] == false {
-		return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
-	}
-
-	bucket_rows := db_query_safe(
-		db,
-		"SELECT window_start_ms, count FROM rate_limit_buckets WHERE rate_key = ? LIMIT 1",
-		[key]
-	)
-	if bucket_rows["ok"] == false {
-		return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
-	}
-
-	bucket_count := 0
-	window_start := now_ts
-	if len(bucket_rows["rows"]) == 0 {
-		keys_rows := db_query_safe(db, "SELECT COUNT(*) AS total FROM rate_limit_buckets", [])
-		if keys_rows["ok"] == false {
-			return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
-		}
-		keys_total := 0
-		if len(keys_rows["rows"]) > 0 {
-			keys_total = parse_positive_int_text(dict_get_or(keys_rows["rows"][0], "total", 0), 0)
-		}
-		if keys_total >= max_rate_keys {
-			return {
-				"ok": false,
-				"limit": max_requests,
-				"window_sec": window_sec,
-				"capacity": true
-			}
-		}
-	} else {
-		row := bucket_rows["rows"][0]
-		window_start = parse_positive_int_text(dict_get_or(row, "window_start_ms", now_ts), now_ts)
-		bucket_count = parse_positive_int_text(dict_get_or(row, "count", 0), 0)
-		if (now_ts - window_start) >= (window_sec * 1000) {
-			window_start = now_ts
-			bucket_count = 0
-		}
-	}
-
-	bucket_count = bucket_count + 1
-	upsert_result := db_execute_safe(
-		db,
-		"INSERT OR REPLACE INTO rate_limit_buckets (rate_key, window_start_ms, count, updated_at) VALUES (?, ?, ?, ?)",
-		[key, window_start, bucket_count, now()]
-	)
-	if upsert_result["ok"] == false {
-		return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
-	}
-
-	if bucket_count > max_requests {
-		return {
-			"ok": false,
-			"limit": max_requests,
-			"window_sec": window_sec
-		}
-	}
-
-	return {"ok": true}
+func rate_check_sqlite(db, window_sec, max_requests, max_rate_keys, now_ts, key) {
+	// Atomic admission and increment prevent lost updates between concurrent requests.
+	pruned := db_execute_safe(db, "DELETE FROM rate_limit_buckets WHERE window_start_ms <= ?", [now_ts - window_sec * 1000])
+	if pruned["ok"] == false { return {"ok": false, "limit": max_requests, "window_sec": window_sec} }
+	result := db_query_safe(db, "INSERT INTO rate_limit_buckets (rate_key, window_start_ms, count, updated_at) SELECT ?, ?, 1, ? WHERE EXISTS (SELECT 1 FROM rate_limit_buckets WHERE rate_key = ?) OR (SELECT COUNT(*) FROM rate_limit_buckets) < ? ON CONFLICT(rate_key) DO UPDATE SET count = count + 1, updated_at = excluded.updated_at RETURNING count", [key, now_ts, now(), key, max_rate_keys])
+	if result["ok"] == false || len(result["rows"]) == 0 { return {"ok": false, "limit": max_requests, "window_sec": window_sec} }
+	return {"ok": result["rows"][0]["count"] <= max_requests, "limit": max_requests, "window_sec": window_sec}
 }
 
 func rate_check(ctx, cfg, req) {
@@ -838,10 +745,10 @@ func rate_check(ctx, cfg, req) {
 	}
 
 	if rate_limit_mode == "sqlite" {
-		return rate_check_sqlite(ctx, state, window_sec, max_requests, max_rate_keys, now_ts, key)
+		return rate_check_sqlite(ctx["db"], window_sec, max_requests, max_rate_keys, now_ts, key)
 	}
 
-	return rate_check_memory(state, window_sec, max_requests, max_rate_keys, now_ts, key)
+	return rate_check_sqlite(dict_get_or(state, "db", null), window_sec, max_requests, max_rate_keys, now_ts, key)
 }
 
 export guard_request := func(req, ctx, require_write_auth) {
@@ -991,6 +898,7 @@ export guard_request := func(req, ctx, require_write_auth) {
 		return {
 			"ok": true,
 			"auth": auth_result,
+			"request": req,
 			"idempotency_context": dict_get_or(req, "idempotency_context", {})
 		}
 	}
@@ -1033,7 +941,8 @@ export guard_request := func(req, ctx, require_write_auth) {
 
 	return {
 		"ok": true,
-		"auth": read_auth
+		"auth": read_auth,
+		"request": req
 	}
 }
 
@@ -1041,7 +950,7 @@ export write_audit := func(ctx, req, action, status_code, target_type, target_id
 	cfg := ctx["cfg"]
 	audit_enabled := dict_get_or(cfg, "audit_log", true)
 	if audit_enabled == false {
-		return null
+		return {"ok": false, "written": false}
 	}
 	enriched_details := {}
 	if type(details) == "dict" {
@@ -1057,7 +966,7 @@ export write_audit := func(ctx, req, action, status_code, target_type, target_id
 	db := ctx["db"]
 	audit_err := null
 	try {
-		_ = write_audit_event(db, {
+		audit_result := write_audit_event(db, {
 			"created_at": now(),
 			"ip": req_ip(req),
 			"method": req_method(req),
@@ -1069,6 +978,7 @@ export write_audit := func(ctx, req, action, status_code, target_type, target_id
 			"target_id": to_string(target_id),
 			"details": enriched_details
 		})
+		if audit_result["ok"] == false { audit_err = "Audit persistence failed" }
 	} except e {
 		audit_err = e
 	}
@@ -1090,7 +1000,7 @@ export write_audit := func(ctx, req, action, status_code, target_type, target_id
 			]
 		)
 		if fallback_result["ok"] == false {
-			return null
+			return {"ok": false, "written": false}
 		}
 	}
 	_ := structured_log(cfg, {
@@ -1102,8 +1012,9 @@ export write_audit := func(ctx, req, action, status_code, target_type, target_id
 		"target_type": target_type,
 		"target_id": to_string(target_id)
 	})
-	return null
+	return {"ok": true, "written": true}
 }
+
 
 export write_audit_safe := func(ctx, req, action, status_code, target_type, target_id, details) {
 	audit_err := null

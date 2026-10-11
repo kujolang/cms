@@ -18,6 +18,7 @@ export parse_positive_unique_ids := func(raw_ids, max_count) {
 export register_content_workflow_routes := func(server, ctx) {
 	server = server.route("PATCH", "/v1/entries/:id/compose", func(req) {
 		guard := guard_request(req, ctx, true); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		entry_id_value := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if entry_id_value <= 0 { return fail(ctx["cfg"], 400, "invalid_id", "id must be a positive integer", {}) }
 		body_result := parse_json_body(req, ctx["cfg"]); if body_result["ok"] == false { return fail(ctx["cfg"], 400, "invalid_body", body_result["error"], {}) }
 		workflow_body := body_result["data"]; if type(workflow_body) != "dict" { return fail(ctx["cfg"], 400, "invalid_body", "Body must be an object", {}) }
@@ -30,7 +31,7 @@ export register_content_workflow_routes := func(server, ctx) {
 		existing_entry := existing_rows[0]
 		expected_updated_at := trim(to_string(dict_get_or(workflow_body, "expected_updated_at", "")))
 		if expected_updated_at != "" && expected_updated_at != trim(to_string(dict_get_or(existing_entry, "updated_at", ""))) { return fail(ctx["cfg"], 409, "entry_changed", "Entry changed after the supplied version", {"current_updated_at": dict_get_or(existing_entry, "updated_at", null)}) }
-		lock_rows := []; try { lock_rows = db_query(ctx["db"], "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id_value, now()]) } except e { return fail(ctx["cfg"], 500, "db_query_failed", "Failed to resolve entry lock state", {}) }
+		lock_rows := []; try { lock_rows = db_query(ctx["db"], "SELECT entry_id FROM entry_locks WHERE entry_id = ? AND CASE WHEN instr(CAST(expires_at AS TEXT), '-') > 0 THEN CAST(strftime('%s', expires_at) AS INTEGER) * 1000 ELSE CAST(expires_at AS INTEGER) END > ? LIMIT 1", [entry_id_value, current_timestamp()]) } except e { return fail(ctx["cfg"], 500, "db_query_failed", "Failed to resolve entry lock state", {}) }
 		if len(lock_rows) > 0 { return fail(ctx["cfg"], 409, "entry_locked", "Entry is currently locked", {}) }
 
 		allowed_fields := ["title", "body", "excerpt", "status", "slug", "meta", "published_at", "unpublish_at"]
@@ -73,6 +74,7 @@ export register_content_workflow_routes := func(server, ctx) {
 	})
 	server = server.route("POST", "/v1/taxonomies/:id/terms/bulk", func(req) {
 		guard := guard_request(req, ctx, true); if guard["ok"] == false { return guard["response"] }
+		req = guard["request"]
 		taxonomy_id_value := to_int(dict_get_or(dict_get_or(req, "params", {}), "id", 0)); if taxonomy_id_value <= 0 { return fail(ctx["cfg"], 400, "invalid_taxonomy_id", "id must be a positive integer", {}) }
 		taxonomy_rows := []; try { taxonomy_rows = db_query(ctx["db"], "SELECT id, taxonomy_key FROM taxonomies WHERE id = ? LIMIT 1", [taxonomy_id_value]) } except e { return fail(ctx["cfg"], 500, "db_query_failed", "Failed to load taxonomy", {}) }
 		if len(taxonomy_rows) == 0 { return fail(ctx["cfg"], 404, "taxonomy_not_found", "Taxonomy not found", {}) }
@@ -91,7 +93,15 @@ export register_content_workflow_routes := func(server, ctx) {
 			normalized_terms = push(normalized_terms, {"name": term_name_value, "slug": term_slug_value, "description": term_description_value, "parent_id": term_parent_value})
 		}
 		bulk_error := null
-		try { db_execute(ctx["db"], "BEGIN IMMEDIATE", []); for normalized_term in normalized_terms { db_execute(ctx["db"], "INSERT INTO taxonomy_terms (taxonomy_id, name, slug, description, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(taxonomy_id, slug) DO UPDATE SET name = excluded.name, description = excluded.description, parent_id = excluded.parent_id, updated_at = excluded.updated_at", [taxonomy_id_value, normalized_term["name"], normalized_term["slug"], normalized_term["description"], normalized_term["parent_id"], now(), now()]) }; db_execute(ctx["db"], "COMMIT", []) } except e { bulk_error = e }
+		try { db_execute(ctx["db"], "BEGIN IMMEDIATE", []); for normalized_term in normalized_terms { db_execute(ctx["db"], "INSERT INTO taxonomy_terms (taxonomy_id, name, slug, description, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(taxonomy_id, slug) DO UPDATE SET name = excluded.name, description = excluded.description, parent_id = excluded.parent_id, updated_at = excluded.updated_at", [taxonomy_id_value, normalized_term["name"], normalized_term["slug"], normalized_term["description"], normalized_term["parent_id"], now(), now()]) }
+			for normalized_term in normalized_terms {
+				cycle_rows := db_query(ctx["db"], "WITH RECURSIVE ancestors(id) AS (SELECT parent_id FROM taxonomy_terms WHERE taxonomy_id = ? AND slug = ? UNION SELECT t.parent_id FROM taxonomy_terms t JOIN ancestors a ON t.id = a.id WHERE t.parent_id IS NOT NULL) SELECT id FROM ancestors WHERE id = (SELECT id FROM taxonomy_terms WHERE taxonomy_id = ? AND slug = ?) LIMIT 1", [taxonomy_id_value, normalized_term["slug"], taxonomy_id_value, normalized_term["slug"]])
+				if len(cycle_rows) > 0 {
+					db_execute(ctx["db"], "ROLLBACK", [])
+					return fail(ctx["cfg"], 400, "invalid_parent_id", "parent_id cannot create a term hierarchy cycle", {})
+				}
+			}
+			db_execute(ctx["db"], "COMMIT", []) } except e { bulk_error = e }
 		if type(bulk_error) != "null" { try { db_execute(ctx["db"], "ROLLBACK", []) } except rollback_error { _ = rollback_error }; return fail(ctx["cfg"], 409, "term_batch_failed", "Could not apply the taxonomy term batch", {}) }
 		placeholders := []; term_params := [taxonomy_id_value]; for term_slug_value in seen_slugs { placeholders = push(placeholders, "?"); term_params = push(term_params, term_slug_value) }
 		written_terms := db_query(ctx["db"], "SELECT id, taxonomy_id, name, slug, description, parent_id, created_at, updated_at FROM taxonomy_terms WHERE taxonomy_id = ? AND slug IN (" + join(placeholders, ",") + ") ORDER BY name", term_params)

@@ -124,7 +124,7 @@ echo "Starting CMS API for Stage 3 Round 3 locking checks..."
 	CMS_DB_PATH="${DB_PATH}" \
 	CMS_API_TOKEN="${PRIMARY_TOKEN}" \
 	CMS_AUDIT_LOG="true" \
-	"${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
+	exec "${KUJO_BIN_PATH}" run --interpreter backend/runtime/main.kujo >"${LOG_FILE}" 2>&1
 ) &
 SERVER_PID="$!"
 
@@ -173,7 +173,7 @@ request "POST" "/v1/entry-locks/release" "{\"entry_id\":${ENTRY_ID},\"session_id
 assert_status "409" "release rejects invalid lock token"
 assert_contains '"code":"invalid_lock_token"' "invalid lock token code"
 
-sqlite3 "${DB_PATH}" "UPDATE entry_locks SET expires_at = 1 WHERE entry_id = ${ENTRY_ID};"
+sqlite3 "${DB_PATH}" "UPDATE entry_locks SET expires_at = $(( $(date +%s) * 1000 - 60000 )) WHERE entry_id = ${ENTRY_ID};"
 
 request "POST" "/v1/entry-locks/acquire" "{\"entry_id\":${ENTRY_ID},\"session_id\":\"${SECONDARY_LOCK_SESSION}\",\"note\":\"expired_takeover\"}" "${PRIMARY_TOKEN}" "${SECONDARY_LOCK_SESSION}"
 assert_status "200" "secondary acquires expired lock"

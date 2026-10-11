@@ -7,6 +7,7 @@ export register_content_type_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -78,6 +79,7 @@ export register_content_type_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -159,6 +161,7 @@ export register_content_type_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -197,6 +200,7 @@ export register_content_type_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]
@@ -293,6 +297,7 @@ export register_content_type_routes := func(server, ctx) {
 		if guard["ok"] == false {
 			return guard["response"]
 		}
+		req = guard["request"]
 
 		cfg := ctx["cfg"]
 		db := ctx["db"]

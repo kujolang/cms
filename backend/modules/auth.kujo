@@ -148,8 +148,8 @@ func load_token_auth(db, token) {
 		return {"ok": false, "error": "Token expiry format invalid"}
 	}
 	if expires_at_ms > 0 {
-		now_num := parse_positive_int_text(now(), 0)
-		if now_num > expires_at_ms {
+		now_num := current_timestamp()
+		if now_num >= expires_at_ms {
 			return {"ok": false, "error": "Token expired"}
 		}
 	}
