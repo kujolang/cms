@@ -89,3 +89,13 @@ Package authors should:
 - keep privileged mutations in authenticated API or Abilities API operations.
 
 The CMS package registry is deliberately transport-neutral. A public catalog, private vendor registry, direct repository release, customer-only package server, or local file can all carry the same manifests.
+
+### Managed installation ownership
+
+CMS writes a `.cms-owner-<installation-id>.json` sidecar next to each newly
+installed package directory. Cleanup requires an exact generated directory and
+a matching extension kind/key in this server-owned record; configuration fields
+cannot grant deletion authority. Keep these sidecars with the installed storage
+when moving or restoring it. Legacy directories without ownership records remain
+usable but are retained during replacement for operator inspection. Cleanup does
+not follow directory symlinks.

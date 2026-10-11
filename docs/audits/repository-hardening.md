@@ -1,5 +1,7 @@
 # Kujo CMS repository hardening audit
 
+Latest continuation: [hardening audit round two](repository-hardening-round-2.md).
+
 ## Repository and scope
 
 - Repository: `cms`; branch: `main`.
