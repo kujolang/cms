@@ -86,6 +86,8 @@ run_step "Contract tests" \
 run_step "JavaScript client contracts" node --test clients/javascript/test/client.test.js
 run_step "PHP client contracts" php -d zend.assertions=1 -d assert.exception=1 clients/php/tests/client_test.php
 run_step "Performance budget validation" node scripts/test-perf-budget.mjs
+run_step "Atomic worker claim regressions" python3 scripts/test-worker-claims.py
+run_step "Worker lifecycle regressions" python3 scripts/test-worker-lifecycle.py
 run_step "Hardening regressions" env CMS_TEST_PORT="$((BASE_PORT + 17))" KUJO_BIN="${KUJO_BIN_PATH}" python3 scripts/integration-hardening.py
 run_step "Durable rate limiting" env CMS_TEST_PORT_SQLITE="$((BASE_PORT + 18))" CMS_TEST_PORT_MEMORY="$((BASE_PORT + 19))" KUJO_BIN="${KUJO_BIN_PATH}" bash scripts/integration-rate-limit-durable.sh
 

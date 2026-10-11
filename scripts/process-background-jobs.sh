@@ -34,6 +34,8 @@ fi
 
 require_command sqlite3
 require_command node
+require_command python3
+source "${ROOT_DIR}/scripts/worker-lifecycle.sh"
 
 sqlite3() {
 	command sqlite3 -cmd ".timeout 5000" "$@"
@@ -202,7 +204,7 @@ run_job_by_type() {
 	return 1
 }
 
-rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, job_type, hex(payload_json), attempt_count, max_attempts FROM background_jobs WHERE (status IN ('pending','retry') AND CAST(run_after AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) ORDER BY id ASC LIMIT ${LIMIT};")"
+rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id FROM background_jobs WHERE (status IN ('pending','retry') AND CAST(run_after AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) ORDER BY id ASC LIMIT ${LIMIT};")"
 
 if [[ -z "${rows}" ]]; then
 	echo "${SCRIPT_LABEL}: no due jobs"
@@ -214,8 +216,16 @@ completed=0
 retried=0
 dead_lettered=0
 
-while IFS='|' read -r job_id job_type payload_hex attempt_count max_attempts; do
+while IFS= read -r job_id; do
 	[[ -z "${job_id}" ]] && continue
+
+	now_value="$(now_epoch)"
+	claim_expires_at="$((now_value + CLAIM_TTL_SEC))"
+	claimed="$(sqlite3 -separator '|' "${DB_PATH}" "BEGIN IMMEDIATE; UPDATE background_jobs SET status = 'running', started_at = '${now_value}', updated_at = '${now_value}', claim_token = '${WORKER_TOKEN}', claim_expires_at = '${claim_expires_at}' WHERE id = ${job_id} AND ((status IN ('pending','retry') AND CAST(run_after AS INTEGER) <= ${now_value}) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= ${now_value})); SELECT job_type, hex(payload_json), attempt_count, max_attempts FROM background_jobs WHERE id = ${job_id} AND claim_token = '${WORKER_TOKEN}'; COMMIT;")"
+	if [[ -z "${claimed}" ]]; then
+		continue
+	fi
+	IFS='|' read -r job_type payload_hex attempt_count max_attempts <<< "${claimed}"
 
 	processed=$((processed + 1))
 	payload_json="$(decode_hex "${payload_hex}")"
@@ -231,38 +241,20 @@ while IFS='|' read -r job_id job_type payload_hex attempt_count max_attempts; do
 		max_attempts="${MAX_ATTEMPTS_DEFAULT}"
 	fi
 
-	now_value="$(now_epoch)"
-	claim_expires_at="$((now_value + CLAIM_TTL_SEC))"
-	claimed="$(sqlite3 "${DB_PATH}" "UPDATE background_jobs SET status = 'running', started_at = '${now_value}', updated_at = '${now_value}', claim_token = '${WORKER_TOKEN}', claim_expires_at = '${claim_expires_at}' WHERE id = ${job_id} AND ((status IN ('pending','retry') AND CAST(run_after AS INTEGER) <= ${now_value}) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= ${now_value})); SELECT changes();")"
-	if [[ "${claimed}" != "1" ]]; then
-		continue
-	fi
 
 	write_audit_row "background.job.started" "202" "${job_id}" "{\"job_type\":\"${job_type}\",\"attempt\":$((attempt_count + 1))}"
 
-	job_output_file="$(mktemp)"
-	set +e
-	run_job_by_type "${job_type}" "${payload_json}" >"${job_output_file}" 2>&1 &
-	job_pid=$!
-	set -e
-	heartbeat_interval="$((CLAIM_TTL_SEC / 3))"
-	if [[ "${heartbeat_interval}" -lt 10 ]]; then heartbeat_interval=10; fi
-	next_heartbeat="$((now_value + heartbeat_interval))"
-	while kill -0 "${job_pid}" >/dev/null 2>&1; do
-		sleep 1
-		heartbeat_now="$(now_epoch)"
-		if [[ "${heartbeat_now}" -ge "${next_heartbeat}" ]]; then
-			heartbeat_expiry="$((heartbeat_now + CLAIM_TTL_SEC))"
-			sqlite3 "${DB_PATH}" "UPDATE background_jobs SET claim_expires_at = '${heartbeat_expiry}', updated_at = '${heartbeat_now}' WHERE id = ${job_id} AND claim_token = '${WORKER_TOKEN}';" >/dev/null
-			next_heartbeat="$((heartbeat_now + heartbeat_interval))"
-		fi
-	done
-	set +e
-	wait "${job_pid}"
-	job_exit_code=$?
-	set -e
-	job_output="$(cat "${job_output_file}")"
-	rm -f "${job_output_file}"
+	worker_output_file="$(mktemp)"
+	run_job_by_type "${job_type}" "${payload_json}" >"${worker_output_file}" 2>&1 &
+	worker_job_pid=$!
+	start_worker_heartbeat background_jobs "${job_id}" "$$"
+	job_exit_code=0
+	wait "${worker_job_pid}" || job_exit_code=$?
+	worker_job_pid=""
+	stop_worker_heartbeat
+	job_output="$(cat "${worker_output_file}")"
+	rm -f "${worker_output_file}"
+	worker_output_file=""
 
 	next_attempt_count=$((attempt_count + 1))
 

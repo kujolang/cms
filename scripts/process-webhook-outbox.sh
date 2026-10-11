@@ -38,6 +38,7 @@ fi
 
 require_command sqlite3
 require_command python3
+source "${ROOT_DIR}/scripts/worker-lifecycle.sh"
 
 sqlite3() {
 	command sqlite3 -cmd ".timeout 5000" "$@"
@@ -68,26 +69,12 @@ now_epoch() {
 	date +%s
 }
 
-renew_claim_while_worker_alive() {
-	local outbox_id="$1"
-	local parent_pid="$2"
-	local heartbeat_interval="$((CLAIM_TTL_SEC / 3))"
-	if [[ "${heartbeat_interval}" -lt 10 ]]; then heartbeat_interval=10; fi
-	while kill -0 "${parent_pid}" >/dev/null 2>&1; do
-		sleep "${heartbeat_interval}"
-		if ! kill -0 "${parent_pid}" >/dev/null 2>&1; then break; fi
-		local heartbeat_now heartbeat_expiry
-		heartbeat_now="$(now_epoch)"
-		heartbeat_expiry="$((heartbeat_now + CLAIM_TTL_SEC))"
-		sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET claim_expires_at = '${heartbeat_expiry}', updated_at = '${heartbeat_now}' WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}';" >/dev/null
-	done
-}
-
 resolve_handler_target() {
 	local handler_url="$1"
-	python3 - "${handler_url}" "${ALLOW_HTTP}" "${ALLOW_PRIVATE}" <<'PY'
+	python3 - "${handler_url}" "${ALLOW_HTTP}" "${ALLOW_PRIVATE}" "${CONNECT_TIMEOUT_SEC}" <<'PY'
 import ipaddress
-import socket
+import json
+import subprocess
 import sys
 from urllib.parse import urlsplit
 
@@ -122,8 +109,12 @@ if numeric_alias:
 
 port = url.port or (443 if url.scheme == "https" else 80)
 try:
-    addresses = sorted({item[4][0] for item in socket.getaddrinfo(url.hostname, port, type=socket.SOCK_STREAM)})
-except (OSError, ValueError):
+    # DNS occurs before curl, so it needs its own bounded process lifetime.
+    resolver = "import json,socket,sys; print(json.dumps(sorted({item[4][0] for item in socket.getaddrinfo(sys.argv[1],int(sys.argv[2]),type=socket.SOCK_STREAM)})))"
+    resolved = subprocess.run([sys.executable, '-c', resolver, url.hostname, str(port)],
+                              capture_output=True, text=True, check=True, timeout=float(sys.argv[4]))
+    addresses = json.loads(resolved.stdout)
+except (OSError, ValueError, subprocess.SubprocessError):
     raise SystemExit(1)
 if not addresses:
     raise SystemExit(1)
@@ -153,7 +144,7 @@ print(f"{output_host}|{port}|{selected}")
 PY
 }
 
-rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id, hook_id, event_id, event_type, hex(payload_json), hex(handler_url), hex(shared_secret), attempt_count, max_attempts FROM webhook_outbox WHERE (status IN ('pending','retry') AND CAST(next_attempt_at AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) ORDER BY id ASC LIMIT ${LIMIT};")"
+rows="$(sqlite3 -separator '|' "${DB_PATH}" "SELECT id FROM webhook_outbox WHERE (status IN ('pending','retry') AND CAST(next_attempt_at AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= CAST(strftime('%s','now') AS INTEGER)) ORDER BY id ASC LIMIT ${LIMIT};")"
 
 if [[ -z "${rows}" ]]; then
 	echo "${SCRIPT_LABEL}: no due deliveries"
@@ -165,17 +156,17 @@ delivered=0
 retried=0
 dead_lettered=0
 
-while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_url_hex shared_secret_hex attempt_count max_attempts; do
+while IFS= read -r outbox_id; do
 	[[ -z "${outbox_id}" ]] && continue
 	now_value="$(now_epoch)"
 	claim_expires_at="$((now_value + CLAIM_TTL_SEC))"
-	claimed="$(sqlite3 "${DB_PATH}" "UPDATE webhook_outbox SET status = 'running', claim_token = '${WORKER_TOKEN}', claim_expires_at = '${claim_expires_at}', updated_at = '${now_value}' WHERE id = ${outbox_id} AND ((status IN ('pending','retry') AND CAST(next_attempt_at AS INTEGER) <= ${now_value}) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= ${now_value})); SELECT changes();")"
-	if [[ "${claimed}" != "1" ]]; then
+	claimed="$(sqlite3 -separator '|' "${DB_PATH}" "BEGIN IMMEDIATE; UPDATE webhook_outbox SET status = 'running', claim_token = '${WORKER_TOKEN}', claim_expires_at = '${claim_expires_at}', updated_at = '${now_value}' WHERE id = ${outbox_id} AND ((status IN ('pending','retry') AND CAST(next_attempt_at AS INTEGER) <= ${now_value}) OR (status = 'running' AND CAST(COALESCE(claim_expires_at, 0) AS INTEGER) <= ${now_value})); SELECT hook_id, event_id, event_type, hex(payload_json), hex(handler_url), hex(shared_secret), attempt_count, max_attempts FROM webhook_outbox WHERE id = ${outbox_id} AND claim_token = '${WORKER_TOKEN}'; COMMIT;")"
+	if [[ -z "${claimed}" ]]; then
 		continue
 	fi
+	IFS='|' read -r hook_id event_id event_type payload_hex handler_url_hex shared_secret_hex attempt_count max_attempts <<< "${claimed}"
 	processed=$((processed + 1))
-	renew_claim_while_worker_alive "${outbox_id}" "$$" &
-	heartbeat_pid=$!
+	start_worker_heartbeat webhook_outbox "${outbox_id}" "$$"
 
 	payload_json="$(decode_hex "${payload_hex}")"
 	handler_url="$(decode_hex "${handler_url_hex}")"
@@ -209,8 +200,7 @@ while IFS='|' read -r outbox_id hook_id event_id event_type payload_hex handler_
 		curl_exit_code=$?
 		set -e
 	fi
-	kill "${heartbeat_pid}" >/dev/null 2>&1 || true
-	wait "${heartbeat_pid}" >/dev/null 2>&1 || true
+	stop_worker_heartbeat
 
 	now_value="$(now_epoch)"
 	if [[ ${curl_exit_code} -eq 0 && "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
