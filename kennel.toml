@@ -12,7 +12,7 @@ source = "github:kujolang/ability"
 [kujo]
 entry = "backend/runtime/main.kujo"
 excludes = [".git", "kennel_packages", "dist", "build", "node_modules"]
-includes = ["README.md", "LICENSE", "CHANGELOG.md", "HOWTO.md", ".env.example", "ability-pack.json", "backend", "clients", "docs", "examples", "schemas", "scripts", "tests"]
+includes = ["README.md", "LICENSE", "CHANGELOG.md", "HOWTO.md", "ability-pack.json", "backend", "clients", "docs", "examples", "schemas", "scripts", "tests"]
 minimum_version = "1.2.0"
 sources = ["backend", "."]
 

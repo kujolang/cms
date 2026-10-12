@@ -19,7 +19,7 @@
 - Claim queue work and metadata atomically; replace per-job polling delays with managed process waits and bounded cleanup.
 - Add security, concurrency, lifecycle, and JavaScript/PHP client checks to the release gate.
 - Preserve the new package path during replacement on Kujo 1.2.x.
-- Ship the clients, environment template, Ability pack, license, and operator guide in the Kennel archive.
+- Make the clients, Ability pack, license, and operator guide explicit package inclusions. Kennel excludes `.env.*` files, including the environment template.
 - Keep the independently versioned CMS Ability pack at 1.0.1 and the pinned Ability runtime at 1.0.1.
 
 See [the upgrade notes](docs/releases/1.2.0.md) before deployment.

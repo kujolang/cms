@@ -22,7 +22,7 @@ cp .env.example .env
 kujo run --interpreter backend/runtime/main.kujo
 ```
 
-The API listens at `http://127.0.0.1:4200`. Its entrypoint is `backend/runtime/main.kujo`; there is no separate CMS executable. To add CMS to a Kujo project, use `kennel add cms`.
+The API listens at `http://127.0.0.1:4200`. Its entrypoint is `backend/runtime/main.kujo`; there is no separate CMS executable. To add CMS to a Kujo project, use `kennel add cms`. Kennel excludes `.env.*` files; configure registry installations from the [tagged environment reference](https://github.com/kujolang/cms/blob/v1.2.0/.env.example).
 
 Set a unique `CMS_API_TOKEN` for initial provisioning. There is no usable default credential. After provisioning, disable bootstrap access and use scoped database-backed tokens. Keep credentials on the server.
 
