@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.0 - 2026-10-12
 
 - Pin the production-stable Ability 1.0.1 runtime with validated replay and
   terminal idempotency hardening.
@@ -11,6 +11,18 @@
 - Make release and restart gates refuse occupied ports without terminating
   unrelated processes, and bind server lifecycle cleanup to the exact Kujo
   process started by each test.
+
+- Preserve authentication, request metrics, and rate limits across requests; enforce session and approval expiry in milliseconds.
+- Reject unsafe webhook destinations, redirect escapes, malformed origins, and unowned extension cleanup paths.
+- Rate-limit public media file reads and protect atomic composition with transaction-bound conflict checks, timestamps, audit records, and webhooks.
+- Batch scheduled publication in one database transaction and throttle authentication activity writes.
+- Claim queue work and metadata atomically; replace per-job polling delays with managed process waits and bounded cleanup.
+- Add security, concurrency, lifecycle, and JavaScript/PHP client checks to the release gate.
+- Preserve the new package path during replacement on Kujo 1.2.x.
+- Ship the clients, environment template, Ability pack, license, and operator guide in the Kennel archive.
+- Keep the independently versioned CMS Ability pack at 1.0.1 and the pinned Ability runtime at 1.0.1.
+
+See [the upgrade notes](docs/releases/1.2.0.md) before deployment.
 
 ## 1.1.0 - 2026-08-30
 
