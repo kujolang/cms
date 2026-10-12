@@ -119,6 +119,10 @@ with tempfile.TemporaryDirectory(prefix='hardening-', dir=ROOT / 'results') as d
             replacement = request('POST', '/v1/extensions/packages/upload', payload)['data']
             assert sentinel.exists(), 'client-controlled cleanup deleted an outside file'
             legit_root = Path(replacement['storage']['install_root'])
+            assert legit_root.parent == old_root.parent and legit_root != old_root, 'replacement reused client-controlled storage path'
+            with sqlite3.connect(db) as connection:
+                saved_config = json.loads(connection.execute('SELECT config_json FROM plugins WHERE id=?', (installed['extension']['id'],)).fetchone()[0])
+                assert saved_config['storage']['install_root'] == str(legit_root), 'persisted replacement storage differs from receipt'
             request('POST', '/v1/extensions/packages/upload', payload)
             assert not legit_root.exists(), 'legitimate owned package replacement did not clean up'
             linked_root = Path(directory) / 'installed' / ('package-' + 'a' * 32)

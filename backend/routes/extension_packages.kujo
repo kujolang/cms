@@ -63,16 +63,18 @@ func prior_package_root(ctx, kind, extension_key) {
 	parsed := null; parse_error := null; try { parsed = parse_json(to_string(dict_get_or(rows["rows"][0], "config_json", "{}"))) } except e { parse_error = e }
 	if type(parse_error) != "null" || type(parsed) != "dict" { return "" }
 	storage := dict_get_or(parsed, "storage", {}); if type(storage) != "dict" { return "" }
-	install_root := trim(to_string(dict_get_or(storage, "install_root", "")))
+	// Kujo 1.2.x can leak same-named helper locals into the caller. Keep the
+	// prior path distinct from ingest_extension_archive's new install_root.
+	previous_install_root := trim(to_string(dict_get_or(storage, "install_root", "")))
 	store_root := ctx["cfg"]["extension_store_dir"]
-	identifier := managed_package_id(store_root, install_root)
+	identifier := managed_package_id(store_root, previous_install_root)
 	if identifier == "" { return "" }
 	owner_path := path_join(store_root, ".cms-owner-" + identifier + ".json")
 	if path_is_file(owner_path) == false || path_is_symlink(owner_path) != false { return "" }
 	owner := null
 	try { owner = parse_json(read_file(owner_path)) } except e { return "" }
 	if type(owner) != "dict" || dict_get_or(owner, "kind", "") != kind || dict_get_or(owner, "key", "") != extension_key { return "" }
-	return install_root
+	return previous_install_root
 }
 
 func persist_ingested_extension(ctx, kind, manifest, receipt, install_root, activate) {
