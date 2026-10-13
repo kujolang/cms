@@ -19,7 +19,10 @@ if [[ ! -x "${KUJO_BIN_PATH}" ]]; then
 	exit 1
 fi
 
-BASE_PORT="${CMS_GATE_PORT_BASE:-49390}"
+# Keep the default gate range below Linux's ephemeral client-port range so
+# preceding curl-heavy integrations cannot leave a source port in TIME_WAIT
+# and race a later server bind.
+BASE_PORT="${CMS_GATE_PORT_BASE:-19390}"
 STAGE1_PORT="${BASE_PORT}"
 STAGE2_R1_PORT="$((BASE_PORT + 1))"
 STAGE2_SITEMAP_PORT="$((BASE_PORT + 2))"
