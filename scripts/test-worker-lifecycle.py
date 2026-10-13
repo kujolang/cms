@@ -27,6 +27,19 @@ stop_worker_heartbeat
 if kill -0 "$timer" 2>/dev/null; then echo 'timer survived' >&2; exit 1; fi
 ''', '--', str(helper), str(fifo)], env=env, check=True, capture_output=True, timeout=5)
     print('PASS heartbeat stop reaps timer and closes captured output')
+
+    inherited_output = temp / 'inherited-job-output'
+    subprocess.run(['bash', '-c', '''set -euo pipefail
+source "$1"
+worker_output_file="$2"
+printf fixture > "$worker_output_file"
+(trap - EXIT INT TERM; exit 0)
+test -f "$worker_output_file"
+worker_output_file=""
+rm -f "$2"
+''', '--', str(helper), str(inherited_output)], check=True, capture_output=True, timeout=5)
+    print('PASS inherited EXIT trap does not remove owner output')
+
     output = temp / 'job-output'
     pidfile = temp / 'job-pid'
     result = subprocess.run(['bash', '-c', '''set -euo pipefail

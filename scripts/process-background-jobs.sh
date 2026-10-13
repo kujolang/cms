@@ -245,7 +245,12 @@ while IFS= read -r job_id; do
 	write_audit_row "background.job.started" "202" "${job_id}" "{\"job_type\":\"${job_type}\",\"attempt\":$((attempt_count + 1))}"
 
 	worker_output_file="$(mktemp)"
-	run_job_by_type "${job_type}" "${payload_json}" >"${worker_output_file}" 2>&1 &
+	(
+		# The job subshell inherits the worker's cleanup traps. It does not own
+		# the parent's heartbeat, child PID, or output file.
+		trap - EXIT INT TERM
+		run_job_by_type "${job_type}" "${payload_json}"
+	) >"${worker_output_file}" 2>&1 &
 	worker_job_pid=$!
 	start_worker_heartbeat background_jobs "${job_id}" "$$"
 	job_exit_code=0
