@@ -1,6 +1,6 @@
 # Kujo CMS
 
-[![Version](https://img.shields.io/badge/version-1.2.0-black)](https://github.com/kujolang/cms/releases/tag/v1.2.0)
+[![Version](https://img.shields.io/badge/version-1.2.1-black)](https://github.com/kujolang/cms/releases/tag/v1.2.1)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 [![Built with Kujo](https://img.shields.io/badge/built%20with-Kujo-white.svg)](https://github.com/kujolang/kujo)
 
@@ -15,14 +15,14 @@ Kujo CMS is a content backend for websites, administration tools, integrations, 
 Install Kujo and Kennel, then:
 
 ```bash
-git clone --branch v1.2.0 https://github.com/kujolang/cms.git
+git clone --branch v1.2.1 https://github.com/kujolang/cms.git
 cd cms
 kennel install
 cp .env.example .env
 kujo run --interpreter backend/runtime/main.kujo
 ```
 
-The API listens at `http://127.0.0.1:4200`. Its entrypoint is `backend/runtime/main.kujo`; there is no separate CMS executable. To add CMS to a Kujo project, use `kennel add cms`. Kennel excludes `.env.*` files; configure registry installations from the [tagged environment reference](https://github.com/kujolang/cms/blob/v1.2.0/.env.example).
+The API listens at `http://127.0.0.1:4200`. Its entrypoint is `backend/runtime/main.kujo`; there is no separate CMS executable. To add CMS to a Kujo project, use `kennel add cms`. Kennel excludes `.env.*` files; configure registry installations from the [tagged environment reference](https://github.com/kujolang/cms/blob/v1.2.1/.env.example).
 
 Set a unique `CMS_API_TOKEN` for initial provisioning. There is no usable default credential. After provisioning, disable bootstrap access and use scoped database-backed tokens. Keep credentials on the server.
 

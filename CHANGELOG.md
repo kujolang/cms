@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.1 - 2026-10-22
+
+- Require patched Node.js release lines for JavaScript tooling and clients.
+- Avoid ephemeral-port collisions and worker output cleanup races in release verification.
+- Preserve CMS API and database contracts from 1.2.0.
+
 ## 1.2.0 - 2026-10-12
 
 - Pin the production-stable Ability 1.0.1 runtime with validated replay and

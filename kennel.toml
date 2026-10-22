@@ -27,7 +27,7 @@ license = "MIT"
 name = "cms"
 readme = "README.md"
 repository = "https://github.com/kujolang/cms"
-version = "1.2.0"
+version = "1.2.1"
 
 [package.exports]
 ability_contract = "backend/modules/ability_contract.kujo"
