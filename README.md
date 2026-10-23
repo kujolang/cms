@@ -19,7 +19,7 @@ git clone --branch v1.2.1 https://github.com/kujolang/cms.git
 cd cms
 kennel install
 cp .env.example .env
-kujo run --interpreter backend/runtime/main.kujo
+kujo run backend/runtime/main.kujo
 ```
 
 The API listens at `http://127.0.0.1:4200`. Its entrypoint is `backend/runtime/main.kujo`; there is no separate CMS executable. To add CMS to a Kujo project, use `kennel add cms`. Kennel excludes `.env.*` files; configure registry installations from the [tagged environment reference](https://github.com/kujolang/cms/blob/v1.2.1/.env.example).
