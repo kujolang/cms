@@ -156,6 +156,21 @@ export parse_id_param := func(req, key_name) {
 	return {"ok": true, "value": id_value}
 }
 
+func body_exceeds_limit(req, body, max_bytes) {
+	raw_body := dict_get_or(req, "body_bytes", null)
+	if type(raw_body) == "bytes" { return len(raw_body) > max_bytes }
+	characters := len(body)
+	if characters > max_bytes { return true }
+	if characters * 4 <= max_bytes { return false }
+	// On supported Kujo releases, string length counts Unicode scalars.
+	// Base64 exposes the UTF-8 byte length for bodies near the ceiling.
+	encoded := encode_base64(body)
+	byte_count := len(encoded) / 4 * 3
+	if ends_with(encoded, "=") { byte_count = byte_count - 1 }
+	if ends_with(encoded, "==") { byte_count = byte_count - 1 }
+	return byte_count > max_bytes
+}
+
 export parse_json_body := func(req, cfg) {
 	body := to_string(dict_get_or(req, "body", ""))
 	if trim(body) == "" {
@@ -163,19 +178,14 @@ export parse_json_body := func(req, cfg) {
 	}
 
 	max_bytes := dict_get_or(cfg, "max_body_bytes", 1048576)
-	if len(body) > max_bytes {
+	if body_exceeds_limit(req, body, max_bytes) {
 		return {"ok": false, "error": "Request body exceeds max size"}
 	}
 
-	content_type := to_lower(get_header(req, "Content-Type"))
-	if content_type == "" {
-		content_type = to_lower(get_header(req, "content-type"))
-	}
-
+	content_type := to_lower(trim(get_header(req, "Content-Type")))
 	if content_type != "" {
-		json_ok := starts_with(content_type, "application/json")
-		patch_ok := starts_with(content_type, "application/merge-patch+json")
-		if json_ok == false && patch_ok == false {
+		media_type := trim(split(content_type, ";")[0])
+		if media_type != "application/json" && media_type != "application/merge-patch+json" {
 			return {"ok": false, "error": "Content-Type must be application/json"}
 		}
 	}

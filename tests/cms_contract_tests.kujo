@@ -1,6 +1,6 @@
 test_setup {
 	from backend.core.utils import is_valid_slug_key, parse_list_query, parse_nonnegative_int_text, parse_positive_int_text
-	from backend.core.http import get_header, parse_bounded_int, req_actor, req_ip, guard_request, create_http_state, load_http_metrics, write_audit
+	from backend.core.http import get_header, parse_bounded_int, parse_json_body, req_actor, req_ip, guard_request, create_http_state, load_http_metrics, write_audit
 	from backend.config.config import load_config, load_config_impl, validate_production_runtime_config
 	from backend.modules.auth import authorize_request, effective_admin_capabilities, load_session_auth, permissions_allow
 	from backend.modules.ability_contract import ABILITY_SCHEMA_ID, validate_ability_definition, validate_ability_invocation, validate_ability_value, validate_plugin_ability_descriptor
@@ -15,6 +15,22 @@ test_setup {
 	from backend.routes.extensions import extension_contracts, validate_package_receipt, validate_plugin_manifest, validate_theme_manifest
 	from backend.routes.content_workflows import normalized_entry_slug, parse_positive_unique_ids
 	from backend.routes.media_storage import detected_media_type
+}
+
+test "JSON body limits count UTF-8 bytes and require an exact media type" {
+	req := {"body": "{\"x\":\"é🚀\"}", "headers": {"Content-Type": "Application/JSON; charset=utf-8"}}
+	bounded := parse_json_body(req, {"max_body_bytes": 14})
+	assert_equal(bounded["ok"], true)
+	assert_equal(bounded["data"]["x"], "é🚀")
+	too_large := parse_json_body(req, {"max_body_bytes": 13})
+	assert_equal(too_large["ok"], false)
+	assert_equal(too_large["error"], "Request body exceeds max size")
+	req["headers"] = {"Content-Type": "application/merge-patch+json; charset=utf-8"}
+	assert_equal(parse_json_body(req, {"max_body_bytes": 14})["ok"], true)
+	req["headers"] = {"Content-Type": "application/json-other"}
+	assert_equal(parse_json_body(req, {"max_body_bytes": 14})["ok"], false)
+	req["headers"] = {}
+	assert_equal(parse_json_body(req, {"max_body_bytes": 14})["ok"], true)
 }
 
 test "atomic content workflow helpers validate slugs and bounded term IDs" {
