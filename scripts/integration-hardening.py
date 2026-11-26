@@ -101,6 +101,31 @@ with tempfile.TemporaryDirectory(prefix='hardening-', dir=ROOT / 'results') as d
             with sqlite3.connect(db) as connection:
                 assert connection.execute("SELECT COUNT(*) FROM webhook_outbox WHERE event_type='entry.updated'").fetchone()[0] == 2
             print('PASS compose versions, stale-write rejection and webhook enqueue deduplication')
+            with sqlite3.connect(db) as connection:
+                connection.executescript('''
+                    CREATE TRIGGER record_secondary_revision AFTER INSERT ON entry_revisions
+                    WHEN NEW.revision_note = 'compose-receipt'
+                    BEGIN
+                      INSERT INTO entry_revisions (entry_id, title, slug, status, excerpt, body, meta_json,
+                                                   author_id, published_at, revision_note, created_at)
+                      VALUES (NEW.entry_id, NEW.title, NEW.slug, NEW.status, NEW.excerpt, NEW.body, NEW.meta_json,
+                              NEW.author_id, NEW.published_at, 'secondary-revision', NEW.created_at);
+                    END;
+                ''')
+            receipt = request('PATCH', compose_path, {
+                'expected_updated_at': second['updated_at'], 'entry': {'title': 'Receipt fixture'},
+                'revision_note': 'compose-receipt',
+            })['data']
+            assert receipt['entry']['title'] == 'Receipt fixture'
+            assert receipt['revision']['revision_note'] == 'compose-receipt', receipt['revision']
+            with sqlite3.connect(db) as connection:
+                newest = connection.execute(
+                    'SELECT id, revision_note FROM entry_revisions WHERE entry_id = ? ORDER BY id DESC LIMIT 1',
+                    (entry['id'],),
+                ).fetchone()
+                assert newest[0] > receipt['revision']['id'] and newest[1] == 'secondary-revision', newest
+                connection.execute('DROP TRIGGER record_secondary_revision')
+            print('PASS compose response binds the entry, terms and its own inserted revision')
             archive = io.BytesIO()
             manifest = json.loads((ROOT / 'examples/extensions/starter-plugin/kujo-plugin.json').read_text())
             manifest['key'] = 'cleanup_probe'
