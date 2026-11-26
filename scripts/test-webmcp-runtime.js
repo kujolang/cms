@@ -12,10 +12,12 @@ const source = fs.readFileSync(runtimePath, 'utf8');
 async function load(supported = true) {
   const tools = [];
   const requests = [];
+  const registrations = [];
+  const listeners = new Map();
   const context = {
     AbortController, AbortSignal, URL, Error, Promise, Array, Object, String, Number, JSON,
     location: {origin: 'https://example.test', href: 'https://example.test/'},
-    addEventListener() {},
+    addEventListener(name, listener) { listeners.set(name, listener); },
     fetch: async (url, options) => {
       requests.push({url, options});
       const path = new URL(url).pathname;
@@ -26,14 +28,17 @@ async function load(supported = true) {
       return {ok: true, json: async () => ({ok: true, data})};
     },
     document: {
-      modelContext: supported ? {registerTool: async tool => tools.push(tool)} : undefined,
+      modelContext: supported ? {registerTool: async (tool, {signal}) => {
+        tools.push(tool);
+        registrations.push(signal);
+      }} : undefined,
       currentScript: {dataset: {kujoWebmcpApi: '/v1/webmcp/'}},
       baseURI: 'https://example.test/'
     }
   };
   vm.runInNewContext(source, context, {filename: runtimePath});
   await new Promise(resolve => setImmediate(resolve));
-  return {tools, requests};
+  return {tools, requests, registrations, listeners};
 }
 
 (async () => {
@@ -51,6 +56,24 @@ async function load(supported = true) {
   assert.equal((await tools.list_content.execute({type: 'article'})).items[0].id, 'article:hello');
   assert.equal((await tools.get_content.execute({id: 'article:hello'})).id, 'article:hello');
   assert.ok(loaded.requests.every(request => new URL(request.url).origin === 'https://example.test'));
+  await tools.get_content.execute({url: '/article/hello'});
+  assert.equal(new URL(loaded.requests.at(-1).url).searchParams.get('url'), 'https://example.test/article/hello');
+  assert.ok(loaded.requests.every(request => request.options.redirect === 'error'));
+  assert.equal(loaded.registrations.length, 4);
+  const first = loaded.registrations[0];
+  loaded.listeners.get('pagehide')();
+  assert.equal(first.aborted, true);
+  loaded.listeners.get('pageshow')({persisted: true});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(loaded.registrations.length, 8);
+  const restored = loaded.registrations[4];
+  assert.notEqual(restored, first);
+  assert.equal(restored.aborted, false);
+  loaded.listeners.get('pageshow')({persisted: true});
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(loaded.registrations.length, 8);
+  loaded.listeners.get('pagehide')();
+  assert.equal(restored.aborted, true);
   await assert.rejects(() => tools.search_site.execute({query: 'x', surprise: true}), /unknown argument/);
   await assert.rejects(() => tools.get_content.execute({id: 'x', url: '/x'}), /exactly one/);
   await assert.rejects(() => tools.get_content.execute({url: 'https://evil.test/x'}), /same-origin/);

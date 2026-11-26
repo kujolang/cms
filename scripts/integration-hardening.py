@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +42,7 @@ def request(method, path, body=None, headers=None, status=200):
 with tempfile.TemporaryDirectory(prefix='hardening-', dir=ROOT / 'results') as directory:
     db = Path(directory) / 'cms.db'
     env = dict(os.environ, CMS_API_PORT=str(port), CMS_DB_PATH=str(db), CMS_API_TOKEN=TOKEN,
+               CMS_SITE_URL=base, CMS_WEBMCP_MAX_SCAN_RECORDS='100',
                CMS_PLUGIN_HOOK_ALLOW_HTTP='true', CMS_RATE_MAX_REQUESTS='1000', CMS_RATE_LIMIT_MODE='sqlite',
                CMS_EXTENSION_INBOX_DIR=str(Path(directory)/'inbox'), CMS_EXTENSION_STORE_DIR=str(Path(directory)/'installed'),
                CMS_MEDIA_INBOX_DIR=str(Path(directory)/'media-inbox'), CMS_MEDIA_STORE_DIR=str(Path(directory)/'media-store'), CMS_STRUCTURED_LOGS='false', CMS_AUDIT_LOG='true')
@@ -126,6 +128,42 @@ with tempfile.TemporaryDirectory(prefix='hardening-', dir=ROOT / 'results') as d
                 assert newest[0] > receipt['revision']['id'] and newest[1] == 'secondary-revision', newest
                 connection.execute('DROP TRIGGER record_secondary_revision')
             print('PASS compose response binds the entry, terms and its own inserted revision')
+
+            with sqlite3.connect(db) as connection:
+                rows = [(f'alpha-{i:03}', 'published', '{}') for i in range(105)]
+                rows.extend([
+                    ('zulu-record', 'published', '{"search_exclude": true}'),
+                    ('zulu-excluded', 'published', '{"webmcp_exclude": true}'),
+                    ('zulu-draft', 'draft', '{}'),
+                ])
+                connection.executemany(
+                    'INSERT INTO entries (content_type_key, title, slug, status, excerpt, body, meta_json, author_id, '
+                    "created_at, updated_at) VALUES ('hardening', 'Public fixture', ?, ?, '', 'Body', ?, '', 0, 0)",
+                    rows,
+                )
+                public_id = connection.execute(
+                    "SELECT id FROM entries WHERE content_type_key='hardening' AND slug='zulu-record'"
+                ).fetchone()[0]
+                connection.execute('INSERT INTO entry_terms VALUES (?, ?, 0)', (public_id, ids['alpha']))
+                connection.execute(
+                    "INSERT INTO entry_terms SELECT id, ?, 0 FROM entries WHERE content_type_key='hardening' AND slug='alpha-000'",
+                    (ids['alpha'],),
+                )
+            listing = request('GET', '/v1/webmcp/content?type=hardening', headers={})['data']
+            assert listing['truncated'] is True
+            search = request('GET', '/v1/webmcp/search?q=Public+fixture&content_type=hardening', headers={})['data']
+            assert search['returned_count'] == 5 and search['truncated'] is True, search
+            taxonomy = urllib.parse.urlencode({'type': 'hardening', 'taxonomy': json.dumps({'hardening': ['Alpha']})})
+            filtered = request('GET', f'/v1/webmcp/content?{taxonomy}', headers={})['data']
+            assert [item['id'] for item in filtered['items']] == ['hardening:alpha-000'], filtered
+            record = request('GET', '/v1/webmcp/record?id=hardening%3Azulu-record', headers={})['data']
+            assert record['entry_id'] == public_id and record['searchable'] is False, record
+            assert record['taxonomies'] == {'hardening': ['Alpha']}, record
+            selector = urllib.parse.urlencode({'url': f'{base}/hardening/zulu-record'})
+            assert request('GET', f'/v1/webmcp/record?{selector}', headers={})['data'] == record
+            for slug in ['zulu-excluded', 'zulu-draft', 'missing-record']:
+                request('GET', f'/v1/webmcp/record?id=hardening%3A{slug}', headers={}, status=404)
+            print('PASS exact WebMCP lookup bypasses list cap and preserves publication and exclusion rules')
             archive = io.BytesIO()
             manifest = json.loads((ROOT / 'examples/extensions/starter-plugin/kujo-plugin.json').read_text())
             manifest['key'] = 'cleanup_probe'

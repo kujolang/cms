@@ -36,7 +36,7 @@ Entry metadata supports these controls:
 - `webmcp_exclude: true` or `webmcp.exclude: true` removes the record from every WebMCP result.
 - `search_exclude: true` or `webmcp.search_exclude: true` excludes search while preserving listing and exact retrieval.
 
-`CMS_WEBMCP_ENABLED=false` disables every WebMCP route. Capacity controls are `CMS_WEBMCP_MAX_SCAN_RECORDS`, `CMS_WEBMCP_INDEX_PAGE_SIZE_MAX`, and `CMS_WEBMCP_SUMMARY_MAX_CHARS`. Scan limits are reported with `truncated: true`.
+`CMS_WEBMCP_ENABLED=false` disables every WebMCP route. Capacity controls are `CMS_WEBMCP_MAX_SCAN_RECORDS`, `CMS_WEBMCP_INDEX_PAGE_SIZE_MAX`, and `CMS_WEBMCP_SUMMARY_MAX_CHARS`. List, search, and index scans report `truncated: true` when they hit the scan limit. Exact retrieval uses the indexed type and slug and is available for every eligible published record. The browser adapter resolves same-origin relative URLs before requesting a record and registers the tools again when a page comes back from the browser’s back-forward cache.
 
 ## Extension contract
 
